@@ -7,6 +7,7 @@ const projectRoot = resolve(__dirname, "..");
 const html = readFileSync(resolve(projectRoot, "index.html"), "utf8");
 const css = readFileSync(resolve(projectRoot, "styles.css"), "utf8");
 const addressService = require(resolve(projectRoot, "address-service.js"));
+const stamp = require(resolve(projectRoot, "stamp.js"));
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -192,4 +193,72 @@ test("CSS includes keyboard focus, mobile layout, and reduced motion support", (
   assert.match(css, /@media\s*\(max-width:\s*900px\)/);
   assert.match(css, /@media\s*\(max-width:\s*560px\)/);
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+});
+
+test("stamp bar is one text line tall plus its padding", () => {
+  const layout = stamp.computeStampLayout(1200);
+
+  assert.equal(layout.barHeight, layout.fontSize + layout.paddingY * 2);
+  assert.ok(layout.paddingY > 0 && layout.paddingX > 0);
+  // Scales with the photo but stays legible at either extreme.
+  assert.equal(stamp.computeStampLayout(200).fontSize, 16);
+  assert.equal(stamp.computeStampLayout(6000).fontSize, 76);
+  assert.ok(stamp.computeStampLayout(1200).fontSize > stamp.computeStampLayout(600).fontSize);
+});
+
+test("stamp renders the date and time in the sample format", () => {
+  assert.equal(stamp.formatStampTime(new Date(2026, 7, 5, 14, 32)), "05 AUG 2026 · 14:32");
+  assert.match(stamp.formatStampTime(undefined), /^\d{2} [A-Z]{3} \d{4} · \d{2}:\d{2}$/);
+});
+
+test("stamped canvas adds a bar above and below the photo", () => {
+  const drawn = [];
+  const fakeContext = {
+    measureText: (text) => ({ width: text.length * 6 }),
+    drawImage: (...args) => drawn.push(["drawImage", ...args]),
+    fillRect: (...args) => drawn.push(["fillRect", ...args]),
+    fillText: (...args) => drawn.push(["fillText", ...args]),
+  };
+  const fakeDocument = {
+    createElement: () => ({ getContext: () => fakeContext }),
+  };
+
+  const canvas = stamp.drawStampedImage(
+    { naturalWidth: 1000, naturalHeight: 750 },
+    { address: "10 Bayfront Avenue", date: new Date(2026, 7, 5, 14, 32), document: fakeDocument },
+  );
+  const { barHeight } = stamp.computeStampLayout(1000);
+
+  assert.equal(canvas.width, 1000);
+  assert.equal(canvas.height, 750 + barHeight * 2);
+
+  // Photo is offset by the top bar; both bars span the full width.
+  assert.deepEqual(
+    drawn.find((entry) => entry[0] === "drawImage"),
+    ["drawImage", { naturalWidth: 1000, naturalHeight: 750 }, 0, barHeight, 1000, 750],
+  );
+  assert.deepEqual(
+    drawn.filter((entry) => entry[0] === "fillRect"),
+    [
+      ["fillRect", 0, 0, 1000, barHeight],
+      ["fillRect", 0, barHeight + 750, 1000, barHeight],
+    ],
+  );
+
+  // Location in the top bar, timestamp in the bottom one.
+  assert.deepEqual(
+    drawn.filter((entry) => entry[0] === "fillText").map((entry) => [entry[1], entry[3]]),
+    [
+      ["10 BAYFRONT AVENUE", barHeight / 2],
+      ["05 AUG 2026 · 14:32", barHeight + 750 + barHeight / 2],
+    ],
+  );
+});
+
+test("share control is present and starts hidden", () => {
+  const shareButton = tagWithId("button", "share-button");
+
+  assert.ok(hasAttribute(shareButton, "type", "button"));
+  // Revealed by script only when the browser can share files.
+  assert.ok(hasAttribute(shareButton, "hidden"));
 });

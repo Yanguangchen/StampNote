@@ -6,6 +6,7 @@
     <title>StampNote</title>
     <link rel="stylesheet" href="styles.css" />
     <script src="address-service.js" defer></script>
+    <script src="stamp.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
@@ -49,6 +50,16 @@
 
           <p class="status" id="location-status" role="status" aria-live="polite"></p>
         </div>
+
+        <div class="previews" id="previews"></div>
+
+        <button class="button button-primary" id="save-button" type="button" hidden>
+          Save stamped photo
+        </button>
+
+        <button class="button button-secondary" id="share-button" type="button" hidden>
+          Share
+        </button>
 
         <p class="hint">
           <span class="visually-hidden">Street address, Date &amp; time</span>

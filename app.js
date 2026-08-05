@@ -2,16 +2,23 @@
   "use strict";
 
   const service = window.StampNoteAddress;
+  const stamp = window.StampNoteStamp;
   const locateButton = document.querySelector("#locate-button");
   const buttonLabel = document.querySelector(".locate-button-label");
   const addressField = document.querySelector("#address-field");
   const status = document.querySelector("#location-status");
   const addressPanel = document.querySelector("#address-panel");
+  const previews = document.querySelector("#previews");
+  const saveButton = document.querySelector("#save-button");
+  const shareButton = document.querySelector("#share-button");
   const photoInputs = document.querySelectorAll("#camera-input, #gallery-input");
 
-  if (!service || !locateButton || !buttonLabel || !addressField || !status || !addressPanel) {
+  if (!service || !stamp || !locateButton || !addressField || !status || !addressPanel) {
     return;
   }
+
+  // One entry per chosen photo: the loaded image, its capture time, its canvas.
+  const photos = [];
 
   function setStatus(message, state = "idle") {
     status.textContent = message;
@@ -20,7 +27,6 @@
 
   function setLoading(isLoading) {
     locateButton.disabled = isLoading;
-    locateButton.classList.toggle("is-loading", isLoading);
     buttonLabel.textContent = isLoading ? "Locating…" : "Use current location";
   }
 
@@ -53,6 +59,47 @@
     return error?.message || "Address not found.";
   }
 
+  function render() {
+    if (photos.length === 0) {
+      return;
+    }
+
+    previews.replaceChildren();
+
+    photos.forEach((photo) => {
+      photo.canvas = stamp.drawStampedImage(photo.image, {
+        address: addressField.value,
+        date: photo.date,
+      });
+      photo.canvas.className = "preview";
+      previews.append(photo.canvas);
+    });
+
+    saveButton.hidden = false;
+    if (shareButton && typeof navigator.canShare === "function") {
+      shareButton.hidden = false;
+    }
+    document.body.classList.add("is-stamped");
+  }
+
+  function loadPhoto(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const image = new Image();
+
+      image.addEventListener("load", () => {
+        URL.revokeObjectURL(url);
+        resolve({ image, date: new Date(file.lastModified || Date.now()), name: file.name });
+      });
+      image.addEventListener("error", () => {
+        URL.revokeObjectURL(url);
+        reject(new Error(`${file.name} could not be opened.`));
+      });
+
+      image.src = url;
+    });
+  }
+
   async function requestLocation({ focusField = true } = {}) {
     setLoading(true);
     setStatus("Locating…");
@@ -76,6 +123,7 @@
       if (focusField) {
         addressField.focus();
       }
+      render();
     } catch (error) {
       setStatus(userMessage(error), "error");
     } finally {
@@ -83,22 +131,95 @@
     }
   }
 
-  function revealAddressPanel() {
-    if (!addressPanel.hidden) {
+  async function addPhotos(files) {
+    const loaded = await Promise.allSettled([...files].map(loadPhoto));
+    const failed = loaded.filter((entry) => entry.status === "rejected");
+
+    photos.length = 0;
+    loaded
+      .filter((entry) => entry.status === "fulfilled")
+      .forEach((entry) => photos.push(entry.value));
+
+    if (photos.length === 0) {
+      setStatus("That photo could not be opened.", "error");
       return;
     }
 
+    render();
+
+    const firstRun = addressPanel.hidden;
     addressPanel.hidden = false;
-    requestLocation({ focusField: false });
+
+    if (failed.length > 0) {
+      setStatus(`${failed.length} photo(s) could not be opened.`, "error");
+    }
+
+    if (firstRun) {
+      requestLocation({ focusField: false });
+    }
+  }
+
+  function toFile(photo, index) {
+    return new Promise((resolve) => {
+      photo.canvas.toBlob(
+        (blob) => {
+          const name = `stamped-${index + 1}-${(photo.name || "photo").replace(/\.[^.]+$/, "")}.jpg`;
+          resolve(blob ? new File([blob], name, { type: "image/jpeg" }) : null);
+        },
+        "image/jpeg",
+        0.92,
+      );
+    });
+  }
+
+  // Hands the stamped photos to the OS share sheet, where Telegram (and any
+  // other installed app) shows up as a target. There is no way to post into a
+  // Telegram chat directly from a page.
+  async function share() {
+    const stamped = photos.filter((photo) => photo.canvas);
+    const files = (await Promise.all(stamped.map(toFile))).filter(Boolean);
+
+    if (files.length === 0 || !navigator.canShare?.({ files })) {
+      setStatus("Sharing is not available here — save the photo instead.", "error");
+      return;
+    }
+
+    try {
+      await navigator.share({ files });
+    } catch (error) {
+      if (error?.name !== "AbortError") {
+        setStatus("Sharing failed — save the photo instead.", "error");
+      }
+    }
+  }
+
+  function save() {
+    photos.forEach((photo, index) => {
+      if (!photo.canvas) {
+        return;
+      }
+
+      const link = document.createElement("a");
+      link.href = photo.canvas.toDataURL("image/jpeg", 0.92);
+      link.download = `stamped-${index + 1}-${(photo.name || "photo").replace(/\.[^.]+$/, "")}.jpg`;
+      link.click();
+    });
   }
 
   photoInputs.forEach((input) => {
     input.addEventListener("change", () => {
       if (input.files && input.files.length > 0) {
-        revealAddressPanel();
+        addPhotos(input.files);
       }
     });
   });
 
+  addressField.addEventListener("input", render);
   locateButton.addEventListener("click", () => requestLocation());
+  saveButton?.addEventListener("click", save);
+
+  // Only offer the button where the browser can actually share files.
+  if (shareButton && typeof navigator.canShare === "function") {
+    shareButton.addEventListener("click", share);
+  }
 })();
