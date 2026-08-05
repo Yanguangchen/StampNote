@@ -11,8 +11,16 @@
   const HELP = Object.freeze({
     insecure:
       "Location needs a secure page. Open this site over https:// (or on localhost) and try again.",
+    embedded:
+      "This page is embedded in another site, which is not allowed to share your location. " +
+      "Open it in its own tab.",
+    inAppBrowser:
+      "You are in an app's built-in browser, which cannot ask for location. " +
+      "Tap the ⋯ or share button and choose “Open in Safari”, then try again.",
     iosDenied:
-      "Location is blocked for this site. In Safari tap “aA” in the address bar → Website Settings → Location → Allow, then tap the button again.",
+      "Location is blocked for this site. 1) iOS Settings → Privacy & Security → Location Services → " +
+      "on, and Safari Websites → While Using the App. 2) Back in Safari, tap “aA” in the address bar → " +
+      "Website Settings → Location → Allow. Then reload and tap the button again.",
     denied: "Location permission was denied — allow it in your browser's site settings, " +
       "or type the address below.",
     unavailable: "Location unavailable — type the address below.",
@@ -28,6 +36,25 @@
     );
   }
 
+  // Every in-app browser on iOS (Telegram, Instagram, WeChat, …) is a WKWebView
+  // whose host app usually has no location permission of its own, so the request
+  // is refused before Safari's prompt would appear. Real Safari always sends a
+  // "Version/" token; a WKWebView does not. Home Screen apps skip the token too,
+  // but navigator.standalone identifies them and they can hold permission.
+  function isInAppBrowser(environment = {}) {
+    const userAgent = environment.userAgent || "";
+
+    if (/FBAN|FBAV|Instagram|MicroMessenger|Line\/|Twitter|BytedanceWebview/.test(userAgent)) {
+      return true;
+    }
+
+    if (!isIosBrowser(environment) || environment.standalone === true) {
+      return false;
+    }
+
+    return !/Version\/\d/.test(userAgent);
+  }
+
   function describeGeolocationError(error, environment = {}) {
     if (environment.isSecureContext === false) {
       return HELP.insecure;
@@ -35,6 +62,12 @@
 
     switch (error?.code) {
       case 1:
+        if (environment.embedded === true) {
+          return HELP.embedded;
+        }
+        if (isInAppBrowser(environment)) {
+          return HELP.inAppBrowser;
+        }
         return isIosBrowser(environment) ? HELP.iosDenied : HELP.denied;
       case 2:
         return HELP.unavailable;
@@ -43,6 +76,23 @@
       default:
         return error?.message || "Address not found.";
     }
+  }
+
+  // Shown on screen after a failure so the cause can be reported accurately;
+  // every value comes from this browser, nothing is sent anywhere.
+  function describeEnvironment(environment = {}, extra = {}) {
+    return [
+      `secure context: ${environment.isSecureContext !== false}`,
+      `permission: ${extra.permissionState || "unknown"}`,
+      `error: ${extra.errorCode === undefined ? "none" : `code ${extra.errorCode}`}` +
+        (extra.errorMessage ? ` (${extra.errorMessage})` : ""),
+      `geolocation api: ${extra.hasGeolocation === false ? "missing" : "present"}`,
+      `embedded: ${environment.embedded === true}`,
+      `home screen app: ${environment.standalone === true}`,
+      `in-app browser: ${isInAppBrowser(environment)}`,
+      `ios: ${isIosBrowser(environment)}`,
+      `ua: ${environment.userAgent || "unknown"}`,
+    ].join("\n");
   }
 
   // "unknown" whenever the browser cannot tell us: Safari has only recently
@@ -158,10 +208,12 @@
     GEOLOCATION_OPTIONS,
     buildReverseGeocodeUrl,
     createCacheKey,
+    describeEnvironment,
     describeGeolocationError,
     formatAddress,
     getCurrentCoordinates,
     getPermissionState,
+    isInAppBrowser,
     isIosBrowser,
     reverseGeocode,
   });
