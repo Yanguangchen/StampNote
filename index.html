@@ -22,7 +22,15 @@
             accept="image/*"
             capture="environment"
           />
-          <label class="button button-primary" for="camera-input">Open camera</label>
+          <label class="button button-primary button-icon" for="camera-input" title="Open camera">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path
+                d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.7a1 1 0 0 0 .83-.45l.94-1.4a1 1 0 0 1 .83-.45h4.4a1 1 0 0 1 .83.45l.94 1.4a1 1 0 0 0 .83.45h1.7A2.5 2.5 0 0 1 21 8.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5z"
+              />
+              <circle cx="12" cy="12.5" r="3.4" />
+            </svg>
+            <span class="visually-hidden">Open camera</span>
+          </label>
 
           <input
             class="visually-hidden"
@@ -31,22 +39,31 @@
             accept="image/*"
             multiple
           />
-          <label class="button button-secondary" for="gallery-input">Choose from gallery</label>
+          <label
+            class="button button-secondary button-icon"
+            for="gallery-input"
+            title="Choose from gallery"
+          >
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <rect x="3" y="5" width="18" height="14" rx="2.5" />
+              <circle cx="8.5" cy="10" r="1.4" />
+              <path d="m4 17.5 4.4-4.4a1.5 1.5 0 0 1 2.1 0L14 16.6" />
+              <path d="m13.2 15.2 1.9-1.9a1.5 1.5 0 0 1 2.1 0l2.8 2.8" />
+            </svg>
+            <span class="visually-hidden">Choose from gallery</span>
+          </label>
         </div>
 
         <div class="address" id="address-panel" hidden>
           <label class="visually-hidden" for="address-field">Street address</label>
+
           <textarea
             id="address-field"
             name="street-address"
             rows="2"
             autocomplete="street-address"
-            placeholder="Not quite right? Write in an address"
+            placeholder="Type the street address"
           ></textarea>
-
-          <button class="button button-secondary" id="locate-button" type="button">
-            <span class="locate-button-label">Use current location</span>
-          </button>
 
           <p class="status" id="location-status" role="status" aria-live="polite"></p>
 
@@ -58,24 +75,23 @@
 
         <div class="previews" id="previews"></div>
 
-        <button class="button button-primary" id="save-button" type="button" hidden>
-          Save stamped photo
-        </button>
-
-        <button class="button button-secondary" id="share-button" type="button" hidden>
-          Share
-        </button>
-
-        <p class="hint">
-          <span class="visually-hidden">Street address, Date &amp; time</span>
-          10 BAYFRONT AVE, SINGAPORE · 05 AUG 2026 · 14:32 &middot;
-          <a
-            href="https://www.openstreetmap.org/copyright"
-            target="_blank"
-            rel="noopener noreferrer"
-            >OpenStreetMap contributors</a
+        <div class="result-actions">
+          <button
+            class="button button-secondary button-icon"
+            id="share-button"
+            type="button"
+            title="Share"
+            hidden
           >
-        </p>
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M12 15.4V3.2" />
+              <path d="m7.9 7.3 4.1-4.1 4.1 4.1" />
+              <path d="M7.4 10.4h-1a2.5 2.5 0 0 0-2.5 2.5v5.9A2.5 2.5 0 0 0 6.4 21.3h11.2a2.5 2.5 0 0 0 2.5-2.5v-5.9a2.5 2.5 0 0 0-2.5-2.5h-1" />
+            </svg>
+            <span class="visually-hidden">Share</span>
+          </button>
+        </div>
+
       </section>
     </main>
   </body>

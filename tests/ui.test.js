@@ -74,22 +74,50 @@ test("upload controls have visible, correctly wired labels", () => {
   );
 });
 
-test("annotation preview describes an address and date-time", () => {
-  assert.match(html, /Street address/i);
-  assert.match(html, /Date &amp; time/i);
-  assert.match(html, /10 BAYFRONT AVE, SINGAPORE/i);
-  assert.match(html, /05 AUG 2026 · 14:32/i);
+test("icon-only controls keep a text name and hide the glyph from assistive tech", () => {
+  const controls = [
+    ["label", "camera-input", "Open camera"],
+    ["label", "gallery-input", "Choose from gallery"],
+    ["button", "share-button", "Share"],
+  ];
+
+  controls.forEach(([tagName, id, name]) => {
+    const attribute = tagName === "label" ? "for" : "id";
+    const pattern = new RegExp(
+      `<${tagName}\\b[^>]*${attribute}=["']${escapeRegExp(id)}["'][^>]*>([\\s\\S]*?)</${tagName}>`,
+      "i",
+    );
+    const match = html.match(pattern);
+
+    assert.ok(match, `Expected a <${tagName}> for ${id}`);
+    // The glyph carries no text, so the name has to come from the hidden span.
+    assert.match(match[1], new RegExp(`class=["']?[^"']*visually-hidden[^"']*["']?[^>]*>${escapeRegExp(name)}<`, "i"));
+    assert.match(match[1], /<svg\b[^>]*aria-hidden=["']true["']/i);
+    // A tooltip for anyone using a pointer.
+    assert.match(match[0], new RegExp(`title=["']${escapeRegExp(name)}["']`, "i"));
+
+    // Nothing but the glyph and the hidden name is left, so the control renders
+    // as an icon with no wording beside it.
+    const visible = match[1]
+      .replace(/<svg\b[\s\S]*?<\/svg>/gi, "")
+      .replace(/<span\b[^>]*visually-hidden[^>]*>[\s\S]*?<\/span>/gi, "")
+      .trim();
+
+    assert.equal(visible, "", `Expected no visible text in the ${id} control`);
+  });
 });
 
-test("street-address controls are present and accessible", () => {
-  const locateButton = tagWithId("button", "locate-button");
+test("the address is typed into a single field, with no location button", () => {
   const addressField = tagWithId("textarea", "address-field");
 
-  assert.ok(hasAttribute(locateButton, "type", "button"));
   assert.ok(hasAttribute(addressField, "autocomplete", "street-address"));
   assert.match(html, /<label\b[^>]*for=["']address-field["'][^>]*>Street address<\/label>/i);
   assert.match(html, /id=["']location-status["'][^>]*role=["']status["'][^>]*aria-live=["']polite["']/i);
-  assert.match(html, /OpenStreetMap contributors/i);
+
+  // Removed controls leave nothing behind for the script to bind to.
+  assert.equal(/id=["']locate-button["']/.test(html), false);
+  assert.equal(/id=["']save-button["']/.test(html), false);
+  assert.equal(/getElementById|#locate-button|#save-button/.test(readFileSync(resolve(projectRoot, "app.js"), "utf8")), false);
 });
 
 test("geolocation helper resolves coordinates and accuracy", async () => {
@@ -205,15 +233,27 @@ test("permission state is only trusted when the browser reports one", async () =
   );
 });
 
-test("app only asks for a position from a user gesture", () => {
+test("the stamped file saves itself, once per upload", () => {
   const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
 
-  // The click handler is the one path that may call getCurrentCoordinates;
-  // the post-upload path must go through the permission check first.
-  assert.match(app, /locateButton\.addEventListener\("click", \(\) => requestLocation\(\)\)/);
+  // Debounced so typing an address does not save a file per keystroke.
+  assert.match(app, /autoSaveTimer = window\.setTimeout\(autoSave, AUTO_SAVE_DELAY\)/);
+  assert.match(app, /if \(autoSaved \|\| !addressField\.value\.trim\(\)\)/);
+  assert.match(app, /autoSaved = true/);
+  // A fresh upload is a fresh set to save.
+  assert.match(app, /autoSaved = false;\s*\n\s*photos\.length = 0/);
+  assert.match(app, /link\.download = file\.name/);
+  assert.match(app, /URL\.revokeObjectURL/);
+});
+
+test("location is attempted once per upload and never when already refused", () => {
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+
   assert.match(app, /if \(firstRun\) \{\s*autoLocate\(\);/);
-  assert.match(app, /getPermissionState\(navigator\.permissions\)/);
-  assert.match(app, /state === "granted"/);
+  assert.match(app, /getPermissionState\(navigator\.permissions\)\) === "denied"/);
+  assert.match(app, /isInAppBrowser\(context\)/);
+  // A refusal falls back to typing rather than an error the user cannot act on.
+  assert.match(app, /if \(blocked\) \{\s*setStatus\("Type the street address above\."\);/);
 });
 
 test("reverse geocoder requests one detailed address and formats the response", async () => {

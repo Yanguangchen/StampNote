@@ -3,33 +3,30 @@
 
   const service = window.StampNoteAddress;
   const stamp = window.StampNoteStamp;
-  const locateButton = document.querySelector("#locate-button");
-  const buttonLabel = document.querySelector(".locate-button-label");
   const addressField = document.querySelector("#address-field");
   const status = document.querySelector("#location-status");
   const addressPanel = document.querySelector("#address-panel");
   const previews = document.querySelector("#previews");
-  const saveButton = document.querySelector("#save-button");
   const shareButton = document.querySelector("#share-button");
   const diagnostics = document.querySelector("#location-diagnostics");
   const diagnosticsBody = document.querySelector("#location-diagnostics-body");
   const photoInputs = document.querySelectorAll("#camera-input, #gallery-input");
 
-  if (!service || !stamp || !locateButton || !addressField || !status || !addressPanel) {
+  if (!service || !stamp || !addressField || !status || !addressPanel) {
     return;
   }
 
   // One entry per chosen photo: the loaded image, its capture time, its canvas.
   const photos = [];
 
+  // Long enough that typing an address does not save a file per keystroke.
+  const AUTO_SAVE_DELAY = 1500;
+  let autoSaveTimer = null;
+  let autoSaved = false;
+
   function setStatus(message, state = "idle") {
     status.textContent = message;
     status.dataset.state = state;
-  }
-
-  function setLoading(isLoading) {
-    locateButton.disabled = isLoading;
-    buttonLabel.textContent = isLoading ? "Locating…" : "Use current location";
   }
 
   function readCache(key) {
@@ -104,11 +101,48 @@
       previews.append(photo.canvas);
     });
 
-    saveButton.hidden = false;
     if (shareButton && typeof navigator.canShare === "function") {
       shareButton.hidden = false;
     }
     document.body.classList.add("is-stamped");
+    scheduleAutoSave();
+  }
+
+  // The file downloads on its own once the stamp settles, so nothing has to be
+  // pressed. It waits for an address to avoid saving a half-finished stamp, and
+  // saves one set per upload so editing afterwards does not pile up files.
+  function scheduleAutoSave() {
+    if (autoSaved || !addressField.value.trim()) {
+      return;
+    }
+
+    window.clearTimeout(autoSaveTimer);
+    autoSaveTimer = window.setTimeout(autoSave, AUTO_SAVE_DELAY);
+  }
+
+  async function autoSave() {
+    const stamped = photos.filter((photo) => photo.canvas);
+    const files = (await Promise.all(stamped.map(toFile))).filter(Boolean);
+
+    if (files.length === 0) {
+      return;
+    }
+
+    autoSaved = true;
+
+    files.forEach((file) => {
+      const url = URL.createObjectURL(file);
+      const link = document.createElement("a");
+
+      link.href = url;
+      link.download = file.name;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 10000);
+    });
+
+    setStatus(files.length === 1 ? "Saved." : `Saved ${files.length} photos.`, "success");
   }
 
   function loadPhoto(file) {
@@ -129,9 +163,6 @@
     });
   }
 
-  // Called straight from the button's click handler: getCurrentPosition has to
-  // run while the tap is still the current task, or iOS Safari treats it as an
-  // unprompted request and rejects it.
   async function requestLocation({ focusField = true } = {}) {
     if (environment().isSecureContext === false) {
       setStatus(userMessage(null), "error");
@@ -139,7 +170,6 @@
       return;
     }
 
-    setLoading(true);
     setStatus("Locating…");
 
     try {
@@ -168,17 +198,14 @@
     } catch (error) {
       setStatus(userMessage(error), "error");
       showDiagnostics(error);
-    } finally {
-      setLoading(false);
     }
   }
 
-  // Photos finish loading asynchronously, so by the time we get here the tap
-  // that picked them no longer counts as user activation. iOS Safari denies
-  // geolocation asked for outside a gesture without ever showing the prompt,
-  // and remembers that denial for the site — which used to block every later
-  // press of the button too. So only locate on our own when permission is
-  // already granted; otherwise invite the user to tap.
+  // With no location button left, this automatic attempt is the only chance to
+  // fill the address, so it runs whenever permission has not already been
+  // refused. Browsers that prompt without a gesture (desktop Safari, Chrome,
+  // Firefox) still ask here; iOS refuses a request made outside a tap and no
+  // longer has a tap to offer, so it falls through to typing.
   async function autoLocate() {
     const context = environment();
 
@@ -188,32 +215,27 @@
       return;
     }
 
-    const state = await service.getPermissionState(navigator.permissions);
+    const blocked =
+      (await service.getPermissionState(navigator.permissions)) === "denied" ||
+      service.isInAppBrowser(context) ||
+      context.embedded;
 
-    if (state === "granted") {
-      requestLocation({ focusField: false });
-      return;
-    }
-
-    if (state === "denied") {
-      setStatus(userMessage({ code: 1 }), "error");
+    if (blocked) {
+      setStatus("Type the street address above.");
       showDiagnostics({ code: 1 });
       return;
     }
 
-    // An in-app browser will refuse the tap too, so say so before it is spent.
-    if (service.isInAppBrowser(context) || context.embedded) {
-      setStatus(userMessage({ code: 1 }), "error");
-      showDiagnostics({ code: 1 });
-      return;
-    }
-
-    setStatus("Tap “Use current location” to stamp the street address.");
+    requestLocation({ focusField: false });
   }
 
   async function addPhotos(files) {
     const loaded = await Promise.allSettled([...files].map(loadPhoto));
     const failed = loaded.filter((entry) => entry.status === "rejected");
+
+    // A new upload is a new set to save.
+    window.clearTimeout(autoSaveTimer);
+    autoSaved = false;
 
     photos.length = 0;
     loaded
@@ -261,7 +283,7 @@
     const files = (await Promise.all(stamped.map(toFile))).filter(Boolean);
 
     if (files.length === 0 || !navigator.canShare?.({ files })) {
-      setStatus("Sharing is not available here — save the photo instead.", "error");
+      setStatus("Sharing is not available here — press and hold the photo to save it.", "error");
       return;
     }
 
@@ -269,22 +291,9 @@
       await navigator.share({ files });
     } catch (error) {
       if (error?.name !== "AbortError") {
-        setStatus("Sharing failed — save the photo instead.", "error");
+        setStatus("Sharing failed — press and hold the photo to save it.", "error");
       }
     }
-  }
-
-  function save() {
-    photos.forEach((photo, index) => {
-      if (!photo.canvas) {
-        return;
-      }
-
-      const link = document.createElement("a");
-      link.href = photo.canvas.toDataURL("image/jpeg", 0.92);
-      link.download = `stamped-${index + 1}-${(photo.name || "photo").replace(/\.[^.]+$/, "")}.jpg`;
-      link.click();
-    });
   }
 
   photoInputs.forEach((input) => {
@@ -296,8 +305,6 @@
   });
 
   addressField.addEventListener("input", render);
-  locateButton.addEventListener("click", () => requestLocation());
-  saveButton?.addEventListener("click", save);
 
   // Only offer the button where the browser can actually share files.
   if (shareButton && typeof navigator.canShare === "function") {
