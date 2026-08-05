@@ -1,0 +1,7 @@
+# Local dev server only — it calls listen() and exports no handler,
+# so Vercel must never treat it as a Serverless Function.
+server.js
+
+# Not needed at runtime
+tests/
+README.md
