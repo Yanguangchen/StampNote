@@ -8,6 +8,59 @@
     maximumAge: 30000,
   });
 
+  const HELP = Object.freeze({
+    insecure:
+      "Location needs a secure page. Open this site over https:// (or on localhost) and try again.",
+    iosDenied:
+      "Location is blocked for this site. In Safari tap “aA” in the address bar → Website Settings → Location → Allow, then tap the button again.",
+    denied: "Location permission was denied — allow it in your browser's site settings, " +
+      "or type the address below.",
+    unavailable: "Location unavailable — type the address below.",
+    timeout: "Location timed out — try again, or type the address below.",
+  });
+
+  // iPadOS 13+ reports a desktop user agent, so touch support is the tiebreaker.
+  function isIosBrowser(environment = {}) {
+    const userAgent = environment.userAgent || "";
+    return (
+      /iPad|iPhone|iPod/.test(userAgent) ||
+      (/Macintosh/.test(userAgent) && (environment.maxTouchPoints || 0) > 1)
+    );
+  }
+
+  function describeGeolocationError(error, environment = {}) {
+    if (environment.isSecureContext === false) {
+      return HELP.insecure;
+    }
+
+    switch (error?.code) {
+      case 1:
+        return isIosBrowser(environment) ? HELP.iosDenied : HELP.denied;
+      case 2:
+        return HELP.unavailable;
+      case 3:
+        return HELP.timeout;
+      default:
+        return error?.message || "Address not found.";
+    }
+  }
+
+  // "unknown" whenever the browser cannot tell us: Safari has only recently
+  // exposed geolocation through the Permissions API, and older builds reject
+  // the query outright.
+  async function getPermissionState(permissions) {
+    if (!permissions || typeof permissions.query !== "function") {
+      return "unknown";
+    }
+
+    try {
+      const status = await permissions.query({ name: "geolocation" });
+      return status?.state || "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+
   function getCurrentCoordinates(geolocation, options = GEOLOCATION_OPTIONS) {
     return new Promise((resolve, reject) => {
       if (!geolocation || typeof geolocation.getCurrentPosition !== "function") {
@@ -105,8 +158,11 @@
     GEOLOCATION_OPTIONS,
     buildReverseGeocodeUrl,
     createCacheKey,
+    describeGeolocationError,
     formatAddress,
     getCurrentCoordinates,
+    getPermissionState,
+    isIosBrowser,
     reverseGeocode,
   });
 

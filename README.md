@@ -24,6 +24,14 @@ npm start
 
 Using localhost is important because browsers restrict precise geolocation to secure contexts. No third-party packages are required.
 
+To try it from a phone, reach the page over HTTPS (a tunnel or the deployed URL). Safari refuses
+geolocation on a plain `http://` LAN address and reports it as a permission failure.
+
+iOS Safari only shows the location prompt for a request made during a tap, so the app asks for a
+position from the "Use current location" button and never on its own — it auto-fills after an upload
+only when permission was already granted. If location was denied earlier, Safari keeps denying it
+silently; re-enable it with "aA" in the address bar → Website Settings → Location → Allow.
+
 For the best camera experience, open the page on a mobile device. Browser camera behavior varies by device: supported mobile browsers open the rear camera, while desktop browsers generally show a file picker.
 
 ## Automated tests

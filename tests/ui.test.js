@@ -104,6 +104,65 @@ test("geolocation helper resolves coordinates and accuracy", async () => {
   assert.deepEqual(result, { latitude: 1.2834, longitude: 103.8607, accuracy: 12.5 });
 });
 
+test("denied location explains how to re-enable it, per platform", () => {
+  const iphone = {
+    userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15",
+  };
+  const ipad = { userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", maxTouchPoints: 5 };
+  const desktop = { userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", maxTouchPoints: 0 };
+
+  assert.match(addressService.describeGeolocationError({ code: 1 }, iphone), /Website Settings/);
+  assert.match(addressService.describeGeolocationError({ code: 1 }, ipad), /Website Settings/);
+  assert.match(addressService.describeGeolocationError({ code: 1 }, desktop), /site settings/);
+  assert.equal(addressService.isIosBrowser(desktop), false);
+
+  // An insecure page can never get a position, whatever the error says.
+  assert.match(
+    addressService.describeGeolocationError({ code: 1 }, { ...iphone, isSecureContext: false }),
+    /https:\/\//,
+  );
+  assert.match(addressService.describeGeolocationError(null, { isSecureContext: false }), /https:\/\//);
+
+  assert.match(addressService.describeGeolocationError({ code: 2 }, iphone), /unavailable/i);
+  assert.match(addressService.describeGeolocationError({ code: 3 }, iphone), /timed out/i);
+  assert.equal(addressService.describeGeolocationError({ message: "Boom" }, iphone), "Boom");
+});
+
+test("permission state is only trusted when the browser reports one", async () => {
+  assert.equal(await addressService.getPermissionState(undefined), "unknown");
+  assert.equal(await addressService.getPermissionState({}), "unknown");
+
+  // Safari rejects permission names it does not support.
+  assert.equal(
+    await addressService.getPermissionState({
+      query: async () => {
+        throw new TypeError("unsupported");
+      },
+    }),
+    "unknown",
+  );
+
+  assert.equal(
+    await addressService.getPermissionState({ query: async () => ({ state: "granted" }) }),
+    "granted",
+  );
+  assert.equal(
+    await addressService.getPermissionState({ query: async () => ({ state: "denied" }) }),
+    "denied",
+  );
+});
+
+test("app only asks for a position from a user gesture", () => {
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+
+  // The click handler is the one path that may call getCurrentCoordinates;
+  // the post-upload path must go through the permission check first.
+  assert.match(app, /locateButton\.addEventListener\("click", \(\) => requestLocation\(\)\)/);
+  assert.match(app, /if \(firstRun\) \{\s*autoLocate\(\);/);
+  assert.match(app, /getPermissionState\(navigator\.permissions\)/);
+  assert.match(app, /state === "granted"/);
+});
+
 test("reverse geocoder requests one detailed address and formats the response", async () => {
   let requestedUrl;
   const fakeFetch = async (url, options) => {
