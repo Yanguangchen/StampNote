@@ -46,17 +46,16 @@
     }
   }
 
+  function environment() {
+    return {
+      isSecureContext: window.isSecureContext !== false,
+      userAgent: navigator.userAgent || "",
+      maxTouchPoints: navigator.maxTouchPoints || 0,
+    };
+  }
+
   function userMessage(error) {
-    if (error?.code === 1) {
-      return "Permission denied — enter address manually.";
-    }
-    if (error?.code === 2) {
-      return "Location unavailable.";
-    }
-    if (error?.code === 3) {
-      return "Timed out.";
-    }
-    return error?.message || "Address not found.";
+    return service.describeGeolocationError(error, environment());
   }
 
   function render() {
@@ -100,7 +99,15 @@
     });
   }
 
+  // Called straight from the button's click handler: getCurrentPosition has to
+  // run while the tap is still the current task, or iOS Safari treats it as an
+  // unprompted request and rejects it.
   async function requestLocation({ focusField = true } = {}) {
+    if (environment().isSecureContext === false) {
+      setStatus(userMessage(null), "error");
+      return;
+    }
+
     setLoading(true);
     setStatus("Locating…");
 
@@ -131,6 +138,35 @@
     }
   }
 
+  // Photos finish loading asynchronously, so by the time we get here the tap
+  // that picked them no longer counts as user activation. iOS Safari denies
+  // geolocation asked for outside a gesture without ever showing the prompt,
+  // and remembers that denial for the site — which used to block every later
+  // press of the button too. So only locate on our own when permission is
+  // already granted; otherwise invite the user to tap.
+  async function autoLocate() {
+    const context = environment();
+
+    if (context.isSecureContext === false) {
+      setStatus(userMessage(null), "error");
+      return;
+    }
+
+    const state = await service.getPermissionState(navigator.permissions);
+
+    if (state === "granted") {
+      requestLocation({ focusField: false });
+      return;
+    }
+
+    if (state === "denied") {
+      setStatus(userMessage({ code: 1 }), "error");
+      return;
+    }
+
+    setStatus("Tap “Use current location” to stamp the street address.");
+  }
+
   async function addPhotos(files) {
     const loaded = await Promise.allSettled([...files].map(loadPhoto));
     const failed = loaded.filter((entry) => entry.status === "rejected");
@@ -152,10 +188,11 @@
 
     if (failed.length > 0) {
       setStatus(`${failed.length} photo(s) could not be opened.`, "error");
+      return;
     }
 
     if (firstRun) {
-      requestLocation({ focusField: false });
+      autoLocate();
     }
   }
 
