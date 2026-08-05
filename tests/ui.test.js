@@ -106,9 +106,16 @@ test("geolocation helper resolves coordinates and accuracy", async () => {
 
 test("denied location explains how to re-enable it, per platform", () => {
   const iphone = {
-    userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15",
+    userAgent:
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 " +
+      "(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
   };
-  const ipad = { userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", maxTouchPoints: 5 };
+  const ipad = {
+    userAgent:
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 " +
+      "(KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+    maxTouchPoints: 5,
+  };
   const desktop = { userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", maxTouchPoints: 0 };
 
   assert.match(addressService.describeGeolocationError({ code: 1 }, iphone), /Website Settings/);
@@ -126,6 +133,52 @@ test("denied location explains how to re-enable it, per platform", () => {
   assert.match(addressService.describeGeolocationError({ code: 2 }, iphone), /unavailable/i);
   assert.match(addressService.describeGeolocationError({ code: 3 }, iphone), /timed out/i);
   assert.equal(addressService.describeGeolocationError({ message: "Boom" }, iphone), "Boom");
+});
+
+test("in-app browsers are told to reopen the page in Safari", () => {
+  const safari =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 " +
+    "(KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
+  // Telegram and friends use a WKWebView, which omits the Version/ token.
+  const webView =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 " +
+    "(KHTML, like Gecko) Mobile/15E148";
+
+  assert.equal(addressService.isInAppBrowser({ userAgent: safari }), false);
+  assert.equal(addressService.isInAppBrowser({ userAgent: webView }), true);
+  // A Home Screen web app drops the token too, but can hold permission itself.
+  assert.equal(addressService.isInAppBrowser({ userAgent: webView, standalone: true }), false);
+  assert.equal(
+    addressService.isInAppBrowser({ userAgent: `${safari} [FBAN/FBIOS;FBAV/450.0]` }),
+    true,
+  );
+
+  assert.match(addressService.describeGeolocationError({ code: 1 }, { userAgent: webView }), /Open in Safari/);
+  assert.match(
+    addressService.describeGeolocationError({ code: 1 }, { userAgent: safari }),
+    /Location Services/,
+  );
+  assert.match(
+    addressService.describeGeolocationError({ code: 1 }, { userAgent: safari, embedded: true }),
+    /embedded/i,
+  );
+});
+
+test("diagnostics report the values needed to identify the block", () => {
+  const report = addressService.describeEnvironment(
+    { userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Version/17.5 Safari/604.1" },
+    { permissionState: "denied", errorCode: 1, errorMessage: "User denied Geolocation" },
+  );
+
+  assert.match(report, /secure context: true/);
+  assert.match(report, /permission: denied/);
+  assert.match(report, /error: code 1 \(User denied Geolocation\)/);
+  assert.match(report, /in-app browser: false/);
+  assert.match(report, /ios: true/);
+
+  const empty = addressService.describeEnvironment({}, {});
+  assert.match(empty, /permission: unknown/);
+  assert.match(empty, /error: none/);
 });
 
 test("permission state is only trusted when the browser reports one", async () => {

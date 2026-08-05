@@ -11,6 +11,8 @@
   const previews = document.querySelector("#previews");
   const saveButton = document.querySelector("#save-button");
   const shareButton = document.querySelector("#share-button");
+  const diagnostics = document.querySelector("#location-diagnostics");
+  const diagnosticsBody = document.querySelector("#location-diagnostics-body");
   const photoInputs = document.querySelectorAll("#camera-input, #gallery-input");
 
   if (!service || !stamp || !locateButton || !addressField || !status || !addressPanel) {
@@ -47,15 +49,43 @@
   }
 
   function environment() {
+    let embedded = false;
+    try {
+      embedded = window.top !== window.self;
+    } catch {
+      // A cross-origin parent throws on access, which is itself the answer.
+      embedded = true;
+    }
+
     return {
       isSecureContext: window.isSecureContext !== false,
       userAgent: navigator.userAgent || "",
       maxTouchPoints: navigator.maxTouchPoints || 0,
+      standalone:
+        navigator.standalone === true ||
+        window.matchMedia?.("(display-mode: standalone)").matches === true,
+      embedded,
     };
   }
 
   function userMessage(error) {
     return service.describeGeolocationError(error, environment());
+  }
+
+  // The message alone cannot say which of the several iOS blocks is in play,
+  // so the details stay on screen for the user to read back.
+  async function showDiagnostics(error) {
+    if (!diagnostics || !diagnosticsBody) {
+      return;
+    }
+
+    diagnosticsBody.textContent = service.describeEnvironment(environment(), {
+      permissionState: await service.getPermissionState(navigator.permissions),
+      errorCode: error?.code,
+      errorMessage: error?.message,
+      hasGeolocation: typeof navigator.geolocation?.getCurrentPosition === "function",
+    });
+    diagnostics.hidden = false;
   }
 
   function render() {
@@ -105,6 +135,7 @@
   async function requestLocation({ focusField = true } = {}) {
     if (environment().isSecureContext === false) {
       setStatus(userMessage(null), "error");
+      showDiagnostics(null);
       return;
     }
 
@@ -127,12 +158,16 @@
 
       setStatus("", "success");
       addressField.value = address;
+      if (diagnostics) {
+        diagnostics.hidden = true;
+      }
       if (focusField) {
         addressField.focus();
       }
       render();
     } catch (error) {
       setStatus(userMessage(error), "error");
+      showDiagnostics(error);
     } finally {
       setLoading(false);
     }
@@ -149,6 +184,7 @@
 
     if (context.isSecureContext === false) {
       setStatus(userMessage(null), "error");
+      showDiagnostics(null);
       return;
     }
 
@@ -161,6 +197,14 @@
 
     if (state === "denied") {
       setStatus(userMessage({ code: 1 }), "error");
+      showDiagnostics({ code: 1 });
+      return;
+    }
+
+    // An in-app browser will refuse the tap too, so say so before it is spent.
+    if (service.isInAppBrowser(context) || context.embedded) {
+      setStatus(userMessage({ code: 1 }), "error");
+      showDiagnostics({ code: 1 });
       return;
     }
 
