@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StampNote</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="address-service.js" defer></script>
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <section class="card" aria-labelledby="upload-title">
+        <h1 id="upload-title">Add photo</h1>
+
+        <div class="actions">
+          <input
+            class="visually-hidden"
+            id="camera-input"
+            type="file"
+            accept="image/*"
+            capture="environment"
+          />
+          <label class="button button-primary" for="camera-input">Open camera</label>
+
+          <input
+            class="visually-hidden"
+            id="gallery-input"
+            type="file"
+            accept="image/*"
+            multiple
+          />
+          <label class="button button-secondary" for="gallery-input">Choose from gallery</label>
+        </div>
+
+        <div class="address" id="address-panel" hidden>
+          <label class="visually-hidden" for="address-field">Street address</label>
+          <textarea
+            id="address-field"
+            name="street-address"
+            rows="2"
+            autocomplete="street-address"
+            placeholder="Not quite right? Write in an address"
+          ></textarea>
+
+          <button class="button button-secondary" id="locate-button" type="button">
+            <span class="locate-button-label">Use current location</span>
+          </button>
+
+          <p class="status" id="location-status" role="status" aria-live="polite"></p>
+        </div>
+
+        <p class="hint">
+          <span class="visually-hidden">Street address, Date &amp; time</span>
+          10 BAYFRONT AVE, SINGAPORE · 05 AUG 2026 · 14:32 &middot;
+          <a
+            href="https://www.openstreetmap.org/copyright"
+            target="_blank"
+            rel="noopener noreferrer"
+            >OpenStreetMap contributors</a
+          >
+        </p>
+      </section>
+    </main>
+  </body>
+</html>
