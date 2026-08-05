@@ -9,7 +9,7 @@ This first milestone includes:
 - A responsive landing and upload workspace
 - A mobile camera input using `capture="environment"`
 - A gallery picker that accepts one or more images
-- A visual preview of the planned street address and date/time stamps
+- Icon-only controls, each with a hidden text name and a pointer tooltip
 - Accessible labels, keyboard focus states, and mobile-friendly controls
 
 The camera and gallery controls are native HTML file inputs, so the browser keeps the selected photos on the user's device. Annotation and download logic will be added in the next milestone. The address will be obtained by reverse-geocoding the device or photo coordinates without embedding a map SDK, with manual entry available as a fallback.
@@ -47,9 +47,9 @@ The suite checks the page foundation, camera and gallery input contracts, access
 ## Planned workflow
 
 1. Take a photo or choose one or more images.
-2. Allow location access or enter a location manually.
-3. Review and reposition the location and date/time stamp.
-4. Export the annotated image without uploading the original to a server.
+2. The street address fills in automatically where the browser allows it; otherwise type it in.
+3. The stamped image saves itself once the address settles — no button to press.
+4. Share the result through the OS share sheet, without uploading the original to a server.
 
 ## Project files
 
@@ -68,4 +68,7 @@ Connect the working address field to the image preview, draw the address and dat
 
 ## Address data
 
-After the user presses the location button, the prototype sends the device's current coordinates to OpenStreetMap's public Nominatim reverse-geocoding service. The result is cached for the browser session, displayed with attribution, and remains editable. This public endpoint is suitable for a moderate prototype under its usage policy; substantial production traffic should use a dedicated provider or hosted Nominatim instance.
+On upload, the prototype sends the device's current coordinates to OpenStreetMap's public Nominatim reverse-geocoding service. The result is cached for the browser session and remains editable. The on-page OpenStreetMap
+attribution was removed at the client's request; ODbL still requires attributing OSM wherever the
+data is shown, so it should be restored — in the stamp, an about screen, or the share text — before
+this goes public. This public endpoint is suitable for a moderate prototype under its usage policy; substantial production traffic should use a dedicated provider or hosted Nominatim instance.

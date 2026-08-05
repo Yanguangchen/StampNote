@@ -121,7 +121,12 @@ main {
   font-weight: 600;
 }
 
-.actions,
+.actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
 .address {
   display: grid;
   gap: 8px;
@@ -158,6 +163,30 @@ body.is-stamped {
     background 220ms ease-in-out,
     box-shadow 220ms ease-in-out,
     transform 220ms ease-in-out;
+}
+
+/* Icon-only controls: the accessible name lives in a visually-hidden span, and
+   the title attribute gives pointer users a tooltip. */
+.button-icon {
+  flex: 0 0 auto;
+  width: 52px;
+  padding: 0;
+}
+
+.icon {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.result-actions {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
 }
 
 .button-primary {
@@ -286,20 +315,8 @@ textarea::placeholder {
   box-shadow: 0 8px 20px rgba(20, 40, 34, 0.16);
 }
 
-#save-button,
 #share-button {
-  width: 100%;
-  margin-top: 10px;
-}
-
-.hint {
-  margin: 20px 0 0;
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.hint a {
-  color: inherit;
+  margin-top: 14px;
 }
 
 @media (max-width: 900px) {
