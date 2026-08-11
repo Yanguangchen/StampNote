@@ -7,6 +7,7 @@
 // so the watch still runs with no network and nothing about its use leaves the
 // device. See vendor/mediapipe/README.md for versions and licence.
 import {
+  FaceLandmarker,
   FilesetResolver,
   ObjectDetector,
   PoseLandmarker,
@@ -14,9 +15,23 @@ import {
 
 const BASE = "./vendor/mediapipe";
 
+// MediaPipe's own answer to which of the 478 points join up. Taken from the
+// library rather than written out here, where a wrong index could not be seen.
+const FACE_CONNECTIONS = Object.freeze({
+  oval: FaceLandmarker.FACE_LANDMARKS_FACE_OVAL,
+  browLeft: FaceLandmarker.FACE_LANDMARKS_LEFT_EYEBROW,
+  browRight: FaceLandmarker.FACE_LANDMARKS_RIGHT_EYEBROW,
+  eyeLeft: FaceLandmarker.FACE_LANDMARKS_LEFT_EYE,
+  eyeRight: FaceLandmarker.FACE_LANDMARKS_RIGHT_EYE,
+  irisLeft: FaceLandmarker.FACE_LANDMARKS_LEFT_IRIS,
+  irisRight: FaceLandmarker.FACE_LANDMARKS_RIGHT_IRIS,
+  lips: FaceLandmarker.FACE_LANDMARKS_LIPS,
+});
+
 function createAdapter(landmarker) {
   const mapping = window.StampNotePoseMapping;
   let objects = null;
+  let faces = null;
   let lastTimestamp = -1;
 
   return {
@@ -30,6 +45,10 @@ function createAdapter(landmarker) {
       objects = detector;
     },
 
+    attachFaceLandmarker(detector) {
+      faces = detector;
+    },
+
     detect(video) {
       if (!video?.videoWidth) {
         return mapping.buildDetection(null, []);
@@ -40,15 +59,19 @@ function createAdapter(landmarker) {
       lastTimestamp = timestamp;
 
       const pose = landmarker.detectForVideo(video, timestamp);
-      const vehicles = objects
-        ? mapping.readVehicles(
-            objects.detectForVideo(video, timestamp),
-            video.videoWidth,
-            video.videoHeight,
+      const seen = objects ? objects.detectForVideo(video, timestamp) : null;
+      const face = faces
+        ? mapping.toFaceOutlines(
+            faces.detectForVideo(video, timestamp)?.faceLandmarks?.[0],
+            FACE_CONNECTIONS,
           )
-        : [];
+        : null;
 
-      return mapping.buildDetection(pose?.landmarks?.[0], vehicles);
+      return mapping.buildDetection(
+        pose?.landmarks?.[0],
+        seen ? mapping.readVehicles(seen, video.videoWidth, video.videoHeight) : [],
+        { face, person: seen ? mapping.readPeople(seen) : 0 },
+      );
     },
 
     reset() {
@@ -58,6 +81,7 @@ function createAdapter(landmarker) {
     close() {
       landmarker?.close?.();
       objects?.close?.();
+      faces?.close?.();
     },
   };
 }
@@ -95,15 +119,29 @@ async function load() {
   const fileset = await FilesetResolver.forVisionTasks(`${BASE}/wasm`);
   const adapter = createAdapter(await createLandmarker(fileset));
 
+  // Asked at a lower bar than the mapping accepts, so the mapping is the one
+  // place a threshold lives and `person` can be read without being drawn.
   ObjectDetector.createFromOptions(fileset, {
     baseOptions: { modelAssetPath: `${BASE}/models/efficientdet_lite0.tflite` },
     runningMode: "VIDEO",
-    scoreThreshold: window.StampNotePoseMapping.VEHICLE_SCORE,
-    maxResults: 6,
+    scoreThreshold: 0.3,
+    maxResults: 8,
   })
     .then((detector) => adapter.attachObjectDetector(detector))
     .catch(() => {
       // People are still tracked; nothing simply gets labelled a vehicle.
+    });
+
+  FaceLandmarker.createFromOptions(fileset, {
+    baseOptions: { modelAssetPath: `${BASE}/models/face_landmarker.task` },
+    runningMode: "VIDEO",
+    numFaces: 1,
+    outputFaceBlendshapes: false,
+    outputFacialTransformationMatrixes: false,
+  })
+    .then((detector) => adapter.attachFaceLandmarker(detector))
+    .catch(() => {
+      // The body is still rigged; there is simply no face drawn on it.
     });
 
   return adapter;

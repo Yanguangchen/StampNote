@@ -358,6 +358,7 @@
   const LIMB_COLOR = "rgba(120, 255, 200, 0.95)";
   // Amber, so a vehicle never reads as the green the watch uses for a person.
   const VEHICLE_COLOR = "rgba(255, 190, 90, 0.95)";
+  const FACE_COLOR = "rgba(190, 235, 255, 0.9)";
 
   // Everything drawn over the camera is sized from the width it is drawn at, so
   // the rig reads the same on a phone and on a wide display.
@@ -586,6 +587,28 @@
     context.restore();
   }
 
+  // Brows, eyes, nose, lips and jaw, traced as lines. The model reports 478
+  // points, and all 478 drawn at a size that fits on a phone is a grey smudge;
+  // the outlines are what read as a face.
+  function drawFace(context, face, frame, stroke) {
+    context.save();
+    context.strokeStyle = FACE_COLOR;
+    context.lineWidth = Math.max(1, stroke * 0.55);
+    context.lineJoin = "round";
+    context.lineCap = "round";
+
+    context.beginPath();
+    Object.values(face).forEach((edges) => {
+      (edges || []).forEach(([from, to]) => {
+        context.moveTo(frame.left + from.x * frame.width, frame.top + from.y * frame.height);
+        context.lineTo(frame.left + to.x * frame.width, frame.top + to.y * frame.height);
+      });
+    });
+    context.stroke();
+
+    context.restore();
+  }
+
   function drawOverlay(state) {
     if (!poseOverlay) {
       return;
@@ -677,10 +700,16 @@
     // crown, so the circle is sized and centred off the run down to the neck —
     // the bounding box is no use here, since outstretched arms widen it without
     // making the head any bigger.
+    if (state.face) {
+      drawFace(context, state.face, frame, stroke);
+    }
+
     const head = at(points.head);
     const neck = at(points.neck);
 
-    if (head && neck) {
+    // The circle stands in for a head only while the face model has nothing to
+    // say; drawing both puts a ring around a face that is already drawn.
+    if (head && neck && !state.face) {
       const reach = Math.hypot(neck[0] - head[0], neck[1] - head[1]);
       const radius = Math.max(4, reach * 0.42);
       const centerX = head[0] + (neck[0] - head[0]) * 0.42;

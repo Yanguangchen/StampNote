@@ -36,6 +36,7 @@
       pose: "none",
       keypoints: null,
       box: null,
+      face: null,
       vehicle: null,
       intervalMs: scheduler.intervalFor(false),
       nextDueAt: null,
@@ -157,6 +158,7 @@
           state.pose = tracked.pose;
           state.keypoints = tracked.keypoints;
           state.box = tracked.box;
+          state.face = tracked.face || null;
           state.vehicle = tracked.vehicle?.present ? tracked.vehicle : null;
         }
 

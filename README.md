@@ -22,9 +22,20 @@ Vehicles are recognised and boxed in amber, labelled, and otherwise ignored: **a
 Detection is MediaPipe Tasks Vision, committed under `vendor/` rather than pulled from a CDN, so the watch still runs with no network and nothing about its use leaves the device. Two models:
 
 - **Pose landmarker (lite)** returns 33 body landmarks, which are mapped onto the joints the overlay draws. It knows the person's own left from their right — something a silhouette never can, since a silhouette only has the left and right of the picture.
+- **Face landmarker** returns 478, drawn as the face oval, brows, eyes, irises and lips. The full mesh is 2,556 edges and reads as a grey smear at any size that fits on a phone; the outlines read as a face. Which point joins which comes from MediaPipe itself rather than indices written out by hand, because there is no eyeballing a wrong one among 478.
 - **Object detector (EfficientDet-Lite0)** names `car`, `truck`, `bus` and `motorcycle`. A vehicle is boxed and labelled and nothing more; **it never changes the cadence.**
 
-The first run downloads about 9 MB — 3.3 MB of WebAssembly and a 5.5 MB pose model — and the browser caches it. The 4.4 MB vehicle model is fetched afterwards in the background, so the watch starts as soon as people can be tracked and begins labelling vehicles a moment later. Landmarks below half visibility are dropped rather than drawn, so an arm behind a person's back leaves a gap instead of a bone through thin air.
+The first run downloads about 9 MB — 3.3 MB of WebAssembly and a 5.5 MB pose model — and the browser caches it. The face and vehicle models, another 3.6 and 4.4 MB, are fetched afterwards in the background, so the watch starts as soon as people can be tracked and gains the face and vehicle labels a moment later. Landmarks below half visibility are dropped rather than drawn, so an arm behind a person's back leaves a gap instead of a bone through thin air.
+
+### Being sure somebody is really there
+
+In video the pose landmarker detects once and then *tracks*, so a pose it locked onto by mistake is reported again on every later frame — and a phone pointed at a ceiling ended up on the 30-second cadence with a skeleton drawn across the beams. Landmarks existing is not evidence that anybody is there, so presence has to be earned on each frame:
+
+- The trunk — the four joints reported most reliably and the last to be occluded — must be seen at **0.8** or better. A body properly in frame reports well over 0.9.
+- Between 0.55 and 0.8 the reading needs a second opinion: a **face** where the head should be, or the **object detector** naming a person. That detector looks afresh at every frame instead of tracking, so it cannot inherit the mistake.
+- A landmark carrying no score at all counts as nothing. Reading a missing number as full confidence is how a phantom gets waved through at maximum certainty.
+
+A pose that does not convince is not drawn either, so the picture never shows a skeleton the schedule is ignoring. Vehicles are held to 0.6, and a box covering nearly the whole frame is discarded as the detector shrugging rather than a lorry parked against the lens.
 
 ### When the model cannot be had
 
