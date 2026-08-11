@@ -402,6 +402,8 @@
   let wakeLock = null;
   let faceDetector = null;
   let faceHint = null;
+  let usingModel = false;
+  let modelDetector = null;
   let faceHintAt = 0;
   let facePending = false;
 
@@ -478,8 +480,18 @@
       });
   }
 
+  function frameIsReady() {
+    return Boolean(stream) && monitorVideo.readyState >= 2 && Boolean(monitorVideo.videoWidth);
+  }
+
+  // The trained model reads the video element itself, at whatever resolution the
+  // camera is giving; only the built-in detector needs the downscaled copy.
+  function sampleVideo() {
+    return frameIsReady() ? monitorVideo : null;
+  }
+
   function sampleFrame() {
-    if (!stream || monitorVideo.readyState < 2 || !monitorVideo.videoWidth) {
+    if (!frameIsReady()) {
       return null;
     }
 
@@ -487,6 +499,26 @@
     refreshFaceHint(Date.now());
 
     return sampleContext.getImageData(0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT);
+  }
+
+  // The trained model is the detector; the built-in one is what is left when it
+  // cannot be had — an old browser, a failed download, no WebAssembly. Better a
+  // rougher watch than a dead button.
+  async function createDetector() {
+    if (!window.StampNoteModel) {
+      return { detector: pose.createPoseDetector(), model: false };
+    }
+
+    try {
+      setMonitorStatus("Loading the pose model — a few megabytes, the first time only…");
+      return { detector: await window.StampNoteModel.load(), model: true };
+    } catch (error) {
+      setMonitorStatus(
+        "The pose model could not load, so the built-in detector is watching instead.",
+        "error",
+      );
+      return { detector: pose.createPoseDetector(), model: false, error };
+    }
   }
 
   // Full sensor resolution for the photo itself — the 128x96 frame is only ever
@@ -815,15 +847,21 @@
       // Some browsers resolve the frame without play() ever settling.
     }
 
-    faceDetector = createFaceDetector();
+    const { detector, model } = await createDetector();
+    modelDetector = detector.kind === "model" ? detector : null;
+
+    // The face hint only ever propped up the built-in detector's head cue; the
+    // trained model has no use for it.
+    faceDetector = model ? null : createFaceDetector();
     faceHint = null;
+    usingModel = model;
 
     controller = autoCapture.createAutoCapture({
-      detector: pose.createPoseDetector(),
+      detector,
       tracker: pose.createPoseTracker(),
       scheduler: schedule.createCaptureScheduler(),
       store,
-      sampleFrame,
+      sampleFrame: detector.wantsVideo ? sampleVideo : sampleFrame,
       captureImage,
       getAddress: () => addressField.value,
       getFaces: () => faceHint,
@@ -845,7 +883,12 @@
     }
     document.body.classList.add("is-stamped");
     setToggleLabel(true);
-    setMonitorStatus("Watching for people — photos save themselves.", "success");
+    setMonitorStatus(
+      model
+        ? "Watching for people — photos save themselves."
+        : "Watching with the built-in detector — photos save themselves.",
+      model ? "success" : "idle",
+    );
     requestWakeLock();
     renderCaptures();
   }
@@ -859,6 +902,10 @@
     monitorVideo.srcObject = null;
 
     controller?.stop();
+    // The model holds WebAssembly memory and a GPU context; dropping the
+    // reference alone would leave both until the tab is closed.
+    modelDetector?.close?.();
+    modelDetector = null;
     controller = null;
     faceDetector = null;
     faceHint = null;

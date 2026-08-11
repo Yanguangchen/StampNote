@@ -16,9 +16,13 @@
     minLuma: 50,
     maxLuma: 250,
     motionThreshold: 14,
-    // Roughly a second and a half of memory at four frames a second.
-    motionDecay: 0.8,
-    motionFloor: 0.25,
+    // How far a pixel must depart from the learned scene to count as something
+    // in front of it — comfortably above sensor grain, below real contrast.
+    backgroundThreshold: 18,
+    // Scenery settles in a few seconds; someone standing still takes minutes to
+    // be absorbed into it.
+    backgroundLearn: 0.08,
+    backgroundHold: 0.002,
     minComponentArea: 12,
     minSkinPixels: 8,
     minSkinFraction: 0.03,
@@ -123,69 +127,125 @@
     return { width, height, luma, skin, skinCount };
   }
 
-  // Clothing has no skin tone, so movement is what reveals the rest of a body.
+  // What is in front of the scene, rather than what is the colour of a person.
   //
-  // Movement between two frames alone is not enough: a person standing still to
-  // read their phone disappears from the waist down between one frame and the
-  // next, and half a silhouette rigs half a skeleton. So motion is remembered
-  // and allowed to fade over a second or so, which spans those pauses.
+  // Skin tone cannot decide this. The chrominance band that finds a forearm
+  // across every skin tone also finds varnished floorboards, terracotta, beige
+  // carpet, cardboard and bare brick, and any room lit by a warm bulb reads as
+  // skin wall to wall. Letting colour alone put a pixel in the foreground makes
+  // the floor a permanent part of the silhouette, and a person standing on it is
+  // swallowed by it: one blob the width of the room, no limbs to rig, and an
+  // empty room that still has something in it. So the scene itself is learned,
+  // and the subject is whatever fails to match it. Skin goes back to being what
+  // it is good at — saying whether the thing that moved was a person.
   //
-  // A remembered pixel is only still part of the body while it still looks like
-  // the body did when it moved there. That distinction is what stops the memory
-  // becoming a smear: stand still and your pixels keep their value, so you stay
-  // whole; walk on and the pixels behind you revert to the room, no longer match
-  // what was remembered, and are dropped at once instead of trailing after you.
-  // Without it the silhouette fattens, the trunk measures wider than it is, and
-  // the arms are swallowed by their own wake.
-  function readMotion(luma, previousLuma, settings, trail) {
-    const motion = new Uint8Array(luma.length);
-    const comparable = previousLuma && previousLuma.length === luma.length;
-    let motionCount = 0;
-
-    if (!comparable && !trail) {
-      return { motion, motionCount };
-    }
-
-    for (let index = 0; index < luma.length; index += 1) {
-      const moved =
-        comparable && Math.abs(luma[index] - previousLuma[index]) > settings.motionThreshold;
-
-      if (!trail) {
-        if (moved) {
-          motion[index] = 1;
-          motionCount += 1;
-        }
-        continue;
-      }
-
-      if (moved) {
-        trail.weight[index] = 1;
-        trail.luma[index] = luma[index];
-      } else {
-        trail.weight[index] *= settings.motionDecay;
-      }
-
-      if (trail.weight[index] < settings.motionFloor) {
-        continue;
-      }
-
-      if (moved || Math.abs(luma[index] - trail.luma[index]) <= settings.motionThreshold) {
-        motion[index] = 1;
-        motionCount += 1;
-      } else {
-        trail.weight[index] = 0;
-      }
-    }
-
-    return { motion, motionCount };
+  // The model updates quickly where it agrees with the picture and very slowly
+  // where it does not, so furniture is learned in a few seconds while somebody
+  // standing still takes minutes to fade into the wallpaper.
+  // Colour, not just brightness. A blue shirt against a grey wall can carry the
+  // very same luma while sharing none of its colour, and a model that only knows
+  // how bright the wall was loses half the torso to it.
+  function createScene(size) {
+    return { background: new Float32Array(size * 3), ready: false };
   }
 
-  // Skin and motion together, closed up. Both masks come out speckled — a
-  // patterned shirt only registers movement where the pattern changed, and the
-  // holes it leaves behind are enough to cut a body into diagonal ribbons under
-  // four-neighbour labelling. Dilating and then eroding bridges the single-pixel
-  // gaps and hands the labeller one silhouette instead of a dozen slivers.
-  function buildForeground(skin, motion, width, height) {
+  // Every camera hunts for its exposure, and a phone's white balance drifts with
+  // it. That lifts or drops the whole picture at once, which a plain comparison
+  // reads as the entire frame moving. The median shift across the scene is the
+  // camera changing its mind; subtracting it leaves only what actually moved.
+  // A subject covers a minority of the frame, so it cannot drag the median.
+  function estimateShift(data, background, size, step = 7) {
+    const shift = [0, 0, 0];
+
+    for (let channel = 0; channel < 3; channel += 1) {
+      const samples = [];
+
+      for (let index = 0; index < size; index += step) {
+        samples.push(data[index * 4 + channel] - background[index * 3 + channel]);
+      }
+
+      samples.sort((left, right) => left - right);
+      shift[channel] = samples[samples.length >> 1] || 0;
+    }
+
+    return shift;
+  }
+
+  function readForeground(data, luma, previousLuma, scene, settings) {
+    const size = luma.length;
+    const mask = new Uint8Array(size);
+    const motion = new Uint8Array(size);
+    let count = 0;
+    let motionCount = 0;
+
+    // The first frame is all the scene there is to go on, so it becomes the
+    // scene. Anything already standing there is part of the furniture until it
+    // moves, which is the honest reading of a single picture.
+    if (!scene.ready) {
+      for (let index = 0; index < size; index += 1) {
+        scene.background[index * 3] = data[index * 4];
+        scene.background[index * 3 + 1] = data[index * 4 + 1];
+        scene.background[index * 3 + 2] = data[index * 4 + 2];
+      }
+
+      scene.ready = true;
+      return { mask, count, motion, motionCount, shift: [0, 0, 0] };
+    }
+
+    const shift = estimateShift(data, scene.background, size);
+    const lumaShift = 0.299 * shift[0] + 0.587 * shift[1] + 0.114 * shift[2];
+    const comparable = previousLuma && previousLuma.length === size;
+
+    for (let index = 0; index < size; index += 1) {
+      const pixel = index * 4;
+      const slot = index * 3;
+
+      // The channel that has changed most decides. Summing them would let a
+      // small drift on all three add up to a subject that is not there.
+      let distance = 0;
+      for (let channel = 0; channel < 3; channel += 1) {
+        const away = Math.abs(
+          data[pixel + channel] - shift[channel] - scene.background[slot + channel],
+        );
+        if (away > distance) {
+          distance = away;
+        }
+      }
+
+      const standsOut = distance > settings.backgroundThreshold;
+
+      if (standsOut) {
+        mask[index] = 1;
+        count += 1;
+      }
+
+      if (
+        comparable &&
+        Math.abs(luma[index] - previousLuma[index] - lumaShift) > settings.motionThreshold
+      ) {
+        motion[index] = 1;
+        motionCount += 1;
+      }
+
+      // Learned fast where the picture agrees with the model, barely at all
+      // where it does not. The update follows the real value, so the exposure
+      // the shift accounted for is absorbed over the next few frames.
+      const rate = standsOut ? settings.backgroundHold : settings.backgroundLearn;
+      for (let channel = 0; channel < 3; channel += 1) {
+        scene.background[slot + channel] +=
+          rate * (data[pixel + channel] - scene.background[slot + channel]);
+      }
+    }
+
+    return { mask, count, motion, motionCount, shift };
+  }
+
+  // Closed up before labelling. The mask comes out speckled — a shirt only
+  // departs from the scene where its pattern is darker or lighter than what was
+  // behind it — and the holes it leaves are enough to cut a body into ribbons
+  // under four-neighbour labelling. Dilating and then eroding bridges the
+  // single-pixel gaps and hands the labeller one silhouette instead of slivers.
+  function buildForeground(subject, width, height) {
     const size = width * height;
     const dilated = new Uint8Array(size);
     const closed = new Uint8Array(size);
@@ -194,12 +254,11 @@
       const x = index % width;
 
       if (
-        skin[index] ||
-        motion[index] ||
-        (x > 0 && (skin[index - 1] || motion[index - 1])) ||
-        (x + 1 < width && (skin[index + 1] || motion[index + 1])) ||
-        (index >= width && (skin[index - width] || motion[index - width])) ||
-        (index + width < size && (skin[index + width] || motion[index + width]))
+        subject[index] ||
+        (x > 0 && subject[index - 1]) ||
+        (x + 1 < width && subject[index + 1]) ||
+        (index >= width && subject[index - width]) ||
+        (index + width < size && subject[index + width])
       ) {
         dilated[index] = 1;
       }
@@ -1165,14 +1224,16 @@
     const settings = { ...DEFAULTS, ...(options.settings || {}) };
     const { width, height, luma, skin, skinCount } = readFrame(frame, settings);
     const size = width * height;
-    const { motion, motionCount } = readMotion(
+    const scene = options.scene || createScene(size);
+    const { mask, motion, motionCount } = readForeground(
+      frame.data,
       luma,
       options.previousLuma,
+      scene,
       settings,
-      options.motionTrail,
     );
 
-    const foreground = buildForeground(skin, motion, width, height);
+    const foreground = buildForeground(mask, width, height);
     const { labels, components } = findComponents(
       foreground,
       skin,
@@ -1261,24 +1322,21 @@
   // has to hand over pixels.
   function createPoseDetector(options = {}) {
     let previousLuma = null;
-    let motionTrail = null;
+    let scene = null;
 
     return {
       detect(frame, hints = {}) {
         const pixels = (frame?.width || 0) * (frame?.height || 0);
 
-        if (!motionTrail || motionTrail.weight.length !== pixels) {
-          motionTrail = {
-            weight: new Float32Array(pixels),
-            luma: new Uint8ClampedArray(pixels),
-          };
+        if (!scene || scene.background.length !== pixels * 3) {
+          scene = createScene(pixels);
         }
 
         const detection = analyzeFrame(frame, {
           ...options,
           ...hints,
           previousLuma,
-          motionTrail,
+          scene,
         });
 
         previousLuma = detection.luma;
@@ -1286,7 +1344,7 @@
       },
       reset() {
         previousLuma = null;
-        motionTrail = null;
+        scene = null;
       },
     };
   }
@@ -1411,6 +1469,7 @@
     WEIGHTS,
     analyzeFrame,
     createPoseDetector,
+    createScene,
     createPoseTracker,
     isSkin,
     plateau,
