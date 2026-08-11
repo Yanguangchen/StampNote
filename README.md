@@ -13,7 +13,7 @@ Press start once and the page takes over:
 
 The interval always counts from the last photo, not from the moment somebody appeared. So a person walking in 100 seconds into a quiet stretch is already overdue under the 30-second rule and is photographed at once, while a person arriving 5 seconds after a photo waits out the balance of the 30. The first photo is taken as soon as the camera opens, which is also the confirmation that the watch is running.
 
-The badge over the video says who is in frame, which cadence is in force, and how long until the next photo. A skeleton is drawn over the tracked pose so it is obvious what the page thinks it is looking at.
+The badge over the video says who is in frame, which cadence is in force, and how long until the next photo. A rigged skeleton is drawn over the tracked pose — head, neck, shoulders, spine and hips in white, and the four limbs in the accent colour — so it is obvious what the page thinks it is looking at.
 
 ### How the pose tracking works, and where it falls down
 
@@ -24,9 +24,17 @@ StampNote takes no third-party dependencies, and a trained pose model means a ru
 - **Silhouette shape.** A narrow head above broader shoulders, upright, occupying a plausible share of the frame. This one is a gate rather than a cue: skin tone, size and an upright aspect describe a cardboard box as happily as a person, and the head is what separates them.
 - **Face boxes**, where the browser has the Shape Detection API (Chrome). Where it does not, the other cues carry the detection alone.
 
+Movement is also remembered for a second or so and allowed to fade, so a person who pauses does not dissolve from the waist down between one frame and the next. A remembered pixel only counts while it still looks the way it did when it moved, which is what keeps the memory from trailing after a walking figure and fattening the silhouette.
+
 Readings are then smoothed: someone is only reported present after consecutive sightings, and only reported gone after four quiet seconds, so a person turning their head cannot flip the cadence.
 
-What this will not do: it needs some visible skin, so a person fully covered or facing away in poor light can be missed; it cannot count people or tell one from another; and a warm-toned, head-shaped, moving object will fool it. It chooses a capture interval — it is not a security system, and it should not be relied on as one.
+### Rigging arms, torso and legs
+
+Once there is a silhouette, the limbs come out of its own geometry. A weighted breadth-first walk from the middle of the body measures every pixel's distance *through* the body rather than across it, so the far points of that field are the ends of the limbs — hands, feet and head — even when an arm is bent right back. Following that path in reverse from a fingertip and stopping half way puts the elbow where the arm actually folds, which no straight line from shoulder to wrist can do. Shoulders, neck and hips are then fitted to the trunk, measured on the rows where the arms have swung clear of it.
+
+The result is a fifteen-joint rig: head, neck, shoulders, elbows, wrists, spine, hips, knees and ankles. Joints that cannot be found honestly are left out rather than guessed — an arm held flat against the body is invisible in a silhouette, so that arm is simply not drawn, and a body framed from the waist up is not given legs.
+
+What this will not do: it needs some visible skin, so a person fully covered or facing away in poor light can be missed; it cannot count people or tell one from another; it cannot tell someone's left from their right, only the left and right of the picture; a bent-double or lying-down pose breaks the upright assumptions the rig is built on; and a warm-toned, head-shaped, moving object will fool it. It chooses a capture interval — it is not a security system, and it should not be relied on as one.
 
 ### Where the photos go
 
@@ -66,7 +74,7 @@ Node.js 18 or newer is required. Run the suite with:
 npm test
 ```
 
-The suite checks the page foundation, camera and gallery input contracts, accessible label wiring, address lookup service, date/time stamp copy, responsive CSS, and reduced-motion support. It also covers the autonomous watch: pose detection against synthetic frames (a person, an empty room, and the near misses — a skin-toned slab, a wall, moving scenery), tracker hysteresis, both capture cadences and the switch between them, local storage with its pruning and fallbacks, and the controller driving a two-hour watch on a fake clock. It uses Node's built-in test runner and has no third-party test dependencies.
+The suite checks the page foundation, camera and gallery input contracts, accessible label wiring, address lookup service, date/time stamp copy, responsive CSS, and reduced-motion support. It also covers the autonomous watch: pose detection against synthetic frames (a person, an empty room, and the near misses — a skin-toned slab, a wall, moving scenery), rigging a figure posed four ways (arms down, arms out, arms overhead, one arm hidden), tracker hysteresis, both capture cadences and the switch between them, local storage with its pruning and fallbacks, and the controller driving a two-hour watch on a fake clock. It uses Node's built-in test runner and has no third-party test dependencies.
 
 ## Workflow
 
@@ -81,7 +89,7 @@ The suite checks the page foundation, camera and gallery input contracts, access
 - `styles.css` — responsive visual design
 - `address-service.js` — geolocation and reverse-geocoding functions
 - `stamp.js` — canvas stamping of the address and date/time
-- `pose-detector.js` — dependency-free human-pose detection and tracking
+- `pose-detector.js` — dependency-free human-pose detection, rigging and tracking
 - `capture-scheduler.js` — the 30-second and 120-second capture cadences
 - `photo-store.js` — on-device capture store, with pruning and fallbacks
 - `auto-capture.js` — the watch loop joining tracker, schedule and store

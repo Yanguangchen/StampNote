@@ -352,6 +352,11 @@
   const THUMBNAIL_LIMIT = 12;
   const DOWNLOAD_SPACING = 400;
 
+  // Head, neck and trunk in white; the four limbs in the accent, so an arm or a
+  // leg can be picked out against the body at a glance.
+  const SPINE_COLOR = "rgba(255, 255, 255, 0.92)";
+  const LIMB_COLOR = "rgba(120, 255, 200, 0.95)";
+
   const sampleCanvas = document.createElement("canvas");
   sampleCanvas.width = SAMPLE_WIDTH;
   sampleCanvas.height = SAMPLE_HEIGHT;
@@ -512,22 +517,27 @@
     }
 
     const at = (point) => (point ? [point.x * width, point.y * height] : null);
-    const bones = [
-      [points.head, points.torso],
-      [points.shoulderLeft, points.shoulderRight],
-      [points.shoulderLeft, points.hipLeft],
-      [points.shoulderRight, points.hipRight],
-      [points.hipLeft, points.hipRight],
-      [points.torso, points.feet],
+
+    // Each chain is drawn between whichever of its joints were found, so an arm
+    // the silhouette swallowed simply leaves that limb undrawn instead of
+    // pulling a bone across the body to a joint that is not there.
+    const chains = [
+      [SPINE_COLOR, [points.neck, points.torso]],
+      [SPINE_COLOR, [points.shoulderLeft, points.neck, points.shoulderRight]],
+      [SPINE_COLOR, [points.hipLeft, points.torso, points.hipRight]],
+      [LIMB_COLOR, [points.shoulderLeft, points.elbowLeft, points.wristLeft]],
+      [LIMB_COLOR, [points.shoulderRight, points.elbowRight, points.wristRight]],
+      [LIMB_COLOR, [points.hipLeft, points.kneeLeft, points.ankleLeft]],
+      [LIMB_COLOR, [points.hipRight, points.kneeRight, points.ankleRight]],
     ];
 
-    context.strokeStyle = "rgba(255, 255, 255, 0.85)";
-    context.lineWidth = 2;
+    context.lineWidth = 2.5;
     context.lineCap = "round";
+    context.lineJoin = "round";
 
     if (state.box) {
       context.save();
-      context.strokeStyle = "rgba(255, 255, 255, 0.45)";
+      context.strokeStyle = "rgba(255, 255, 255, 0.35)";
       context.lineWidth = 1.5;
       context.setLineDash([5, 5]);
       context.strokeRect(
@@ -539,29 +549,63 @@
       context.restore();
     }
 
-    bones.forEach(([from, to]) => {
-      const start = at(from);
-      const end = at(to);
+    chains.forEach(([color, joints]) => {
+      context.strokeStyle = color;
 
-      if (!start || !end) {
-        return;
-      }
+      joints.forEach((joint, index) => {
+        const start = at(joints[index - 1]);
+        const end = at(joint);
 
-      context.beginPath();
-      context.moveTo(start[0], start[1]);
-      context.lineTo(end[0], end[1]);
-      context.stroke();
+        if (index === 0 || !start || !end) {
+          return;
+        }
+
+        context.beginPath();
+        context.moveTo(start[0], start[1]);
+        context.lineTo(end[0], end[1]);
+        context.stroke();
+      });
     });
 
-    context.fillStyle = "rgba(120, 255, 200, 0.95)";
-    Object.values(points).forEach((point) => {
+    // The head reads as a head rather than another joint. Its keypoint is the
+    // crown, so the circle is sized and centred off the run down to the neck —
+    // the bounding box is no use here, since outstretched arms widen it without
+    // making the head any bigger.
+    const head = at(points.head);
+    const neck = at(points.neck);
+
+    if (head && neck) {
+      const reach = Math.hypot(neck[0] - head[0], neck[1] - head[1]);
+      const radius = Math.max(4, reach * 0.42);
+      const centerX = head[0] + (neck[0] - head[0]) * 0.42;
+      const centerY = head[1] + (neck[1] - head[1]) * 0.42;
+
+      context.strokeStyle = SPINE_COLOR;
+      context.lineWidth = 2.5;
+      context.beginPath();
+      context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+      context.stroke();
+
+      // The neck runs from the edge of the head, not from its middle.
+      const span = Math.hypot(neck[0] - centerX, neck[1] - centerY) || 1;
+      context.beginPath();
+      context.moveTo(
+        centerX + ((neck[0] - centerX) / span) * radius,
+        centerY + ((neck[1] - centerY) / span) * radius,
+      );
+      context.lineTo(neck[0], neck[1]);
+      context.stroke();
+    }
+
+    context.fillStyle = LIMB_COLOR;
+    Object.entries(points).forEach(([joint, point]) => {
       const position = at(point);
-      if (!position) {
+      if (!position || joint === "head") {
         return;
       }
 
       context.beginPath();
-      context.arc(position[0], position[1], 3.5, 0, Math.PI * 2);
+      context.arc(position[0], position[1], 3, 0, Math.PI * 2);
       context.fill();
     });
   }

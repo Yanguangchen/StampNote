@@ -486,6 +486,24 @@ test("the start and stop glyphs swap through the attribute, not the property", (
   assert.equal(hasAttribute(tagWithId("svg", "monitor-icon-start"), "hidden"), false);
 });
 
+test("the overlay draws a whole rig, limb by limb", () => {
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+
+  // Arms and legs are drawn as their own chains rather than a torso outline.
+  ["shoulderLeft", "elbowLeft", "wristLeft", "hipRight", "kneeRight", "ankleRight"].forEach(
+    (joint) => {
+      assert.match(app, new RegExp(`points\\.${joint}`), `expected ${joint} in the overlay`);
+    },
+  );
+
+  // A limb that was not found leaves a gap instead of a bone drawn to nowhere.
+  assert.match(app, /if \(index === 0 \|\| !start \|\| !end\) \{\s*return;/);
+
+  // Trunk and limbs are told apart by colour.
+  assert.match(app, /const SPINE_COLOR = /);
+  assert.match(app, /const LIMB_COLOR = /);
+});
+
 test("the live camera is released when the watch stops", () => {
   const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
 

@@ -16,6 +16,9 @@
     minLuma: 50,
     maxLuma: 250,
     motionThreshold: 14,
+    // Roughly a second and a half of memory at four frames a second.
+    motionDecay: 0.8,
+    motionFloor: 0.25,
     minComponentArea: 12,
     minSkinPixels: 8,
     minSkinFraction: 0.03,
@@ -117,18 +120,56 @@
   }
 
   // Clothing has no skin tone, so movement is what reveals the rest of a body.
-  function readMotion(luma, previousLuma, threshold) {
+  //
+  // Movement between two frames alone is not enough: a person standing still to
+  // read their phone disappears from the waist down between one frame and the
+  // next, and half a silhouette rigs half a skeleton. So motion is remembered
+  // and allowed to fade over a second or so, which spans those pauses.
+  //
+  // A remembered pixel is only still part of the body while it still looks like
+  // the body did when it moved there. That distinction is what stops the memory
+  // becoming a smear: stand still and your pixels keep their value, so you stay
+  // whole; walk on and the pixels behind you revert to the room, no longer match
+  // what was remembered, and are dropped at once instead of trailing after you.
+  // Without it the silhouette fattens, the trunk measures wider than it is, and
+  // the arms are swallowed by their own wake.
+  function readMotion(luma, previousLuma, settings, trail) {
     const motion = new Uint8Array(luma.length);
+    const comparable = previousLuma && previousLuma.length === luma.length;
     let motionCount = 0;
 
-    if (!previousLuma || previousLuma.length !== luma.length) {
+    if (!comparable && !trail) {
       return { motion, motionCount };
     }
 
     for (let index = 0; index < luma.length; index += 1) {
-      if (Math.abs(luma[index] - previousLuma[index]) > threshold) {
+      const moved =
+        comparable && Math.abs(luma[index] - previousLuma[index]) > settings.motionThreshold;
+
+      if (!trail) {
+        if (moved) {
+          motion[index] = 1;
+          motionCount += 1;
+        }
+        continue;
+      }
+
+      if (moved) {
+        trail.weight[index] = 1;
+        trail.luma[index] = luma[index];
+      } else {
+        trail.weight[index] *= settings.motionDecay;
+      }
+
+      if (trail.weight[index] < settings.motionFloor) {
+        continue;
+      }
+
+      if (moved || Math.abs(luma[index] - trail.luma[index]) <= settings.motionThreshold) {
         motion[index] = 1;
         motionCount += 1;
+      } else {
+        trail.weight[index] = 0;
       }
     }
 
@@ -285,6 +326,9 @@
     return best;
   }
 
+  // Each row also keeps its runs — the separate spans the row is cut into. Two
+  // runs low down are two legs; the run holding the body's axis is the torso,
+  // whatever the arms are doing beside it.
   function profileRows(labels, width, component) {
     const rows = [];
 
@@ -293,24 +337,62 @@
       let minX = Infinity;
       let maxX = -Infinity;
       let sumX = 0;
+      const runs = [];
+      let runStart = -1;
 
-      for (let x = component.minX; x <= component.maxX; x += 1) {
-        if (labels[y * width + x] === component.label) {
+      for (let x = component.minX; x <= component.maxX + 1; x += 1) {
+        const inside = x <= component.maxX && labels[y * width + x] === component.label;
+
+        if (inside) {
           count += 1;
           sumX += x;
           if (x < minX) minX = x;
           if (x > maxX) maxX = x;
+          if (runStart === -1) {
+            runStart = x;
+          }
+        } else if (runStart !== -1) {
+          runs.push({ start: runStart, end: x - 1, width: x - runStart });
+          runStart = -1;
         }
       }
 
       rows.push(
         count === 0
-          ? { y, count: 0, minX: 0, maxX: 0, centerX: 0, width: 0 }
-          : { y, count, minX, maxX, centerX: sumX / count, width: maxX - minX + 1 },
+          ? { y, count: 0, minX: 0, maxX: 0, centerX: 0, width: 0, runs }
+          : { y, count, minX, maxX, centerX: sumX / count, width: maxX - minX + 1, runs },
       );
     }
 
     return rows;
+  }
+
+  // The run a given column falls in, or the nearest one to it.
+  function runAt(row, x) {
+    let best = null;
+    let bestDistance = Infinity;
+
+    row.runs.forEach((run) => {
+      const distance = x < run.start ? run.start - x : x > run.end ? x - run.end : 0;
+
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = run;
+      }
+    });
+
+    return best;
+  }
+
+  function median(values) {
+    if (values.length === 0) {
+      return 0;
+    }
+
+    const sorted = [...values].sort((left, right) => left - right);
+    const middle = Math.floor(sorted.length / 2);
+
+    return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
   }
 
   // Summarises a horizontal slice of the silhouette, given as fractions of its
@@ -356,6 +438,505 @@
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // Rigging
+  //
+  // Limbs come out of the silhouette's own geometry. A breadth-first walk from
+  // the middle of the body measures every pixel's distance *through* the body
+  // rather than across it, so the farthest points are the ends of the limbs —
+  // hands, feet, head — even when an arm is bent right back. Walking that path
+  // in reverse from a fingertip and stopping halfway puts the elbow where the
+  // arm actually folds, which no straight line from shoulder to wrist can do.
+  // It is the classical star-skeleton idea with a geodesic field standing in
+  // for the contour scan.
+  // ---------------------------------------------------------------------------
+
+  const RIG = Object.freeze({
+    // A limb tip has to be the farthest point in this much of its neighbourhood.
+    peakRadius: 4,
+    // Two tips closer than this belong to the same limb.
+    separation: 7,
+    // Head, two hands, two feet, and one spare for a stray elbow or a bag.
+    maxTips: 6,
+    // Tips nearer the middle than this are folds in the outline, not limbs.
+    minReach: 0.35,
+  });
+
+  function pixelAt(index, width) {
+    const x = index % width;
+    return { x, y: (index - x) / width };
+  }
+
+  // The centre of a body is usually inside it, but not for someone bent double,
+  // so the walk starts from the nearest pixel that really is part of them.
+  function findStart(labels, component, width, x, y) {
+    const originX = Math.round(clamp(x, component.minX, component.maxX));
+    const originY = Math.round(clamp(y, component.minY, component.maxY));
+
+    if (labels[originY * width + originX] === component.label) {
+      return originY * width + originX;
+    }
+
+    const reach = Math.max(
+      component.maxX - component.minX,
+      component.maxY - component.minY,
+    );
+
+    for (let radius = 1; radius <= reach; radius += 1) {
+      for (let dy = -radius; dy <= radius; dy += 1) {
+        for (let dx = -radius; dx <= radius; dx += 1) {
+          if (Math.abs(dx) !== radius && Math.abs(dy) !== radius) {
+            continue;
+          }
+
+          const nextX = originX + dx;
+          const nextY = originY + dy;
+
+          if (
+            nextX < component.minX ||
+            nextX > component.maxX ||
+            nextY < component.minY ||
+            nextY > component.maxY
+          ) {
+            continue;
+          }
+
+          const index = nextY * width + nextX;
+          if (labels[index] === component.label) {
+            return index;
+          }
+        }
+      }
+    }
+
+    return -1;
+  }
+
+  // Steps cost 3 straight and 4 diagonally — the standard chamfer weights, whose
+  // ratio is within a couple of percent of √2. Counting every step the same
+  // instead measures city blocks, and a city-block field piles up extra distance
+  // along the outer edge of a diagonal limb: the edge of a leg then reads as
+  // farther away than the foot, and the phantom peak crowds out the real hand.
+  // Integer weights keep this a bucket queue rather than a heap, so it stays a
+  // linear pass.
+  const STRAIGHT_STEP = 3;
+  const DIAGONAL_STEP = 4;
+
+  function geodesicField(labels, component, width, height, start) {
+    const size = width * height;
+    const distance = new Int32Array(size).fill(-1);
+    const previous = new Int32Array(size).fill(-1);
+    const buckets = [];
+
+    let farthest = 0;
+
+    function push(index, cost) {
+      if (!buckets[cost]) {
+        buckets[cost] = [];
+      }
+      buckets[cost].push(index);
+    }
+
+    distance[start] = 0;
+    push(start, 0);
+
+    for (let cost = 0; cost < buckets.length; cost += 1) {
+      const bucket = buckets[cost];
+      if (!bucket) {
+        continue;
+      }
+
+      for (let position = 0; position < bucket.length; position += 1) {
+        const index = bucket[position];
+
+        // A shorter route reached this pixel after it was queued.
+        if (distance[index] !== cost) {
+          continue;
+        }
+        if (cost > farthest) {
+          farthest = cost;
+        }
+
+        const x = index % width;
+        const y = (index - x) / width;
+
+        for (let dy = -1; dy <= 1; dy += 1) {
+          for (let dx = -1; dx <= 1; dx += 1) {
+            if (dx === 0 && dy === 0) {
+              continue;
+            }
+
+            const nextX = x + dx;
+            const nextY = y + dy;
+
+            if (nextX < 0 || nextY < 0 || nextX >= width || nextY >= height) {
+              continue;
+            }
+
+            const next = nextY * width + nextX;
+            if (labels[next] !== component.label) {
+              continue;
+            }
+
+            const step = cost + (dx === 0 || dy === 0 ? STRAIGHT_STEP : DIAGONAL_STEP);
+            if (distance[next] === -1 || step < distance[next]) {
+              distance[next] = step;
+              previous[next] = index;
+              push(next, step);
+            }
+          }
+        }
+      }
+    }
+
+    return { distance, previous, farthest };
+  }
+
+  // Local maxima of the walk, thinned so each limb contributes one tip.
+  function findLimbTips(field, width, height, component) {
+    const { distance, farthest } = field;
+    const threshold = farthest * RIG.minReach;
+    const candidates = [];
+
+    for (let y = component.minY; y <= component.maxY; y += 1) {
+      for (let x = component.minX; x <= component.maxX; x += 1) {
+        const index = y * width + x;
+        const reach = distance[index];
+
+        if (reach < threshold) {
+          continue;
+        }
+
+        let isPeak = true;
+
+        for (let dy = -RIG.peakRadius; dy <= RIG.peakRadius && isPeak; dy += 1) {
+          for (let dx = -RIG.peakRadius; dx <= RIG.peakRadius; dx += 1) {
+            const nextX = x + dx;
+            const nextY = y + dy;
+
+            if (nextX < 0 || nextY < 0 || nextX >= width || nextY >= height) {
+              continue;
+            }
+            if (distance[nextY * width + nextX] > reach) {
+              isPeak = false;
+              break;
+            }
+          }
+        }
+
+        if (isPeak) {
+          candidates.push({ index, x, y, reach });
+        }
+      }
+    }
+
+    candidates.sort((left, right) => right.reach - left.reach);
+
+    const tips = [];
+    candidates.forEach((candidate) => {
+      if (tips.length >= RIG.maxTips) {
+        return;
+      }
+
+      const crowded = tips.some(
+        (tip) => Math.hypot(tip.x - candidate.x, tip.y - candidate.y) < RIG.separation,
+      );
+
+      if (!crowded) {
+        tips.push(candidate);
+      }
+    });
+
+    return tips;
+  }
+
+  // Feet are the lowest tips, the head is the highest, and whatever is left in
+  // between is a hand. A limb the silhouette has swallowed — an arm held flat
+  // against the body — simply yields no tip, and that joint stays null.
+  function assignTips(tips, component, rows, trunk) {
+    const { axisX } = trunk;
+    const boxHeight = component.maxY - component.minY + 1;
+
+    // The surest sign of an arm is that its row is cut into more than one piece
+    // and the tip is not in the piece holding the body's axis. Distance from the
+    // axis is only the fallback, because a body that has been moving leaves the
+    // trunk measuring wider than it is.
+    // The gap and the limb both have to be real. Differencing two frames marks
+    // an edge in both its old and its new position, which litters the outline
+    // with single-pixel slivers a hair away from the body; treating one as an
+    // arm hangs a stub off the shoulder.
+    const clearOfTrunk = (tip) => {
+      const row = rows[tip.y - component.minY];
+      const run = row?.runs.find((piece) => tip.x >= piece.start && tip.x <= piece.end);
+      const trunkRun = row && runAt(row, axisX);
+
+      if (!run || !trunkRun || run === trunkRun || run.width < 2) {
+        return false;
+      }
+
+      const gap = run.end < trunkRun.start ? trunkRun.start - run.end : run.start - trunkRun.end;
+
+      return gap >= 2;
+    };
+    const remaining = [...tips].sort((left, right) => left.y - right.y);
+
+    // The head is the tip nearest the body's axis in the upper reaches, not
+    // simply the highest one: hands held above the head are higher still, and
+    // taking the topmost would rig an arm to the neck.
+    const overhead = remaining.filter((tip) => tip.y <= component.minY + boxHeight * 0.4);
+    const head =
+      overhead.sort(
+        (left, right) => Math.abs(left.x - axisX) - Math.abs(right.x - axisX),
+      )[0] ||
+      remaining[0] ||
+      null;
+
+    if (head) {
+      remaining.splice(remaining.indexOf(head), 1);
+    }
+
+    // A head is round enough to peak more than once, and a second peak on the
+    // crown would otherwise pass as a hand raised beside the face. Anything
+    // within a head's width of the head is the head.
+    const headSpread = Math.max(4, trunk.headWidth * 0.9);
+    const away = head
+      ? remaining.filter((tip) => Math.hypot(tip.x - head.x, tip.y - head.y) > headSpread)
+      : remaining;
+
+    // Feet are what reaches the bottom of the silhouette. Hands hang around
+    // thigh height on a standing body — well below halfway — so splitting at the
+    // waist files both hands as failed feet and throws the arms away.
+    const footLine = component.maxY - boxHeight * 0.2;
+    const lower = away
+      .filter((tip) => tip.y > footLine)
+      .sort((left, right) => right.y - left.y);
+    const feet = lower.slice(0, 2).sort((left, right) => left.x - right.x);
+
+    // A hand has to have left the trunk — reaching out to the side, or up past
+    // the shoulders. An arm hanging flat against the body is swallowed by the
+    // silhouette, and the corner of a shoulder is not an arm; without this the
+    // rig sprouts a stub limb wherever the outline happens to turn.
+    const hands = away
+      .filter(
+        (tip) =>
+          tip.y <= footLine &&
+          // Reaching out to the side, or up past the shoulders. Distance is
+          // counted in head widths, the steadiest measurement on a body: the
+          // trunk is only ever measured through rows the arms are lying across.
+          (clearOfTrunk(tip) ||
+            Math.abs(tip.x - axisX) > trunk.headWidth * 1.5 ||
+            tip.y < trunk.shoulderY - trunk.width * 0.3),
+      )
+      .sort((left, right) => left.x - right.x);
+
+    const side = (group, wanted) => {
+      if (group.length === 0) {
+        return null;
+      }
+      if (group.length === 1) {
+        // One tip only: it belongs to whichever side of the axis it sits on.
+        const isLeft = group[0].x < axisX;
+        return (wanted === "left") === isLeft ? group[0] : null;
+      }
+
+      return wanted === "left" ? group[0] : group[group.length - 1];
+    };
+
+    return {
+      head,
+      wristLeft: side(hands, "left"),
+      wristRight: side(hands, "right"),
+      ankleLeft: side(feet, "left"),
+      ankleRight: side(feet, "right"),
+    };
+  }
+
+  // Follows a limb back from its tip to the joint it hangs off, and puts the
+  // fold — elbow or knee — half way along. Measuring through the body rather
+  // than across the gap is what places the fold correctly on a bent limb.
+  //
+  // A limb also has to be limb-length. The outline of a shoulder turns a corner
+  // that reads as a tip, and without a length to clear, the rig sprouts a
+  // three-pixel arm there. Requiring the path itself to be long enough rejects
+  // that whatever the trunk happens to measure.
+  function traceLimb(field, width, tip, root, minimumLength) {
+    if (!tip || !root) {
+      return null;
+    }
+
+    const path = [];
+    let index = tip.index;
+
+    while (index !== -1 && path.length < field.distance.length) {
+      path.push(index);
+      index = field.previous[index];
+    }
+
+    if (path.length < 2) {
+      return null;
+    }
+
+    // Where the path passes closest to the shoulder or hip is where the limb
+    // starts; everything beyond that belongs to the torso.
+    let rootPosition = path.length - 1;
+    let best = Infinity;
+
+    path.forEach((step, position) => {
+      const point = pixelAt(step, width);
+      const gap = (point.x - root.x) ** 2 + (point.y - root.y) ** 2;
+
+      if (gap < best) {
+        best = gap;
+        rootPosition = position;
+      }
+    });
+
+    if (rootPosition < minimumLength) {
+      return null;
+    }
+
+    return {
+      tip: { x: tip.x, y: tip.y },
+      fold: pixelAt(path[Math.round(rootPosition / 2)], width),
+    };
+  }
+
+  function buildRig(labels, component, rows, width, height) {
+    const boxHeight = component.maxY - component.minY + 1;
+    const rowAt = (fraction) =>
+      rows[clamp(Math.round((rows.length - 1) * fraction), 0, rows.length - 1)];
+
+    // The body's axis and the width of its trunk are read from the chest and
+    // waist, the one stretch of a person that arms and legs stay out of.
+    const chest = rows.slice(
+      Math.floor(rows.length * 0.3),
+      Math.max(Math.floor(rows.length * 0.3) + 1, Math.floor(rows.length * 0.62)),
+    );
+    const seedX = median(chest.filter((row) => row.count > 0).map((row) => row.centerX));
+    const trunkRuns = chest
+      .filter((row) => row.count > 0)
+      .map((row) => runAt(row, seedX))
+      .filter(Boolean);
+
+    const axisX = median(trunkRuns.map((run) => (run.start + run.end) / 2)) || seedX;
+
+    // The head's own run, not the width of the whole row: with both arms raised
+    // the top of the silhouette spans hand to hand, and measuring across that
+    // would report a head as wide as a doorway.
+    const headWidth =
+      median(
+        rows
+          .slice(0, Math.max(1, Math.floor(rows.length * 0.15)))
+          .filter((row) => row.count > 0)
+          .map((row) => runAt(row, axisX)?.width || 0)
+          .filter(Boolean),
+      ) || 1;
+
+    // Arms resting against the body share their row with the trunk, so the
+    // typical row through the chest measures shoulder-to-fingertip, not the
+    // trunk. The narrowest row in the same stretch is the one where the arms
+    // have swung clear — that is the trunk, and a trunk is never narrower than
+    // the head sitting on it.
+    // Shoulders to hips. It starts below the head, which is about a seventh of a
+    // standing body and narrower than the trunk, and stops above the hips, which
+    // sit near half height — a row of leg is narrower still, and either end
+    // would have the trunk measuring as something else entirely.
+    const spans = rows
+      .slice(Math.floor(rows.length * 0.2), Math.max(2, Math.floor(rows.length * 0.48)))
+      .filter((row) => row.count > 0)
+      .map((row) => runAt(row, axisX)?.width || 0)
+      .filter(Boolean);
+
+    const trunkWidth = Math.max(headWidth, spans.length > 0 ? Math.min(...spans) : headWidth);
+
+    const shoulderRow = rowAt(0.2);
+    const hipRow = rowAt(0.58);
+    const shoulderSpan = Math.max(trunkWidth, 2) / 2;
+    const hipSpan = Math.max(trunkWidth * 0.85, 2) / 2;
+
+    const start = findStart(labels, component, width, axisX, component.minY + boxHeight * 0.45);
+    if (start === -1) {
+      return null;
+    }
+
+    const field = geodesicField(labels, component, width, height, start);
+    const tips = assignTips(findLimbTips(field, width, height, component), component, rows, {
+      axisX,
+      width: trunkWidth,
+      headWidth,
+      shoulderY: shoulderRow.y,
+    });
+
+    const shoulderLeft = { x: axisX - shoulderSpan, y: shoulderRow.y };
+    const shoulderRight = { x: axisX + shoulderSpan, y: shoulderRow.y };
+    const hipLeft = { x: axisX - hipSpan, y: hipRow.y };
+    const hipRight = { x: axisX + hipSpan, y: hipRow.y };
+
+    // An arm held down beside the body only parts from it near the wrist, so the
+    // free run of a limb can be much shorter than the limb itself. The bar is set
+    // low enough for that and still well clear of the two or three pixels a
+    // corner of the outline produces.
+    // Legs only exist below the point where the body stops being trunk-wide.
+    // Someone framed from the waist up has corners down there, not feet, and
+    // without this the rig hangs a pair of legs off the bottom of the crop.
+    let trunkBottom = component.maxY;
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const run = rows[index].count > 0 ? runAt(rows[index], axisX) : null;
+
+      if (run && run.width >= trunkWidth * 0.8) {
+        trunkBottom = rows[index].y;
+        break;
+      }
+    }
+
+    const standsOn = (tip) =>
+      tip && tip.y > trunkBottom + trunkWidth * 0.2 ? tip : null;
+
+    // An arm held down beside the body only parts from it near the wrist, so the
+    // free run of a limb is far shorter than the limb itself. The bar is set low
+    // enough for that and still well clear of the two or three pixels a corner of
+    // the outline produces. It scales with the body's height — the one
+    // measurement an arm lying against the trunk cannot inflate.
+    const minimumLimb = Math.max(4, boxHeight * 0.1);
+    const armLeft = traceLimb(field, width, tips.wristLeft, shoulderLeft, minimumLimb);
+    const armRight = traceLimb(field, width, tips.wristRight, shoulderRight, minimumLimb);
+    const legLeft = traceLimb(field, width, standsOn(tips.ankleLeft), hipLeft, minimumLimb);
+    const legRight = traceLimb(field, width, standsOn(tips.ankleRight), hipRight, minimumLimb);
+
+    const headBand = summarizeBand(rows, 0, 0.15);
+    const head = tips.head
+      ? { x: tips.head.x, y: tips.head.y }
+      : headBand && { x: headBand.centerX, y: headBand.centerY };
+    const neck = { x: axisX, y: shoulderRow.y };
+
+    return {
+      pixels: {
+        head,
+        neck,
+        shoulderLeft,
+        shoulderRight,
+        elbowLeft: armLeft?.fold || null,
+        elbowRight: armRight?.fold || null,
+        wristLeft: armLeft?.tip || null,
+        wristRight: armRight?.tip || null,
+        torso: { x: axisX, y: component.minY + boxHeight * 0.4 },
+        hipLeft,
+        hipRight,
+        kneeLeft: legLeft?.fold || null,
+        kneeRight: legRight?.fold || null,
+        ankleLeft: legLeft?.tip || null,
+        ankleRight: legRight?.tip || null,
+      },
+      axisX,
+      trunkWidth,
+      headWidth,
+      limbs: {
+        arms: Number(Boolean(armLeft)) + Number(Boolean(armRight)),
+        legs: Number(Boolean(legLeft)) + Number(Boolean(legRight)),
+      },
+    };
+  }
+
   function classifyPose(aspect, boxWidth, boxHeight) {
     if (boxHeight > 0.75 && boxWidth > 0.45) {
       return "close-up";
@@ -397,41 +978,40 @@
 
   // Keypoints and the box come back normalised to 0..1 so an overlay of any size
   // can draw them without knowing the analysis resolution.
-  function describePose(component, rows, width, height, faces) {
+  function describePose(labels, component, rows, width, height, faces) {
     const boxWidth = component.maxX - component.minX + 1;
     const boxHeight = component.maxY - component.minY + 1;
     const aspect = boxHeight / boxWidth;
 
-    const headBand = summarizeBand(rows, 0, 0.15);
-    const shoulderBand = summarizeBand(rows, 0.15, 0.5);
-    const torsoBand = summarizeBand(rows, 0.3, 0.7);
-    const hipBand = summarizeBand(rows, 0.55, 0.8);
-    const footRow = [...rows].reverse().find((row) => row.count > 0);
+    const rig = buildRig(labels, component, rows, width, height);
 
-    const toPoint = (x, y) => ({ x: clamp(x / width), y: clamp(y / height) });
-    const shoulderRow = shoulderBand?.widest;
-    const hipRow = hipBand?.widest;
+    // Normalised to 0..1 so an overlay of any size can draw the rig without
+    // knowing the resolution it was found at.
+    const toPoint = (point) =>
+      point ? { x: clamp(point.x / width), y: clamp(point.y / height) } : null;
+    const keypoints = rig
+      ? Object.fromEntries(
+          Object.entries(rig.pixels).map(([joint, point]) => [joint, toPoint(point)]),
+        )
+      : null;
 
-    const keypoints = {
-      head: headBand ? toPoint(headBand.centerX, headBand.centerY) : null,
-      shoulderLeft: shoulderRow ? toPoint(shoulderRow.minX, shoulderRow.y) : null,
-      shoulderRight: shoulderRow ? toPoint(shoulderRow.maxX, shoulderRow.y) : null,
-      torso: torsoBand ? toPoint(torsoBand.centerX, torsoBand.centerY) : null,
-      hipLeft: hipRow ? toPoint(hipRow.minX, hipRow.y) : null,
-      hipRight: hipRow ? toPoint(hipRow.maxX, hipRow.y) : null,
-      feet: footRow ? toPoint(footRow.centerX, footRow.y) : null,
-    };
-
-    // A head reads as a head when it is clearly narrower than the shoulders and
-    // sits above the torso. A door, a wall or a wooden floor is a slab of even
+    // A head reads as a head when it is clearly narrower than the body beneath it
+    // and sits above the torso. A door, a wall or a wooden floor is a slab of even
     // width, which is what this rejects.
-    const shoulderWidth = shoulderRow?.width || 0;
-    const headRatio = headBand && shoulderWidth > 0 ? headBand.meanWidth / shoulderWidth : 1;
+    //
+    // The head is measured across its own run rather than the whole row, so arms
+    // raised either side of it are not counted as skull. What it is compared
+    // against is the widest row below, which needs no anatomy to be right — the
+    // rigged trunk width is a finer measurement, and deliberately not used here:
+    // whether a person is detected at all should not ride on it.
+    const shoulderBand = summarizeBand(rows, 0.15, 0.5);
+    const shoulderWidth = shoulderBand?.widest?.width || 0;
+    const headRatio = rig && shoulderWidth > 0 ? rig.headWidth / shoulderWidth : 1;
     const headAboveTorso =
-      keypoints.head && keypoints.torso ? keypoints.head.y < keypoints.torso.y : false;
+      keypoints?.head && keypoints?.torso ? keypoints.head.y < keypoints.torso.y : false;
 
-    const face = matchFace(faces, keypoints.head, width, height);
-    const headScore = face ? 1 : headAboveTorso ? plateau(headRatio, 0.3, 0.85, 0.15, 0.15) : 0;
+    const face = matchFace(faces, keypoints?.head, width, height);
+    const headScore = face ? 1 : headAboveTorso ? plateau(headRatio, 0.2, 0.85, 0.15, 0.15) : 0;
 
     return {
       aspect,
@@ -439,6 +1019,7 @@
       face: Boolean(face),
       pose: classifyPose(aspect, boxWidth / width, boxHeight / height),
       keypoints,
+      limbs: rig?.limbs || { arms: 0, legs: 0 },
       box: {
         x: component.minX / width,
         y: component.minY / height,
@@ -454,7 +1035,12 @@
     const settings = { ...DEFAULTS, ...(options.settings || {}) };
     const { width, height, luma, skin, skinCount } = readFrame(frame, settings);
     const size = width * height;
-    const { motion, motionCount } = readMotion(luma, options.previousLuma, settings.motionThreshold);
+    const { motion, motionCount } = readMotion(
+      luma,
+      options.previousLuma,
+      settings,
+      options.motionTrail,
+    );
 
     const foreground = buildForeground(skin, motion, width, height);
     const { labels, components } = findComponents(
@@ -477,7 +1063,7 @@
     }
 
     const rows = profileRows(labels, width, component);
-    const shape = describePose(component, rows, width, height, options.faces);
+    const shape = describePose(labels, component, rows, width, height, options.faces);
 
     const areaFraction = component.area / size;
     const skinFraction = component.skinArea / component.area;
@@ -499,6 +1085,7 @@
       confidence,
       pose: shape.pose,
       keypoints: shape.keypoints,
+      limbs: shape.limbs,
       box: shape.box,
       aspect: shape.aspect,
       areaFraction,
@@ -509,16 +1096,28 @@
     };
   }
 
-  // Carries the previous frame so the caller only has to hand over pixels.
+  // Carries the previous frame and the fading motion memory, so the caller only
+  // has to hand over pixels.
   function createPoseDetector(options = {}) {
     let previousLuma = null;
+    let motionTrail = null;
 
     return {
       detect(frame, hints = {}) {
+        const pixels = (frame?.width || 0) * (frame?.height || 0);
+
+        if (!motionTrail || motionTrail.weight.length !== pixels) {
+          motionTrail = {
+            weight: new Float32Array(pixels),
+            luma: new Uint8ClampedArray(pixels),
+          };
+        }
+
         const detection = analyzeFrame(frame, {
           ...options,
           ...hints,
           previousLuma,
+          motionTrail,
         });
 
         previousLuma = detection.luma;
@@ -526,6 +1125,7 @@
       },
       reset() {
         previousLuma = null;
+        motionTrail = null;
       },
     };
   }
