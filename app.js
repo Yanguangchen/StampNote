@@ -3,6 +3,10 @@
 
   const service = window.StampNoteAddress;
   const stamp = window.StampNoteStamp;
+  const pose = window.StampNotePose;
+  const schedule = window.StampNoteSchedule;
+  const storage = window.StampNoteStore;
+  const autoCapture = window.StampNoteAutoCapture;
   const addressField = document.querySelector("#address-field");
   const status = document.querySelector("#location-status");
   const addressPanel = document.querySelector("#address-panel");
@@ -11,6 +15,20 @@
   const diagnostics = document.querySelector("#location-diagnostics");
   const diagnosticsBody = document.querySelector("#location-diagnostics-body");
   const photoInputs = document.querySelectorAll("#camera-input, #gallery-input");
+
+  const monitorFrame = document.querySelector("#monitor-frame");
+  const monitorVideo = document.querySelector("#monitor-video");
+  const monitorToggle = document.querySelector("#monitor-toggle");
+  const monitorToggleName = document.querySelector("#monitor-toggle-name");
+  const monitorIconStart = document.querySelector("#monitor-icon-start");
+  const monitorIconStop = document.querySelector("#monitor-icon-stop");
+  const monitorStatus = document.querySelector("#monitor-status");
+  const poseOverlay = document.querySelector("#pose-overlay");
+  const poseBadge = document.querySelector("#pose-badge");
+  const capturesList = document.querySelector("#captures");
+  const capturesSummary = document.querySelector("#captures-summary");
+  const capturesSave = document.querySelector("#captures-save");
+  const capturesClear = document.querySelector("#captures-clear");
 
   if (!service || !stamp || !addressField || !status || !addressPanel) {
     return;
@@ -120,6 +138,18 @@
     autoSaveTimer = window.setTimeout(autoSave, AUTO_SAVE_DELAY);
   }
 
+  function downloadFile(file) {
+    const url = URL.createObjectURL(file);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = file.name;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
   async function autoSave() {
     const stamped = photos.filter((photo) => photo.canvas);
     const files = (await Promise.all(stamped.map(toFile))).filter(Boolean);
@@ -130,17 +160,7 @@
 
     autoSaved = true;
 
-    files.forEach((file) => {
-      const url = URL.createObjectURL(file);
-      const link = document.createElement("a");
-
-      link.href = url;
-      link.download = file.name;
-      document.body.append(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 10000);
-    });
+    files.forEach(downloadFile);
 
     setStatus(files.length === 1 ? "Saved." : `Saved ${files.length} photos.`, "success");
   }
@@ -204,8 +224,8 @@
   // With no location button left, this automatic attempt is the only chance to
   // fill the address, so it runs whenever permission has not already been
   // refused. Browsers that prompt without a gesture (desktop Safari, Chrome,
-  // Firefox) still ask here; iOS refuses a request made outside a tap and no
-  // longer has a tap to offer, so it falls through to typing.
+  // Firefox) still ask here; iOS refuses a request made outside a tap, so auto
+  // capture fires this from its own start tap before awaiting the camera.
   async function autoLocate() {
     const context = environment();
 
@@ -310,4 +330,513 @@
   if (shareButton && typeof navigator.canShare === "function") {
     shareButton.addEventListener("click", share);
   }
+
+  // ---------------------------------------------------------------------------
+  // Autonomous capture
+  //
+  // The camera runs live, a pose tracker watches the frames, and photos are
+  // taken on their own — every 30 seconds while someone is in frame, every 120
+  // seconds while no one is. Each photo is stamped and written straight to the
+  // device's own store; nothing is uploaded and nothing needs a tap.
+  // ---------------------------------------------------------------------------
+
+  if (!pose || !schedule || !storage || !autoCapture || !monitorToggle || !monitorVideo) {
+    return;
+  }
+
+  // Small enough to analyse several times a second on a phone, large enough to
+  // keep a person a few metres away more than a handful of pixels.
+  const SAMPLE_WIDTH = 128;
+  const SAMPLE_HEIGHT = 96;
+  const FACE_HINT_INTERVAL = 2000;
+  const THUMBNAIL_LIMIT = 12;
+  const DOWNLOAD_SPACING = 400;
+
+  const sampleCanvas = document.createElement("canvas");
+  sampleCanvas.width = SAMPLE_WIDTH;
+  sampleCanvas.height = SAMPLE_HEIGHT;
+  const sampleContext = sampleCanvas.getContext("2d", { willReadFrequently: true });
+  const captureCanvas = document.createElement("canvas");
+
+  const store = storage.createPhotoStore();
+  const thumbnailUrls = [];
+
+  let stream = null;
+  let controller = null;
+  let sampleTimer = null;
+  let wakeLock = null;
+  let faceDetector = null;
+  let faceHint = null;
+  let faceHintAt = 0;
+  let facePending = false;
+
+  function setMonitorStatus(message, state = "idle") {
+    if (!monitorStatus) {
+      return;
+    }
+
+    monitorStatus.textContent = message;
+    monitorStatus.dataset.state = state;
+  }
+
+  function isRunning() {
+    return Boolean(controller?.getState().running);
+  }
+
+  function setToggleLabel(running) {
+    const name = running ? "Stop auto capture" : "Start auto capture";
+
+    monitorToggle.title = name;
+    if (monitorToggleName) {
+      monitorToggleName.textContent = name;
+    }
+    if (monitorIconStart && monitorIconStop) {
+      // `hidden` is an HTMLElement property, so assigning it on an SVG element
+      // sets a stray JavaScript property and leaves the icon on screen. The
+      // attribute is what the [hidden] rule matches.
+      monitorIconStart.toggleAttribute("hidden", running);
+      monitorIconStop.toggleAttribute("hidden", !running);
+    }
+  }
+
+  // Chrome ships the Shape Detection API; Safari and Firefox do not. Where it
+  // exists a face box anchors the head keypoint and lifts the confidence, and
+  // where it does not the skin-and-motion cues carry the detection alone.
+  function createFaceDetector() {
+    if (typeof window.FaceDetector !== "function") {
+      return null;
+    }
+
+    try {
+      return new window.FaceDetector({ fastMode: true, maxDetectedFaces: 4 });
+    } catch {
+      return null;
+    }
+  }
+
+  // Runs well below the sampling rate and never blocks it: the loop reads
+  // whichever hint finished last.
+  function refreshFaceHint(timestamp) {
+    if (!faceDetector || facePending || timestamp - faceHintAt < FACE_HINT_INTERVAL) {
+      return;
+    }
+
+    facePending = true;
+    faceDetector
+      .detect(sampleCanvas)
+      .then((faces) => {
+        faceHint = faces.map((face) => ({
+          x: face.boundingBox.x,
+          y: face.boundingBox.y,
+          width: face.boundingBox.width,
+          height: face.boundingBox.height,
+        }));
+      })
+      .catch(() => {
+        // A detector that throws once will keep throwing; drop it.
+        faceDetector = null;
+        faceHint = null;
+      })
+      .finally(() => {
+        faceHintAt = timestamp;
+        facePending = false;
+      });
+  }
+
+  function sampleFrame() {
+    if (!stream || monitorVideo.readyState < 2 || !monitorVideo.videoWidth) {
+      return null;
+    }
+
+    sampleContext.drawImage(monitorVideo, 0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT);
+    refreshFaceHint(Date.now());
+
+    return sampleContext.getImageData(0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT);
+  }
+
+  // Full sensor resolution for the photo itself — the 128x96 frame is only ever
+  // used to decide when to take one.
+  function captureImage() {
+    return new Promise((resolve, reject) => {
+      if (!monitorVideo.videoWidth || !monitorVideo.videoHeight) {
+        reject(new Error("The camera has no frame yet."));
+        return;
+      }
+
+      const date = new Date();
+      captureCanvas.width = monitorVideo.videoWidth;
+      captureCanvas.height = monitorVideo.videoHeight;
+      captureCanvas.getContext("2d").drawImage(monitorVideo, 0, 0);
+
+      const stamped = stamp.drawStampedImage(captureCanvas, {
+        address: addressField.value,
+        date,
+      });
+
+      stamped.toBlob(
+        (blob) => {
+          if (blob) {
+            resolve({ blob, date });
+          } else {
+            reject(new Error("The photo could not be encoded."));
+          }
+        },
+        "image/jpeg",
+        0.9,
+      );
+    });
+  }
+
+  function drawOverlay(state) {
+    if (!poseOverlay) {
+      return;
+    }
+
+    const width = poseOverlay.clientWidth;
+    const height = poseOverlay.clientHeight;
+
+    if (width === 0 || height === 0) {
+      return;
+    }
+    if (poseOverlay.width !== width || poseOverlay.height !== height) {
+      poseOverlay.width = width;
+      poseOverlay.height = height;
+    }
+
+    const context = poseOverlay.getContext("2d");
+    context.clearRect(0, 0, width, height);
+
+    const points = state.keypoints;
+    if (!state.present || !points) {
+      return;
+    }
+
+    const at = (point) => (point ? [point.x * width, point.y * height] : null);
+    const bones = [
+      [points.head, points.torso],
+      [points.shoulderLeft, points.shoulderRight],
+      [points.shoulderLeft, points.hipLeft],
+      [points.shoulderRight, points.hipRight],
+      [points.hipLeft, points.hipRight],
+      [points.torso, points.feet],
+    ];
+
+    context.strokeStyle = "rgba(255, 255, 255, 0.85)";
+    context.lineWidth = 2;
+    context.lineCap = "round";
+
+    if (state.box) {
+      context.save();
+      context.strokeStyle = "rgba(255, 255, 255, 0.45)";
+      context.lineWidth = 1.5;
+      context.setLineDash([5, 5]);
+      context.strokeRect(
+        state.box.x * width,
+        state.box.y * height,
+        state.box.width * width,
+        state.box.height * height,
+      );
+      context.restore();
+    }
+
+    bones.forEach(([from, to]) => {
+      const start = at(from);
+      const end = at(to);
+
+      if (!start || !end) {
+        return;
+      }
+
+      context.beginPath();
+      context.moveTo(start[0], start[1]);
+      context.lineTo(end[0], end[1]);
+      context.stroke();
+    });
+
+    context.fillStyle = "rgba(120, 255, 200, 0.95)";
+    Object.values(points).forEach((point) => {
+      const position = at(point);
+      if (!position) {
+        return;
+      }
+
+      context.beginPath();
+      context.arc(position[0], position[1], 3.5, 0, Math.PI * 2);
+      context.fill();
+    });
+  }
+
+  function renderState(state) {
+    if (poseBadge) {
+      poseBadge.textContent = autoCapture.describeCadence(state);
+      poseBadge.dataset.present = String(state.present);
+    }
+
+    drawOverlay(state);
+
+    if (state.error) {
+      setMonitorStatus(state.error, "error");
+    }
+  }
+
+  function releaseThumbnails() {
+    thumbnailUrls.splice(0).forEach((url) => URL.revokeObjectURL(url));
+  }
+
+  async function renderCaptures() {
+    if (!capturesList) {
+      return;
+    }
+
+    const records = await store.list();
+
+    releaseThumbnails();
+    capturesList.replaceChildren();
+
+    records.slice(0, THUMBNAIL_LIMIT).forEach((record) => {
+      if (!record.blob) {
+        return;
+      }
+
+      const url = URL.createObjectURL(record.blob);
+      const image = new Image();
+
+      thumbnailUrls.push(url);
+      image.className = "capture";
+      image.src = url;
+      image.alt = record.poseDetected
+        ? `Capture with a person in frame at ${record.capturedAt}`
+        : `Capture at ${record.capturedAt}`;
+      image.dataset.pose = String(record.poseDetected);
+      capturesList.append(image);
+    });
+
+    const usage = await store.usage(records);
+    const hasCaptures = usage.count > 0;
+
+    if (capturesSummary) {
+      const kept = usage.count === 1 ? "1 photo" : `${usage.count} photos`;
+      const where = store.isPersistent() ? "on this device" : "in this tab only";
+
+      capturesSummary.textContent = hasCaptures
+        ? `${kept} stored ${where} · ${storage.formatBytes(usage.bytes)}`
+        : "";
+    }
+
+    if (capturesSave) {
+      capturesSave.hidden = !hasCaptures;
+    }
+    if (capturesClear) {
+      capturesClear.hidden = !hasCaptures;
+    }
+  }
+
+  // Keeps the screen awake so the schedule keeps running: a locked phone
+  // suspends the camera and the timers along with it.
+  async function requestWakeLock() {
+    if (!navigator.wakeLock?.request) {
+      return;
+    }
+
+    try {
+      wakeLock = await navigator.wakeLock.request("screen");
+    } catch {
+      wakeLock = null;
+    }
+  }
+
+  function releaseWakeLock() {
+    wakeLock?.release?.().catch(() => {});
+    wakeLock = null;
+  }
+
+  function describeCameraError(error) {
+    if (environment().isSecureContext === false) {
+      return "The camera needs a secure page. Open this site over https:// (or on localhost).";
+    }
+
+    switch (error?.name) {
+      case "NotAllowedError":
+        return "Camera permission was denied — allow it in your browser's site settings and start again.";
+      case "NotFoundError":
+      case "OverconstrainedError":
+        return "No camera was found on this device.";
+      case "NotReadableError":
+        return "The camera is already in use by another app.";
+      default:
+        return error?.message || "The camera could not be started.";
+    }
+  }
+
+  async function startMonitor() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setMonitorStatus("This browser cannot open a live camera — use Add photo below.", "error");
+      return;
+    }
+
+    setMonitorStatus("Starting the camera…");
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "environment",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+    } catch (error) {
+      setMonitorStatus(describeCameraError(error), "error");
+      return;
+    }
+
+    monitorVideo.srcObject = stream;
+    try {
+      await monitorVideo.play();
+    } catch {
+      // Some browsers resolve the frame without play() ever settling.
+    }
+
+    faceDetector = createFaceDetector();
+    faceHint = null;
+
+    controller = autoCapture.createAutoCapture({
+      detector: pose.createPoseDetector(),
+      tracker: pose.createPoseTracker(),
+      scheduler: schedule.createCaptureScheduler(),
+      store,
+      sampleFrame,
+      captureImage,
+      getAddress: () => addressField.value,
+      getFaces: () => faceHint,
+      onUpdate: renderState,
+    });
+
+    controller.start();
+    sampleTimer = window.setInterval(async () => {
+      const before = controller.getState().captures;
+      const state = await controller.tick();
+
+      if (state.captures !== before) {
+        renderCaptures();
+      }
+    }, autoCapture.SAMPLE_INTERVAL);
+
+    if (monitorFrame) {
+      monitorFrame.hidden = false;
+    }
+    document.body.classList.add("is-stamped");
+    setToggleLabel(true);
+    setMonitorStatus("Watching for people — photos save themselves.", "success");
+    requestWakeLock();
+    renderCaptures();
+  }
+
+  function stopMonitor() {
+    window.clearInterval(sampleTimer);
+    sampleTimer = null;
+
+    stream?.getTracks().forEach((track) => track.stop());
+    stream = null;
+    monitorVideo.srcObject = null;
+
+    controller?.stop();
+    controller = null;
+    faceDetector = null;
+    faceHint = null;
+
+    releaseWakeLock();
+
+    if (monitorFrame) {
+      monitorFrame.hidden = true;
+    }
+    setToggleLabel(false);
+    setMonitorStatus("Auto capture stopped. Your photos are still stored on this device.");
+  }
+
+  async function saveCaptures() {
+    const records = await store.list();
+
+    if (records.length === 0) {
+      return;
+    }
+
+    setMonitorStatus(`Saving ${records.length} photo(s)…`);
+
+    // Browsers throttle a burst of downloads, so they are spaced out.
+    records.forEach((record, index) => {
+      window.setTimeout(() => {
+        downloadFile(new File([record.blob], record.name, { type: record.type }));
+      }, index * DOWNLOAD_SPACING);
+    });
+
+    window.setTimeout(
+      () => setMonitorStatus(`Saved ${records.length} photo(s).`, "success"),
+      records.length * DOWNLOAD_SPACING,
+    );
+  }
+
+  async function clearCaptures() {
+    const usage = await store.usage();
+
+    if (usage.count === 0) {
+      return;
+    }
+    if (!window.confirm(`Delete ${usage.count} stored photo(s) from this device?`)) {
+      return;
+    }
+
+    await store.clear();
+    releaseThumbnails();
+    await renderCaptures();
+    setMonitorStatus("Stored photos deleted.");
+  }
+
+  monitorToggle.addEventListener("click", () => {
+    if (isRunning()) {
+      stopMonitor();
+      return;
+    }
+
+    // iOS only honours a location request made during a tap, so it is started
+    // here, before the camera prompt takes the gesture away.
+    addressPanel.hidden = false;
+    if (!addressField.value.trim()) {
+      autoLocate();
+    }
+
+    startMonitor();
+  });
+
+  capturesSave?.addEventListener("click", saveCaptures);
+  capturesClear?.addEventListener("click", clearCaptures);
+
+  // A hidden tab has its camera suspended and its timers throttled, so tracking
+  // pauses rather than scoring stale frames, and picks the schedule back up on
+  // return.
+  document.addEventListener("visibilitychange", () => {
+    if (!controller) {
+      return;
+    }
+
+    if (document.hidden) {
+      controller.setPaused(true);
+      return;
+    }
+
+    controller.setPaused(false);
+    monitorVideo.play().catch(() => {});
+    if (!wakeLock) {
+      requestWakeLock();
+    }
+  });
+
+  window.addEventListener("pagehide", () => {
+    if (isRunning()) {
+      stopMonitor();
+    }
+  });
+
+  setToggleLabel(false);
+  renderCaptures();
 })();

@@ -79,6 +79,9 @@ test("icon-only controls keep a text name and hide the glyph from assistive tech
     ["label", "camera-input", "Open camera"],
     ["label", "gallery-input", "Choose from gallery"],
     ["button", "share-button", "Share"],
+    ["button", "monitor-toggle", "Start auto capture"],
+    ["button", "captures-save", "Save captures"],
+    ["button", "captures-clear", "Delete captures"],
   ];
 
   controls.forEach(([tagName, id, name]) => {
@@ -405,6 +408,103 @@ test("stamped canvas adds a bar above and below the photo", () => {
       ["05 AUG 2026 · 14:32", barHeight + 750 + barHeight / 2],
     ],
   );
+});
+
+test("the live camera is wired for autoplay on a phone", () => {
+  const video = tagWithId("video", "monitor-video");
+
+  // iOS refuses to play a video that is not muted and inline, which would take
+  // the whole watch down with it.
+  assert.ok(hasAttribute(video, "playsinline"));
+  assert.ok(hasAttribute(video, "muted"));
+  assert.ok(hasAttribute(video, "autoplay"));
+
+  // The frame stays hidden until a stream is actually attached.
+  assert.ok(hasAttribute(tagWithId("div", "monitor-frame"), "hidden"));
+
+  // The overlay is decoration over the video; the badge carries the words.
+  assert.ok(hasAttribute(tagWithId("canvas", "pose-overlay"), "aria-hidden", "true"));
+  assert.match(html, /id=["']pose-badge["'][^>]*role=["']status["'][^>]*aria-live=["']polite["']/i);
+});
+
+test("auto capture loads its own scripts, ahead of the app that wires them", () => {
+  const order = [...html.matchAll(/<script\s+src=["']([^"']+)["']/gi)].map((match) => match[1]);
+
+  ["pose-detector.js", "capture-scheduler.js", "photo-store.js", "auto-capture.js"].forEach(
+    (file) => {
+      assert.ok(order.includes(file), `Expected ${file} to be loaded`);
+      assert.ok(order.indexOf(file) < order.indexOf("app.js"), `${file} must precede app.js`);
+      assert.ok(existsSync(resolve(projectRoot, file)));
+    },
+  );
+});
+
+test("capture controls stay hidden until something has been captured", () => {
+  assert.ok(hasAttribute(tagWithId("button", "captures-save"), "hidden"));
+  assert.ok(hasAttribute(tagWithId("button", "captures-clear"), "hidden"));
+  assert.match(html, /id=["']captures["']/);
+});
+
+test("the watch stores captures locally and never uploads them", () => {
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const store = readFileSync(resolve(projectRoot, "photo-store.js"), "utf8");
+
+  // Every capture goes to the device's own store, and stays queued there.
+  assert.match(app, /storage\.createPhotoStore\(\)/);
+  assert.match(store, /status: "local"/);
+
+  // Nothing in the capture path posts a photo anywhere.
+  assert.equal(/fetch\(|XMLHttpRequest|sendBeacon|WebSocket/.test(store), false);
+  assert.equal(/sendBeacon|XMLHttpRequest|WebSocket/.test(app), false);
+});
+
+test("the schedule is driven by the pose tracker, at the two required intervals", () => {
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const scheduler = readFileSync(resolve(projectRoot, "capture-scheduler.js"), "utf8");
+
+  assert.match(scheduler, /const POSE_INTERVAL = 30000;/);
+  assert.match(scheduler, /const IDLE_INTERVAL = 120000;/);
+
+  // The app takes the defaults rather than inventing its own cadence.
+  assert.match(app, /schedule\.createCaptureScheduler\(\)/);
+  assert.match(app, /pose\.createPoseDetector\(\)/);
+  assert.match(app, /pose\.createPoseTracker\(\)/);
+});
+
+test("the start and stop glyphs swap through the attribute, not the property", () => {
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+
+  // `hidden` is an HTMLElement property. Assigning it on an <svg> sets a stray
+  // JavaScript property, the [hidden] rule never matches, and the button keeps
+  // offering to start a watch that is already running.
+  assert.match(app, /monitorIconStart\.toggleAttribute\("hidden", running\)/);
+  assert.match(app, /monitorIconStop\.toggleAttribute\("hidden", !running\)/);
+  assert.equal(/monitorIcon(Start|Stop)\.hidden\s*=/.test(app), false);
+
+  // The stop glyph starts out hidden in the markup, where the attribute works.
+  assert.ok(hasAttribute(tagWithId("svg", "monitor-icon-stop"), "hidden"));
+  assert.equal(hasAttribute(tagWithId("svg", "monitor-icon-start"), "hidden"), false);
+});
+
+test("the live camera is released when the watch stops", () => {
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+
+  // A stream left running keeps the camera light on after the user stops.
+  assert.match(app, /stream\?\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
+  assert.match(app, /monitorVideo\.srcObject = null/);
+  assert.match(app, /addEventListener\("pagehide"/);
+
+  // A hidden tab has no camera to look through, so tracking pauses.
+  assert.match(app, /addEventListener\("visibilitychange"/);
+  assert.match(app, /controller\.setPaused\(true\)/);
+});
+
+test("CSS covers the live frame, the pose overlay and the capture grid", () => {
+  assert.match(css, /\.monitor\s*\{/);
+  assert.match(css, /\.monitor-overlay\s*\{/);
+  assert.match(css, /\.monitor video\s*\{[^}]*object-fit:\s*cover/);
+  assert.match(css, /\.captures\s*\{[^}]*grid-template-columns/);
+  assert.match(css, /\.capture\[data-pose="true"\]/);
 });
 
 test("share control is present and starts hidden", () => {
