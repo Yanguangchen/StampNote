@@ -7,12 +7,112 @@
     <link rel="stylesheet" href="styles.css" />
     <script src="address-service.js" defer></script>
     <script src="stamp.js" defer></script>
+    <script src="pose-detector.js" defer></script>
+    <script src="capture-scheduler.js" defer></script>
+    <script src="photo-store.js" defer></script>
+    <script src="auto-capture.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
     <main>
+      <section class="card" aria-labelledby="monitor-title">
+        <h1 id="monitor-title">Auto capture</h1>
+
+        <div class="monitor" id="monitor-frame" hidden>
+          <video id="monitor-video" playsinline muted autoplay></video>
+          <canvas class="monitor-overlay" id="pose-overlay" aria-hidden="true"></canvas>
+          <p class="monitor-badge" id="pose-badge" role="status" aria-live="polite"></p>
+        </div>
+
+        <div class="actions">
+          <button
+            class="button button-primary button-icon"
+            id="monitor-toggle"
+            type="button"
+            title="Start auto capture"
+          >
+            <svg class="icon" id="monitor-icon-start" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M8.5 5.6 18.4 12 8.5 18.4z" />
+            </svg>
+            <svg
+              class="icon"
+              id="monitor-icon-stop"
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+              focusable="false"
+              hidden
+            >
+              <rect x="7" y="7" width="10" height="10" rx="2.5" />
+            </svg>
+            <span class="visually-hidden" id="monitor-toggle-name">Start auto capture</span>
+          </button>
+        </div>
+
+        <p class="status" id="monitor-status" role="status" aria-live="polite"></p>
+
+        <div class="captures" id="captures"></div>
+        <p class="status" id="captures-summary"></p>
+
+        <div class="result-actions">
+          <button
+            class="button button-secondary button-icon"
+            id="captures-save"
+            type="button"
+            title="Save captures"
+            hidden
+          >
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M12 3.4v11.4" />
+              <path d="m7.9 10.7 4.1 4.1 4.1-4.1" />
+              <path d="M4 16.4v2.2a2.5 2.5 0 0 0 2.5 2.5h11a2.5 2.5 0 0 0 2.5-2.5v-2.2" />
+            </svg>
+            <span class="visually-hidden">Save captures</span>
+          </button>
+
+          <button
+            class="button button-secondary button-icon"
+            id="captures-clear"
+            type="button"
+            title="Delete captures"
+            hidden
+          >
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M4.6 6.6h14.8" />
+              <path d="M9.6 6.6V4.9a1.3 1.3 0 0 1 1.3-1.3h2.2a1.3 1.3 0 0 1 1.3 1.3v1.7" />
+              <path d="M6.6 6.6 7.5 19a1.6 1.6 0 0 0 1.6 1.5h5.8a1.6 1.6 0 0 0 1.6-1.5l.9-12.4" />
+              <path d="M10.4 10.2v6.6" />
+              <path d="M13.6 10.2v6.6" />
+            </svg>
+            <span class="visually-hidden">Delete captures</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="card address-card" id="address-panel" aria-labelledby="address-title" hidden>
+        <h2 id="address-title" class="visually-hidden">Location</h2>
+
+        <div class="address">
+          <label class="visually-hidden" for="address-field">Street address</label>
+
+          <textarea
+            id="address-field"
+            name="street-address"
+            rows="2"
+            autocomplete="street-address"
+            placeholder="Type the street address"
+          ></textarea>
+
+          <p class="status" id="location-status" role="status" aria-live="polite"></p>
+
+          <details class="diagnostics" id="location-diagnostics" hidden>
+            <summary>Why is location blocked?</summary>
+            <pre id="location-diagnostics-body"></pre>
+          </details>
+        </div>
+      </section>
+
       <section class="card" aria-labelledby="upload-title">
-        <h1 id="upload-title">Add photo</h1>
+        <h2 id="upload-title">Add photo</h2>
 
         <div class="actions">
           <input
@@ -52,25 +152,6 @@
             </svg>
             <span class="visually-hidden">Choose from gallery</span>
           </label>
-        </div>
-
-        <div class="address" id="address-panel" hidden>
-          <label class="visually-hidden" for="address-field">Street address</label>
-
-          <textarea
-            id="address-field"
-            name="street-address"
-            rows="2"
-            autocomplete="street-address"
-            placeholder="Type the street address"
-          ></textarea>
-
-          <p class="status" id="location-status" role="status" aria-live="polite"></p>
-
-          <details class="diagnostics" id="location-diagnostics" hidden>
-            <summary>Why is location blocked?</summary>
-            <pre id="location-diagnostics-body"></pre>
-          </details>
         </div>
 
         <div class="previews" id="previews"></div>

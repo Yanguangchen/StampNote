@@ -96,6 +96,8 @@ button {
    pixel size) from setting the grid item's automatic minimum, which otherwise
    stretches the column far past the card and throws the centring off. */
 main {
+  display: grid;
+  gap: 16px;
   width: 100%;
   min-width: 0;
 }
@@ -115,7 +117,8 @@ main {
   text-align: center;
 }
 
-.card h1 {
+.card h1,
+.card h2 {
   margin: 0 0 20px;
   font-size: 15px;
   font-weight: 600;
@@ -137,6 +140,90 @@ main {
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+/* On its own card the divider has nothing to divide. */
+.address-card > .address {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* Live camera, with the tracked pose drawn over it. */
+.monitor {
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 16px;
+  border-radius: 14px;
+  background: #0d1512;
+  aspect-ratio: 4 / 3;
+  box-shadow: 0 8px 20px rgba(20, 40, 34, 0.18);
+}
+
+.monitor video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.monitor-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.monitor-badge {
+  position: absolute;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 4px 10px;
+  max-width: calc(100% - 16px);
+  border-radius: 999px;
+  background: rgba(13, 21, 18, 0.72);
+  color: #fff;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.monitor-badge[data-present="true"] {
+  background: rgba(31, 91, 70, 0.85);
+}
+
+.captures {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.captures:not(:empty) {
+  margin-top: 16px;
+}
+
+.capture {
+  animation: fade-in 320ms ease-in-out both;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: 0 4px 12px rgba(20, 40, 34, 0.16);
+}
+
+/* Marks the frames a person was tracked in. */
+.capture[data-pose="true"] {
+  outline: 2px solid rgba(31, 91, 70, 0.75);
+  outline-offset: -2px;
+}
+
+#captures-summary {
+  margin-top: 10px;
 }
 
 /* Once a stamped photo exists the card outgrows the viewport, so it anchors
