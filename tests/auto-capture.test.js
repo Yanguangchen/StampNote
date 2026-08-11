@@ -15,6 +15,7 @@ function createHarness(options = {}) {
   const harness = {
     time: 0,
     present: false,
+    vehicle: false,
     frame: { width: 2, height: 2, data: new Uint8ClampedArray(16) },
     address: "10 Bayfront Avenue",
     captureFails: false,
@@ -28,6 +29,9 @@ function createHarness(options = {}) {
       pose: harness.present ? "standing" : "none",
       keypoints: harness.present ? { head: { x: 0.5, y: 0.2 } } : null,
       box: harness.present ? { x: 0.4, y: 0.1, width: 0.2, height: 0.8 } : null,
+      vehicle: harness.vehicle
+        ? { confidence: 0.9, box: { x: 0.5, y: 0.5, width: 0.4, height: 0.2 } }
+        : null,
     }),
     reset() {},
   };
@@ -111,6 +115,51 @@ test("an empty frame is photographed every 120 seconds", async () => {
 
   await harness.advance(120 * SECOND);
   assert.equal(harness.saved.length, 3);
+});
+
+test("a vehicle is reported but leaves the cadence alone", async () => {
+  const harness = createHarness();
+
+  harness.controller.start();
+  await harness.controller.tick();
+  assert.equal(harness.saved.length, 1);
+
+  // A car pulls up. It is tracked and surfaced …
+  harness.vehicle = true;
+  await harness.advance(SECOND);
+
+  const state = harness.controller.getState();
+  assert.ok(state.vehicle, "the vehicle is carried for the interface to draw");
+  assert.equal(state.present, false, "but it is not a person");
+
+  // … and the schedule does not budge: still the empty-frame interval, and no
+  // photograph until the full 120 seconds have passed.
+  assert.equal(state.intervalMs, 120 * SECOND);
+  await harness.advance(118 * SECOND);
+  assert.equal(harness.saved.length, 1, "no photograph on the 30-second cadence");
+
+  await harness.advance(SECOND);
+  assert.equal(harness.saved.length, 2, "just the ordinary 120-second one");
+});
+
+test("a person arriving at a car still switches the cadence", async () => {
+  const harness = createHarness();
+
+  harness.vehicle = true;
+  harness.controller.start();
+  await harness.controller.tick();
+
+  // The driver gets out 100 seconds later: overdue under the 30-second rule.
+  await harness.advance(100 * SECOND);
+  assert.equal(harness.saved.length, 1);
+
+  harness.present = true;
+  await harness.advance(SECOND);
+
+  const state = harness.controller.getState();
+  assert.equal(state.intervalMs, 30 * SECOND);
+  assert.ok(state.vehicle, "the car is still there alongside them");
+  assert.equal(harness.saved.length, 2);
 });
 
 test("the cadence switches the moment someone walks in or out", async () => {
@@ -275,6 +324,19 @@ test("the badge says who is in frame, at what cadence, and when the next photo l
       waitMs: 0,
     }),
     "No one in frame · every 120s · next in 0s",
+  );
+
+  // A vehicle is named, but never where it could be read as the reason for the
+  // interval that follows it.
+  assert.equal(
+    autoCapture.describeCadence({
+      running: true,
+      present: false,
+      vehicle: { present: true },
+      intervalMs: 120 * SECOND,
+      waitMs: 45000,
+    }),
+    "No one in frame · vehicle · every 120s · next in 45s",
   );
 });
 

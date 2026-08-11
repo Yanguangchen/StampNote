@@ -24,6 +24,7 @@
     minSkinFraction: 0.03,
     maxAreaFraction: 0.75,
     presentConfidence: 0.5,
+    vehicleConfidence: 0.55,
   });
 
   // Sum to 1, so confidence stays a plain 0..1 reading.
@@ -49,6 +50,9 @@
 
   const EMPTY_DETECTION = Object.freeze({
     present: false,
+    subject: "none",
+    vehicle: null,
+    vehicles: 0,
     confidence: 0,
     pose: "none",
     keypoints: null,
@@ -221,7 +225,7 @@
 
   // Four-neighbour flood fill over an explicit stack: recursion would blow the
   // call stack on a component covering most of the frame.
-  function findComponents(foreground, skin, motion, width, height, settings) {
+  function findComponents(foreground, skin, motion, luma, width, height, settings) {
     const size = width * height;
     const labels = new Int32Array(size).fill(-1);
     const stack = new Int32Array(size);
@@ -237,6 +241,7 @@
       let area = 0;
       let skinArea = 0;
       let motionArea = 0;
+      let lumaSum = 0;
       let minX = width;
       let maxX = -1;
       let minY = height;
@@ -255,6 +260,7 @@
         area += 1;
         skinArea += skin[index];
         motionArea += motion[index];
+        lumaSum += luma[index];
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
@@ -295,7 +301,17 @@
       }
 
       if (area >= settings.minComponentArea) {
-        components.push({ label, area, skinArea, motionArea, minX, maxX, minY, maxY });
+        components.push({
+          label,
+          area,
+          skinArea,
+          motionArea,
+          meanLuma: lumaSum / area,
+          minX,
+          maxX,
+          minY,
+          maxY,
+        });
       }
     }
 
@@ -435,6 +451,120 @@
       meanWidth: widthSum / filledRows,
       widest,
       pixels,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Vehicles
+  //
+  // Not so a car can be photographed on a schedule — the cadence answers to
+  // people only — but so a car stops being mistaken for one. Warm paint (tan,
+  // bronze, red, gold) sits inside the same chrominance band as skin, because
+  // that band is a hue test and hue is exactly what a bronze wing and a forearm
+  // have in common. A car's cabin sitting on its body then reads as a narrow
+  // head above broad shoulders, and the last cue that should have caught it
+  // waves it through.
+  //
+  // What a car is not is upright, and what it is not is full of gaps. A person
+  // fills about half their bounding box, arms and legs leaving daylight around
+  // them; a car fills three quarters of a box far wider than it is tall, and
+  // carries two dark wheels along the bottom. Judged on that, the two never
+  // trade places.
+  // ---------------------------------------------------------------------------
+
+  const VEHICLE_WEIGHTS = Object.freeze({
+    solid: 0.45,
+    size: 0.3,
+    wheels: 0.25,
+  });
+
+  // Long and low is what makes a vehicle a vehicle, so it gates the rest the way
+  // the head gates a person. Left as one term among several it does not bite: a
+  // solid upright body scores enough on the others to be called a car with its
+  // one disqualifying measurement reading zero.
+  const VEHICLE_SHAPE_GATE = Object.freeze({ low: 0.25, high: 0.85, under: 0.12, over: 0.2 });
+
+  // Tyres are dark, but so are trousers, so what counts is being much darker
+  // than the body they sit under rather than dark in absolute terms.
+  const WHEEL_LUMA = 85;
+  const WHEEL_CONTRAST = 0.6;
+  const WHEEL_PIXELS = 4;
+
+  function countWheels(labels, component, luma, width, bodyLuma) {
+    const boxWidth = component.maxX - component.minX + 1;
+    const boxHeight = component.maxY - component.minY + 1;
+    const band = Math.max(2, Math.round(boxHeight * 0.35));
+    const third = boxWidth / 3;
+
+    let left = 0;
+    let right = 0;
+
+    for (let y = component.maxY - band; y <= component.maxY; y += 1) {
+      if (y < component.minY) {
+        continue;
+      }
+
+      for (let x = component.minX; x <= component.maxX; x += 1) {
+        const index = y * width + x;
+
+        if (
+          labels[index] !== component.label ||
+          luma[index] > WHEEL_LUMA ||
+          luma[index] > bodyLuma * WHEEL_CONTRAST
+        ) {
+          continue;
+        }
+
+        if (x < component.minX + third) {
+          left += 1;
+        } else if (x > component.maxX - third) {
+          right += 1;
+        }
+      }
+    }
+
+    return (left >= WHEEL_PIXELS ? 1 : 0) + (right >= WHEEL_PIXELS ? 1 : 0);
+  }
+
+  function scoreVehicle(labels, component, luma, width, height) {
+    const boxWidth = component.maxX - component.minX + 1;
+    const boxHeight = component.maxY - component.minY + 1;
+    const aspect = boxHeight / boxWidth;
+    const fill = component.area / (boxWidth * boxHeight);
+    const areaFraction = component.area / (width * height);
+
+    // The upper end of the gate is tight: anything approaching square is as
+    // likely to be a person sitting down as a car seen head-on, and a person
+    // called a vehicle costs a photograph that should have been taken.
+    const low = plateau(
+      aspect,
+      VEHICLE_SHAPE_GATE.low,
+      VEHICLE_SHAPE_GATE.high,
+      VEHICLE_SHAPE_GATE.under,
+      VEHICLE_SHAPE_GATE.over,
+    );
+
+    const wheels = countWheels(labels, component, luma, width, component.meanLuma);
+
+    const confidence = clamp(
+      low *
+        // Solid through the middle, where a body has daylight between its limbs.
+        (VEHICLE_WEIGHTS.solid * clamp((fill - 0.45) / 0.25) +
+          VEHICLE_WEIGHTS.size * plateau(areaFraction, 0.02, 0.7, 0.015, 0.2) +
+          VEHICLE_WEIGHTS.wheels * (wheels / 2)),
+    );
+
+    return {
+      confidence,
+      aspect,
+      fill,
+      wheels,
+      box: {
+        x: component.minX / width,
+        y: component.minY / height,
+        width: boxWidth / width,
+        height: boxHeight / height,
+      },
     };
   }
 
@@ -1047,15 +1177,39 @@
       foreground,
       skin,
       motion,
+      luma,
       width,
       height,
       settings,
     );
-    const component = chooseComponent(components, size, settings);
+    // Every silhouette is asked what it is before the best person is picked out.
+    // A car scored as a person would not only take a photograph it should not
+    // have; standing between the camera and someone walking behind it, it would
+    // be chosen over them and cost the photograph that mattered.
+    const scored = components.map((candidate) => ({
+      component: candidate,
+      vehicle: scoreVehicle(labels, candidate, luma, width, height),
+    }));
+
+    const vehicles = scored
+      .filter((entry) => entry.vehicle.confidence >= settings.vehicleConfidence)
+      .sort((left, right) => right.component.area - left.component.area);
+
+    const vehicle = vehicles[0]?.vehicle || null;
+    const component = chooseComponent(
+      scored
+        .filter((entry) => entry.vehicle.confidence < settings.vehicleConfidence)
+        .map((entry) => entry.component),
+      size,
+      settings,
+    );
 
     if (!component) {
       return {
         ...EMPTY_DETECTION,
+        subject: vehicle ? "vehicle" : "none",
+        vehicle,
+        vehicles: vehicles.length,
         skinFraction: skinCount / size,
         motionFraction: motionCount / size,
         luma,
@@ -1080,8 +1234,15 @@
         (shape.face ? 0.25 : 0),
     );
 
+    const present = confidence >= settings.presentConfidence;
+
     return {
-      present: confidence >= settings.presentConfidence,
+      present,
+      // `present` stays the answer to "is there a person", and it alone reaches
+      // the schedule. A vehicle is reported alongside it, never instead of it.
+      subject: present ? "person" : vehicle ? "vehicle" : "none",
+      vehicle,
+      vehicles: vehicles.length,
       confidence,
       pose: shape.pose,
       keypoints: shape.keypoints,
@@ -1146,6 +1307,15 @@
     let keypoints = null;
     let box = null;
 
+    // Vehicles are steadied the same way and kept in their own drawer. They are
+    // reported so they can be drawn; they are deliberately no part of `present`,
+    // which is what the capture schedule reads.
+    let vehiclePresent = false;
+    let vehicleStreak = 0;
+    let vehicleSeenAt = 0;
+    let vehicleConfidence = 0;
+    let vehicleBox = null;
+
     function state(timestamp) {
       return {
         present,
@@ -1153,6 +1323,11 @@
         pose: present ? pose : "none",
         keypoints: present ? keypoints : null,
         box: present ? box : null,
+        vehicle: {
+          present: vehiclePresent,
+          confidence: vehicleConfidence,
+          box: vehiclePresent ? vehicleBox : null,
+        },
         lastSeenAt,
         sinceMs: present ? Math.max(0, timestamp - enteredAt) : 0,
         awayMs: present || lastSeenAt === 0 ? 0 : Math.max(0, timestamp - lastSeenAt),
@@ -1163,6 +1338,25 @@
       update(detection, timestamp) {
         const reading = detection || EMPTY_DETECTION;
         confidence += settings.smoothing * (reading.confidence - confidence);
+
+        if (reading.vehicle) {
+          vehicleStreak += 1;
+          vehicleSeenAt = timestamp;
+          vehicleBox = reading.vehicle.box;
+          vehicleConfidence = reading.vehicle.confidence;
+
+          if (!vehiclePresent && vehicleStreak >= settings.enterFrames) {
+            vehiclePresent = true;
+          }
+        } else {
+          vehicleStreak = 0;
+
+          if (vehiclePresent && timestamp - vehicleSeenAt >= settings.holdMs) {
+            vehiclePresent = false;
+            vehicleBox = null;
+            vehicleConfidence = 0;
+          }
+        }
 
         if (reading.present) {
           streak += 1;
@@ -1200,6 +1394,11 @@
         pose = "none";
         keypoints = null;
         box = null;
+        vehiclePresent = false;
+        vehicleStreak = 0;
+        vehicleSeenAt = 0;
+        vehicleConfidence = 0;
+        vehicleBox = null;
       },
     };
   }
@@ -1208,6 +1407,7 @@
     DEFAULTS,
     HEAD_GATE_FLOOR,
     TRACKER_DEFAULTS,
+    VEHICLE_WEIGHTS,
     WEIGHTS,
     analyzeFrame,
     createPoseDetector,

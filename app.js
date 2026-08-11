@@ -356,6 +356,8 @@
   // leg can be picked out against the body at a glance.
   const SPINE_COLOR = "rgba(255, 255, 255, 0.92)";
   const LIMB_COLOR = "rgba(120, 255, 200, 0.95)";
+  // Amber, so a vehicle never reads as the green the watch uses for a person.
+  const VEHICLE_COLOR = "rgba(255, 190, 90, 0.95)";
 
   const sampleCanvas = document.createElement("canvas");
   sampleCanvas.width = SAMPLE_WIDTH;
@@ -492,6 +494,35 @@
     });
   }
 
+  // A labelled box, deliberately unlike the rig: a vehicle is something the
+  // watch has recognised and set aside, not something it is waiting on.
+  function drawVehicle(context, box, width, height) {
+    const left = box.x * width;
+    const top = box.y * height;
+    const boxWidth = box.width * width;
+    const boxHeight = box.height * height;
+
+    context.save();
+    context.strokeStyle = VEHICLE_COLOR;
+    context.lineWidth = 2.5;
+    context.strokeRect(left, top, boxWidth, boxHeight);
+
+    const label = "VEHICLE";
+    context.font = "600 10px ui-monospace, SFMono-Regular, monospace";
+    const textWidth = context.measureText(label).width;
+    const chipWidth = textWidth + 10;
+    const chipHeight = 15;
+    // Inside the box when there is no room for it above.
+    const chipTop = top < chipHeight + 2 ? top + 2 : top - chipHeight - 2;
+
+    context.fillStyle = VEHICLE_COLOR;
+    context.fillRect(left, chipTop, chipWidth, chipHeight);
+    context.fillStyle = "#1b1405";
+    context.textBaseline = "middle";
+    context.fillText(label, left + 5, chipTop + chipHeight / 2 + 0.5);
+    context.restore();
+  }
+
   function drawOverlay(state) {
     if (!poseOverlay) {
       return;
@@ -510,6 +541,12 @@
 
     const context = poseOverlay.getContext("2d");
     context.clearRect(0, 0, width, height);
+
+    // Vehicles are drawn whether or not anyone is with them, and are drawn
+    // first so a person standing in front of one keeps the foreground.
+    if (state.vehicle?.present && state.vehicle.box) {
+      drawVehicle(context, state.vehicle.box, width, height);
+    }
 
     const points = state.keypoints;
     if (!state.present || !points) {

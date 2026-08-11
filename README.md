@@ -15,6 +15,8 @@ The interval always counts from the last photo, not from the moment somebody app
 
 The badge over the video says who is in frame, which cadence is in force, and how long until the next photo. A rigged skeleton is drawn over the tracked pose — head, neck, shoulders, spine and hips in white, and the four limbs in the accent colour — so it is obvious what the page thinks it is looking at.
 
+Vehicles are recognised and boxed in amber, labelled, and otherwise ignored: **a vehicle never changes the cadence.** A car in an empty frame is still an empty frame as far as the schedule is concerned, and a person who gets out of it starts the 30-second cadence just as they would anywhere else.
+
 ### How the pose tracking works, and where it falls down
 
 StampNote takes no third-party dependencies, and a trained pose model means a runtime plus megabytes of weights. So a person is found the way a person differs from a room, by scoring several weak cues together:
@@ -27,6 +29,16 @@ StampNote takes no third-party dependencies, and a trained pose model means a ru
 Movement is also remembered for a second or so and allowed to fade, so a person who pauses does not dissolve from the waist down between one frame and the next. A remembered pixel only counts while it still looks the way it did when it moved, which is what keeps the memory from trailing after a walking figure and fattening the silhouette.
 
 Readings are then smoothed: someone is only reported present after consecutive sightings, and only reported gone after four quiet seconds, so a person turning their head cannot flip the cadence.
+
+### Telling a car from a person
+
+Vehicles are picked out for a reason beyond labelling them: without it they are mistaken for people. Warm paint — tan, bronze, gold, red — sits inside the same chrominance band as skin, because that band is a hue test and hue is exactly what a bronze wing and a forearm have in common. A car's cabin sitting on its body then reads as a narrow head above broad shoulders, and the cue that should have caught it waves it through. Before this, a warm-painted car driving past pulled the watch onto the 30-second cadence; a silver one was ignored only because silver has no skin tone at all.
+
+What a car is not is upright, and what it is not is full of gaps. A person fills about half their bounding box, arms and legs leaving daylight around them; a car fills three quarters of a box far wider than it is tall, and carries two wheels along the bottom that are much darker than the paint above them. Being long and low gates the rest, the way the head gates a person.
+
+Every silhouette is asked what it is before the best person is chosen, so a car parked between the camera and a passer-by cannot be picked over them. Both are reported, and both are drawn.
+
+This finds cars, vans and lorries seen from the side or at an angle. A vehicle coming straight at the camera is close to square and is deliberately not claimed — at that shape a person sitting down is just as likely, and calling one a vehicle costs a photograph that should have been taken. A vehicle also has to be moving to be seen at all, like everything else here; a car parked before the watch started is part of the scenery.
 
 ### Rigging arms, torso and legs
 
@@ -74,7 +86,7 @@ Node.js 18 or newer is required. Run the suite with:
 npm test
 ```
 
-The suite checks the page foundation, camera and gallery input contracts, accessible label wiring, address lookup service, date/time stamp copy, responsive CSS, and reduced-motion support. It also covers the autonomous watch: pose detection against synthetic frames (a person, an empty room, and the near misses — a skin-toned slab, a wall, moving scenery), rigging a figure posed four ways (arms down, arms out, arms overhead, one arm hidden), tracker hysteresis, both capture cadences and the switch between them, local storage with its pruning and fallbacks, and the controller driving a two-hour watch on a fake clock. It uses Node's built-in test runner and has no third-party test dependencies.
+The suite checks the page foundation, camera and gallery input contracts, accessible label wiring, address lookup service, date/time stamp copy, responsive CSS, and reduced-motion support. It also covers the autonomous watch: pose detection against synthetic frames (a person, an empty room, and the near misses — a skin-toned slab, a wall, moving scenery), rigging a figure posed four ways (arms down, arms out, arms overhead, one arm hidden), telling cars of five paint colours from people and keeping them off the cadence, tracker hysteresis, both capture cadences and the switch between them, local storage with its pruning and fallbacks, and the controller driving a two-hour watch on a fake clock. It uses Node's built-in test runner and has no third-party test dependencies.
 
 ## Workflow
 
@@ -89,7 +101,7 @@ The suite checks the page foundation, camera and gallery input contracts, access
 - `styles.css` — responsive visual design
 - `address-service.js` — geolocation and reverse-geocoding functions
 - `stamp.js` — canvas stamping of the address and date/time
-- `pose-detector.js` — dependency-free human-pose detection, rigging and tracking
+- `pose-detector.js` — dependency-free human-pose detection, rigging, vehicle spotting and tracking
 - `capture-scheduler.js` — the 30-second and 120-second capture cadences
 - `photo-store.js` — on-device capture store, with pruning and fallbacks
 - `auto-capture.js` — the watch loop joining tracker, schedule and store

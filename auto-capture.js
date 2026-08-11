@@ -36,6 +36,7 @@
       pose: "none",
       keypoints: null,
       box: null,
+      vehicle: null,
       intervalMs: scheduler.intervalFor(false),
       nextDueAt: null,
       waitMs: null,
@@ -156,8 +157,12 @@
           state.pose = tracked.pose;
           state.keypoints = tracked.keypoints;
           state.box = tracked.box;
+          state.vehicle = tracked.vehicle?.present ? tracked.vehicle : null;
         }
 
+        // Only `present` — whether a person is in frame — is put to the
+        // schedule. A vehicle is carried along for the interface to draw and
+        // changes nothing about when a photograph is taken.
         const decision = scheduler.evaluate({ present: state.present, now: timestamp });
         state.intervalMs = decision.interval;
         state.nextDueAt = decision.dueAt;
@@ -186,9 +191,12 @@
     const seconds = Math.round((state.intervalMs || 0) / 1000);
     const wait = state.waitMs === null ? null : Math.max(0, Math.round(state.waitMs / 1000));
     const subject = state.present ? "Person in frame" : "No one in frame";
+    // Named, but never in the position that explains the cadence — the interval
+    // that follows is the one a vehicle did not change.
+    const vehicle = state.vehicle?.present ? " · vehicle" : "";
     const next = wait === null ? "" : ` · next in ${wait}s`;
 
-    return `${subject} · every ${seconds}s${next}`;
+    return `${subject}${vehicle} · every ${seconds}s${next}`;
   }
 
   const api = Object.freeze({

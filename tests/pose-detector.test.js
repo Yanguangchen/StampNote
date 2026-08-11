@@ -13,6 +13,7 @@ const SHIRT_A = [60, 70, 120];
 const SHIRT_B = [90, 100, 150];
 const TROUSERS_A = [45, 45, 60];
 const TROUSERS_B = [80, 80, 100];
+const TYRE = [35, 35, 38];
 
 function createFrame(painter, width = WIDTH, height = HEIGHT) {
   const data = new Uint8ClampedArray(width * height * 4);
@@ -401,6 +402,147 @@ test("the stateless entry point still works with no memory at all", () => {
 
   assert.equal(detection.present, true);
   assert.equal(detection.limbs.legs, 2);
+});
+
+// A car seen from the side: body, cabin on top, two dark wheels, panel shading
+// so the paint has texture to move against.
+function paintCar(paint, shift = 0, options = {}) {
+  const shade = (color, factor) => color.map((value) => Math.round(value * factor));
+
+  return (x, y) => {
+    const px = x - shift;
+
+    if (px >= 30 && px <= 98 && y >= 52 && y <= 70) {
+      return shade(paint, (px + y) % 8 < 4 ? 1 : 0.82);
+    }
+    if (options.cabin !== false && px >= 46 && px <= 80 && y >= 40 && y <= 52) {
+      return shade(paint, (px + y) % 8 < 4 ? 0.9 : 0.72);
+    }
+    if ((px - 46) ** 2 + (y - 72) ** 2 <= 36 || (px - 84) ** 2 + (y - 72) ** 2 <= 36) {
+      return TYRE;
+    }
+
+    return ROOM;
+  };
+}
+
+// Driving past, so the paint registers as movement.
+function detectCar(paint, options) {
+  const detector = pose.createPoseDetector();
+  let detection = null;
+
+  for (let step = 0; step < 6; step += 1) {
+    detection = detector.detect(createFrame(paintCar(paint, step * 3, options)));
+  }
+
+  return detection;
+}
+
+test("a car is called a vehicle, whatever it is painted", () => {
+  // Warm paint sits in the same chrominance band as skin — that band is a hue
+  // test, and a bronze wing and a forearm share a hue. Cool paint has no skin
+  // tone at all and is found by movement alone. Both are cars.
+  Object.entries({
+    silver: [178, 180, 185],
+    white: [225, 225, 228],
+    tan: [196, 158, 120],
+    gold: [205, 168, 96],
+    red: [168, 58, 44],
+  }).forEach(([paint, color]) => {
+    const detection = detectCar(color);
+
+    assert.equal(detection.subject, "vehicle", `${paint} car`);
+    assert.ok(detection.vehicle, `${paint} car has a box`);
+    assert.ok(detection.vehicle.confidence >= 0.55, `${paint} car confidence`);
+
+    // The whole point: a vehicle is not a person, so the schedule never hears
+    // about it.
+    assert.equal(detection.present, false, `${paint} car is not a person`);
+  });
+});
+
+test("a vehicle reports where it is, so it can be drawn", () => {
+  const { vehicle } = detectCar([196, 158, 120]);
+
+  // Normalised, like every other box the detector hands out.
+  assert.ok(vehicle.box.x >= 0 && vehicle.box.x <= 1);
+  assert.ok(vehicle.box.width > 0.4, `a car spans the frame: ${vehicle.box.width}`);
+  assert.ok(vehicle.box.height < vehicle.box.width, "and is wider than it is tall");
+  assert.equal(vehicle.wheels, 2);
+});
+
+test("a car with no cabin is still a vehicle, not a slab", () => {
+  // The cabin is what used to read as a head on shoulders; without one the old
+  // scoring rejected the car as nothing at all rather than naming it.
+  const detection = detectCar([196, 158, 120], { cabin: false });
+
+  assert.equal(detection.subject, "vehicle");
+  assert.equal(detection.present, false);
+});
+
+test("people are not mistaken for vehicles", () => {
+  [
+    [...ARMS_DOWN, ...LEGS],
+    [...ARMS_OUT, ...LEGS],
+    [...ARMS_UP, ...LEGS],
+    [],
+  ].forEach((bones, index) => {
+    const detection = detectFigure(bones);
+
+    assert.equal(detection.subject, "person", `pose ${index} is a person`);
+    assert.equal(detection.vehicle, null, `pose ${index} has no vehicle`);
+  });
+});
+
+test("a person beside a car is still found, and both are reported", () => {
+  // A car scored as a person would not only take a photograph it should not
+  // have — standing between the camera and someone, it would be picked over
+  // them and cost the photograph that mattered.
+  //
+  // The person on the left, the car on the right, with clear room between them.
+  // Both shift back and forth rather than drifting, so each stays put while
+  // still registering as movement.
+  const detector = pose.createPoseDetector();
+  let detection = null;
+
+  for (let step = 0; step < 6; step += 1) {
+    const sway = (step % 2) * 2;
+    const person = paintFigure([...ARMS_DOWN, ...LEGS], sway);
+    const car = paintCar([196, 158, 120], sway ? 3 : 0);
+
+    detection = detector.detect(
+      createFrame((x, y) => {
+        const body = person(x + 44, y);
+
+        return body === ROOM ? car(x - 30, y) : body;
+      }),
+    );
+  }
+
+  assert.equal(detection.present, true, "the person is found");
+  assert.equal(detection.subject, "person");
+  assert.ok(detection.vehicle, "and the car alongside them");
+  assert.ok(
+    detection.box.x < detection.vehicle.box.x,
+    "they are separate silhouettes, not one blob",
+  );
+});
+
+test("a tracked vehicle is held and released on its own, apart from people", () => {
+  const tracker = pose.createPoseTracker({ enterFrames: 2, holdMs: 4000 });
+  const car = { present: false, confidence: 0.1, vehicle: { confidence: 0.9, box: { x: 0.1 } } };
+  const empty = { present: false, confidence: 0, vehicle: null };
+
+  assert.equal(tracker.update(car, 0).vehicle.present, false, "one frame is not a vehicle");
+
+  const seen = tracker.update(car, 250);
+  assert.equal(seen.vehicle.present, true);
+  assert.equal(seen.present, false, "a vehicle never makes a person present");
+
+  // Held through a gap, then released — the same hysteresis people get.
+  assert.equal(tracker.update(empty, 1000).vehicle.present, true);
+  assert.equal(tracker.update(empty, 4300).vehicle.present, false);
+  assert.equal(tracker.update(empty, 4400).vehicle.box, null);
 });
 
 test("tracking waits for a repeat sighting before reporting someone present", () => {

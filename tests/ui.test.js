@@ -504,6 +504,23 @@ test("the overlay draws a whole rig, limb by limb", () => {
   assert.match(app, /const LIMB_COLOR = /);
 });
 
+test("vehicles are highlighted without reaching the schedule", () => {
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const controller = readFileSync(resolve(projectRoot, "auto-capture.js"), "utf8");
+
+  // Drawn in their own colour, labelled, and drawn before the rig so a person
+  // in front of a car stays in the foreground.
+  assert.match(app, /const VEHICLE_COLOR = /);
+  assert.match(app, /drawVehicle\(context, state\.vehicle\.box, width, height\)/);
+  assert.match(app, /const label = "VEHICLE"/);
+
+  // The schedule is handed `present` — whether a person is there — and nothing
+  // about vehicles. This is the line that keeps a passing car from pulling the
+  // watch onto the 30-second cadence.
+  assert.match(controller, /scheduler\.evaluate\(\{ present: state\.present, now: timestamp \}\)/);
+  assert.equal(/scheduler\.evaluate\([^)]*vehicle/.test(controller), false);
+});
+
 test("the live camera is released when the watch stops", () => {
   const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
 
