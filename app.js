@@ -359,6 +359,34 @@
   // Amber, so a vehicle never reads as the green the watch uses for a person.
   const VEHICLE_COLOR = "rgba(255, 190, 90, 0.95)";
 
+  // Everything drawn over the camera is sized from the width it is drawn at, so
+  // the rig reads the same on a phone and on a wide display.
+  function boneWidth(width) {
+    return Math.max(2, Math.round(width / 150));
+  }
+
+  // The video is painted with object-fit: cover — scaled up until it fills the
+  // box, with the overflow cropped off either the sides or the top and bottom.
+  // Keypoints are in the camera frame's own coordinates, so they need the same
+  // treatment; mapped straight onto the element they drift off the body by
+  // however much was cropped. It shows up the moment the camera's shape stops
+  // matching the box's, which on a phone is always: the rear camera hands back
+  // 16:9 or 4:3 into whatever the layout gives it.
+  function coveredFrame(width, height) {
+    const sourceWidth = monitorVideo.videoWidth || width;
+    const sourceHeight = monitorVideo.videoHeight || height;
+    const scale = Math.max(width / sourceWidth, height / sourceHeight);
+    const drawnWidth = sourceWidth * scale;
+    const drawnHeight = sourceHeight * scale;
+
+    return {
+      left: (width - drawnWidth) / 2,
+      top: (height - drawnHeight) / 2,
+      width: drawnWidth,
+      height: drawnHeight,
+    };
+  }
+
   const sampleCanvas = document.createElement("canvas");
   sampleCanvas.width = SAMPLE_WIDTH;
   sampleCanvas.height = SAMPLE_HEIGHT;
@@ -496,22 +524,25 @@
 
   // A labelled box, deliberately unlike the rig: a vehicle is something the
   // watch has recognised and set aside, not something it is waiting on.
-  function drawVehicle(context, box, width, height) {
-    const left = box.x * width;
-    const top = box.y * height;
-    const boxWidth = box.width * width;
-    const boxHeight = box.height * height;
+  function drawVehicle(context, box, frame, width) {
+    const left = frame.left + box.x * frame.width;
+    const top = frame.top + box.y * frame.height;
+    const boxWidth = box.width * frame.width;
+    const boxHeight = box.height * frame.height;
+
+    const stroke = boneWidth(width);
 
     context.save();
     context.strokeStyle = VEHICLE_COLOR;
-    context.lineWidth = 2.5;
+    context.lineWidth = stroke;
     context.strokeRect(left, top, boxWidth, boxHeight);
 
     const label = "VEHICLE";
-    context.font = "600 10px ui-monospace, SFMono-Regular, monospace";
+    const fontSize = Math.max(10, Math.round(width / 42));
+    context.font = `600 ${fontSize}px ui-monospace, SFMono-Regular, monospace`;
     const textWidth = context.measureText(label).width;
-    const chipWidth = textWidth + 10;
-    const chipHeight = 15;
+    const chipWidth = textWidth + fontSize;
+    const chipHeight = Math.round(fontSize * 1.5);
     // Inside the box when there is no room for it above.
     const chipTop = top < chipHeight + 2 ? top + 2 : top - chipHeight - 2;
 
@@ -519,7 +550,7 @@
     context.fillRect(left, chipTop, chipWidth, chipHeight);
     context.fillStyle = "#1b1405";
     context.textBaseline = "middle";
-    context.fillText(label, left + 5, chipTop + chipHeight / 2 + 0.5);
+    context.fillText(label, left + fontSize / 2, chipTop + chipHeight / 2 + 0.5);
     context.restore();
   }
 
@@ -544,8 +575,10 @@
 
     // Vehicles are drawn whether or not anyone is with them, and are drawn
     // first so a person standing in front of one keeps the foreground.
+    const frame = coveredFrame(width, height);
+
     if (state.vehicle?.present && state.vehicle.box) {
-      drawVehicle(context, state.vehicle.box, width, height);
+      drawVehicle(context, state.vehicle.box, frame, width);
     }
 
     const points = state.keypoints;
@@ -553,7 +586,11 @@
       return;
     }
 
-    const at = (point) => (point ? [point.x * width, point.y * height] : null);
+    const at = (point) =>
+      point ? [frame.left + point.x * frame.width, frame.top + point.y * frame.height] : null;
+    // Bones scale with the frame they are drawn on: a stroke set for a card the
+    // width of a phone thins out to a scratch on a larger display.
+    const stroke = boneWidth(width);
 
     // Each chain is drawn between whichever of its joints were found, so an arm
     // the silhouette swallowed simply leaves that limb undrawn instead of
@@ -568,20 +605,20 @@
       [LIMB_COLOR, [points.hipRight, points.kneeRight, points.ankleRight]],
     ];
 
-    context.lineWidth = 2.5;
+    context.lineWidth = stroke;
     context.lineCap = "round";
     context.lineJoin = "round";
 
     if (state.box) {
       context.save();
       context.strokeStyle = "rgba(255, 255, 255, 0.35)";
-      context.lineWidth = 1.5;
+      context.lineWidth = Math.max(1, stroke * 0.6);
       context.setLineDash([5, 5]);
       context.strokeRect(
-        state.box.x * width,
-        state.box.y * height,
-        state.box.width * width,
-        state.box.height * height,
+        frame.left + state.box.x * frame.width,
+        frame.top + state.box.y * frame.height,
+        state.box.width * frame.width,
+        state.box.height * frame.height,
       );
       context.restore();
     }
@@ -618,7 +655,7 @@
       const centerY = head[1] + (neck[1] - head[1]) * 0.42;
 
       context.strokeStyle = SPINE_COLOR;
-      context.lineWidth = 2.5;
+      context.lineWidth = stroke;
       context.beginPath();
       context.arc(centerX, centerY, radius, 0, Math.PI * 2);
       context.stroke();
@@ -642,7 +679,7 @@
       }
 
       context.beginPath();
-      context.arc(position[0], position[1], 3, 0, Math.PI * 2);
+      context.arc(position[0], position[1], stroke * 1.4, 0, Math.PI * 2);
       context.fill();
     });
   }

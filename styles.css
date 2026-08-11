@@ -149,6 +149,12 @@ main {
   border-top: 0;
 }
 
+/* The watch is the thing being watched, so its card is given the room. The
+   others stay narrow — an address and two upload buttons gain nothing by it. */
+.monitor-card {
+  width: min(760px, 100%);
+}
+
 /* Live camera, with the tracked pose drawn over it. */
 .monitor {
   position: relative;
@@ -419,6 +425,13 @@ textarea::placeholder {
 
   body::before {
     --tile: 20px;
+  }
+
+  /* A phone held upright has height to spare and no width, and the rear camera
+     hands back an upright frame anyway — a landscape box would crop most of a
+     standing person out of a picture whose whole subject is a standing person. */
+  .monitor {
+    aspect-ratio: 3 / 4;
   }
 }
 

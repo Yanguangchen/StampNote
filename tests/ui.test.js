@@ -511,7 +511,7 @@ test("vehicles are highlighted without reaching the schedule", () => {
   // Drawn in their own colour, labelled, and drawn before the rig so a person
   // in front of a car stays in the foreground.
   assert.match(app, /const VEHICLE_COLOR = /);
-  assert.match(app, /drawVehicle\(context, state\.vehicle\.box, width, height\)/);
+  assert.match(app, /drawVehicle\(context, state\.vehicle\.box, frame, width\)/);
   assert.match(app, /const label = "VEHICLE"/);
 
   // The schedule is handed `present` — whether a person is there — and nothing
@@ -519,6 +519,37 @@ test("vehicles are highlighted without reaching the schedule", () => {
   // watch onto the 30-second cadence.
   assert.match(controller, /scheduler\.evaluate\(\{ present: state\.present, now: timestamp \}\)/);
   assert.equal(/scheduler\.evaluate\([^)]*vehicle/.test(controller), false);
+});
+
+test("the overlay follows the crop the video is displayed with", () => {
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+
+  // The video fills its box with object-fit: cover, which scales it up and
+  // crops the overflow. Keypoints arrive in the camera frame's coordinates, so
+  // without the same transform the rig drifts off the body by however much was
+  // cropped — and a phone camera's shape almost never matches the box it is
+  // given, so this is the ordinary case, not the corner one.
+  assert.match(css, /\.monitor video\s*\{[^}]*object-fit:\s*cover/);
+  assert.match(app, /function coveredFrame\(width, height\)/);
+  assert.match(app, /Math\.max\(width \/ sourceWidth, height \/ sourceHeight\)/);
+  assert.match(app, /frame\.left \+ point\.x \* frame\.width/);
+
+  // Nothing may map a keypoint straight onto the element's own size again.
+  assert.equal(/point\.x \* width/.test(app), false);
+});
+
+test("the watch is given a display worth looking at", () => {
+  // The rig is the point of the live view, so the card carrying it is wider
+  // than the rest and turns upright on a phone, where the height is.
+  assert.match(css, /\.monitor-card\s*\{[^}]*width:\s*min\(760px/);
+  assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.monitor\s*\{\s*aspect-ratio:\s*3 \/ 4/);
+  assert.match(html, /class=["']card monitor-card["']/);
+
+  // Bones and labels are sized from the width they are drawn at, so the rig
+  // does not thin to a scratch on a larger display.
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  assert.match(app, /function boneWidth\(width\)/);
+  assert.match(app, /context\.lineWidth = stroke/);
 });
 
 test("the live camera is released when the watch stops", () => {
