@@ -358,6 +358,7 @@
   const LIMB_COLOR = "rgba(120, 255, 200, 0.95)";
   // Amber, so a vehicle never reads as the green the watch uses for a person.
   const VEHICLE_COLOR = "rgba(255, 190, 90, 0.95)";
+  const FACE_COLOR = "rgba(190, 235, 255, 0.9)";
 
   // Everything drawn over the camera is sized from the width it is drawn at, so
   // the rig reads the same on a phone and on a wide display.
@@ -402,6 +403,8 @@
   let wakeLock = null;
   let faceDetector = null;
   let faceHint = null;
+  let usingModel = false;
+  let modelDetector = null;
   let faceHintAt = 0;
   let facePending = false;
 
@@ -478,8 +481,18 @@
       });
   }
 
+  function frameIsReady() {
+    return Boolean(stream) && monitorVideo.readyState >= 2 && Boolean(monitorVideo.videoWidth);
+  }
+
+  // The trained model reads the video element itself, at whatever resolution the
+  // camera is giving; only the built-in detector needs the downscaled copy.
+  function sampleVideo() {
+    return frameIsReady() ? monitorVideo : null;
+  }
+
   function sampleFrame() {
-    if (!stream || monitorVideo.readyState < 2 || !monitorVideo.videoWidth) {
+    if (!frameIsReady()) {
       return null;
     }
 
@@ -487,6 +500,26 @@
     refreshFaceHint(Date.now());
 
     return sampleContext.getImageData(0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT);
+  }
+
+  // The trained model is the detector; the built-in one is what is left when it
+  // cannot be had — an old browser, a failed download, no WebAssembly. Better a
+  // rougher watch than a dead button.
+  async function createDetector() {
+    if (!window.StampNoteModel) {
+      return { detector: pose.createPoseDetector(), model: false };
+    }
+
+    try {
+      setMonitorStatus("Loading the pose model — a few megabytes, the first time only…");
+      return { detector: await window.StampNoteModel.load(), model: true };
+    } catch (error) {
+      setMonitorStatus(
+        "The pose model could not load, so the built-in detector is watching instead.",
+        "error",
+      );
+      return { detector: pose.createPoseDetector(), model: false, error };
+    }
   }
 
   // Full sensor resolution for the photo itself — the 128x96 frame is only ever
@@ -551,6 +584,28 @@
     context.fillStyle = "#1b1405";
     context.textBaseline = "middle";
     context.fillText(label, left + fontSize / 2, chipTop + chipHeight / 2 + 0.5);
+    context.restore();
+  }
+
+  // Brows, eyes, nose, lips and jaw, traced as lines. The model reports 478
+  // points, and all 478 drawn at a size that fits on a phone is a grey smudge;
+  // the outlines are what read as a face.
+  function drawFace(context, face, frame, stroke) {
+    context.save();
+    context.strokeStyle = FACE_COLOR;
+    context.lineWidth = Math.max(1, stroke * 0.55);
+    context.lineJoin = "round";
+    context.lineCap = "round";
+
+    context.beginPath();
+    Object.values(face).forEach((edges) => {
+      (edges || []).forEach(([from, to]) => {
+        context.moveTo(frame.left + from.x * frame.width, frame.top + from.y * frame.height);
+        context.lineTo(frame.left + to.x * frame.width, frame.top + to.y * frame.height);
+      });
+    });
+    context.stroke();
+
     context.restore();
   }
 
@@ -645,10 +700,16 @@
     // crown, so the circle is sized and centred off the run down to the neck —
     // the bounding box is no use here, since outstretched arms widen it without
     // making the head any bigger.
+    if (state.face) {
+      drawFace(context, state.face, frame, stroke);
+    }
+
     const head = at(points.head);
     const neck = at(points.neck);
 
-    if (head && neck) {
+    // The circle stands in for a head only while the face model has nothing to
+    // say; drawing both puts a ring around a face that is already drawn.
+    if (head && neck && !state.face) {
       const reach = Math.hypot(neck[0] - head[0], neck[1] - head[1]);
       const radius = Math.max(4, reach * 0.42);
       const centerX = head[0] + (neck[0] - head[0]) * 0.42;
@@ -815,15 +876,21 @@
       // Some browsers resolve the frame without play() ever settling.
     }
 
-    faceDetector = createFaceDetector();
+    const { detector, model } = await createDetector();
+    modelDetector = detector.kind === "model" ? detector : null;
+
+    // The face hint only ever propped up the built-in detector's head cue; the
+    // trained model has no use for it.
+    faceDetector = model ? null : createFaceDetector();
     faceHint = null;
+    usingModel = model;
 
     controller = autoCapture.createAutoCapture({
-      detector: pose.createPoseDetector(),
+      detector,
       tracker: pose.createPoseTracker(),
       scheduler: schedule.createCaptureScheduler(),
       store,
-      sampleFrame,
+      sampleFrame: detector.wantsVideo ? sampleVideo : sampleFrame,
       captureImage,
       getAddress: () => addressField.value,
       getFaces: () => faceHint,
@@ -845,7 +912,12 @@
     }
     document.body.classList.add("is-stamped");
     setToggleLabel(true);
-    setMonitorStatus("Watching for people — photos save themselves.", "success");
+    setMonitorStatus(
+      model
+        ? "Watching for people — photos save themselves."
+        : "Watching with the built-in detector — photos save themselves.",
+      model ? "success" : "idle",
+    );
     requestWakeLock();
     renderCaptures();
   }
@@ -859,6 +931,10 @@
     monitorVideo.srcObject = null;
 
     controller?.stop();
+    // The model holds WebAssembly memory and a GPU context; dropping the
+    // reference alone would leave both until the tab is closed.
+    modelDetector?.close?.();
+    modelDetector = null;
     controller = null;
     faceDetector = null;
     faceHint = null;

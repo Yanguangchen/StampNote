@@ -109,13 +109,28 @@ const ARMS_UP = [
   [75, 25, 86, 6, 3],
 ];
 
-// Two frames of the same pose, shifted, so motion fills in the clothing.
-function detectFigure(bones) {
-  const previous = pose.analyzeFrame(createFrame(paintFigure(bones, 0)));
+// The detector learns the room first, the way it does on a real camera, and the
+// subject is then whatever fails to match it. Two frames of the subject, shifted,
+// so there is movement as well as presence.
+function detectFigure(bones, options = {}) {
+  const detector = pose.createPoseDetector();
 
-  return pose.analyzeFrame(createFrame(paintFigure(bones, 2)), {
-    previousLuma: previous.luma,
-  });
+  detector.detect(createFrame(emptyRoom));
+  detector.detect(createFrame(paintFigure(bones, 0)));
+
+  return detector.detect(createFrame(paintFigure(bones, options.shift ?? 2)));
+}
+
+// Whatever the painter draws, introduced into a room the detector already knows.
+function detectAgainstRoom(painter, frames = 3) {
+  const detector = pose.createPoseDetector();
+  let detection = detector.detect(createFrame(emptyRoom));
+
+  for (let step = 0; step < frames; step += 1) {
+    detection = detector.detect(createFrame(painter(step)));
+  }
+
+  return detection;
 }
 
 // Keypoints come back normalised; tests read them in frame pixels.
@@ -145,20 +160,20 @@ test("skin test accepts warm tones and rejects the room around them", () => {
 });
 
 test("an empty room holds no pose", () => {
-  const frame = createFrame(emptyRoom);
-  const detection = pose.analyzeFrame(frame);
+  const detection = detectAgainstRoom(() => emptyRoom);
 
   assert.equal(detection.present, false);
   assert.equal(detection.confidence, 0);
   assert.equal(detection.keypoints, null);
   assert.equal(detection.pose, "none");
+  assert.equal(detection.subject, "none");
 });
 
 test("a person in frame is found, with keypoints in anatomical order", () => {
-  const previous = pose.analyzeFrame(createFrame(paintPerson(0)));
-  const detection = pose.analyzeFrame(createFrame(paintPerson(2)), {
-    previousLuma: previous.luma,
-  });
+  const detector = pose.createPoseDetector();
+  detector.detect(createFrame(emptyRoom));
+  detector.detect(createFrame(paintPerson(0)));
+  const detection = detector.detect(createFrame(paintPerson(2)));
 
   assert.equal(detection.present, true);
   assert.ok(detection.confidence > 0.8, `confidence was ${detection.confidence}`);
@@ -189,50 +204,82 @@ test("a person in frame is found, with keypoints in anatomical order", () => {
   assert.ok(detection.box.width < 0.35, `box width was ${detection.box.width}`);
 });
 
-test("a still person is still found, because skin alone carries the detection", () => {
-  // No previous frame at all: motion contributes nothing.
-  const detection = pose.analyzeFrame(createFrame(paintPerson(0)));
+test("a person who stops moving is still there", () => {
+  // Movement is what reveals somebody, but it is not what keeps them: they are
+  // compared against the room, and standing still does not turn them into it.
+  const detector = pose.createPoseDetector();
+
+  detector.detect(createFrame(emptyRoom));
+  detector.detect(createFrame(paintPerson(0)));
+  detector.detect(createFrame(paintPerson(2)));
+
+  let detection = null;
+  for (let held = 0; held < 8; held += 1) {
+    detection = detector.detect(createFrame(paintPerson(2)));
+  }
 
   assert.equal(detection.present, true);
-  assert.equal(detection.motionFraction, 0);
+  assert.equal(detection.motionFraction, 0, "nothing has moved for eight frames");
+  assert.ok(detection.box.height > 0.8, `still whole: ${detection.box.height}`);
 });
 
-test("a skin-toned slab is rejected for having no head", () => {
-  // A cardboard box or a varnished door: the right colour, a plausible size and
-  // an upright aspect, but an even width from top to bottom.
-  const slab = createFrame((x, y) => (x >= 44 && x <= 84 && y >= 18 && y <= 78 ? SKIN : ROOM));
-  const detection = pose.analyzeFrame(slab);
+test("a skin-toned slab carried into the room is not a person", () => {
+  // A flat of cardboard or a varnished door: the right colour, a plausible size
+  // and an upright aspect, but an even width from top to bottom.
+  const detection = detectAgainstRoom(
+    () => (x, y) => (x >= 44 && x <= 84 && y >= 18 && y <= 78 ? SKIN : ROOM),
+  );
 
   assert.equal(detection.present, false);
   assert.ok(detection.confidence < 0.5, `confidence was ${detection.confidence}`);
 });
 
+test("a warm floor is scenery, not a subject", () => {
+  // Varnished boards, terracotta, beige carpet: all sit in the same chrominance
+  // band as skin. They are also exactly where they were a moment ago, which is
+  // what settles it. Getting this wrong put the floor in every silhouette and
+  // swallowed anyone standing on it.
+  const floor = (x, y) => (y > 60 ? [150, 116, 84] : ROOM);
+  const detector = pose.createPoseDetector();
+
+  let detection = null;
+  for (let step = 0; step < 6; step += 1) {
+    detection = detector.detect(createFrame(floor));
+  }
+
+  assert.equal(detection.present, false);
+  assert.equal(detection.subject, "none");
+  assert.equal(detection.box, null);
+});
+
 test("a wall of skin tone is rejected for filling the frame", () => {
-  const wall = createFrame(() => SKIN);
-  const detection = pose.analyzeFrame(wall);
+  const detection = detectAgainstRoom(() => () => SKIN);
 
   assert.equal(detection.present, false);
 });
 
 test("moving scenery without skin is not a person", () => {
-  // Leaves in the wind: plenty of motion, no skin anywhere.
-  const previous = pose.analyzeFrame(createFrame((x, y) => weave(x, y, SHIRT_A, SHIRT_B)));
-  const detection = pose.analyzeFrame(
-    createFrame((x, y) => weave(x + 2, y, SHIRT_A, SHIRT_B)),
-    { previousLuma: previous.luma },
+  // Leaves in the wind: plenty of movement, no skin anywhere.
+  const detection = detectAgainstRoom(
+    (step) => (x, y) => weave(x + step * 2, y, SHIRT_A, SHIRT_B),
   );
 
   assert.equal(detection.present, false);
 });
 
 test("a face hint lifts a detection the silhouette alone would miss", () => {
-  const slab = createFrame((x, y) => (x >= 44 && x <= 84 && y >= 18 && y <= 78 ? SKIN : ROOM));
-  const withoutFace = pose.analyzeFrame(slab);
-  const withFace = pose.analyzeFrame(slab, {
-    // Where Chrome's Shape Detection API is available it reports boxes in the
-    // analysed frame's own pixels.
-    faces: [{ x: 54, y: 20, width: 20, height: 24 }],
-  });
+  const slab = (x, y) => (x >= 44 && x <= 84 && y >= 18 && y <= 78 ? SKIN : ROOM);
+  const run = (hints) => {
+    const detector = pose.createPoseDetector();
+    detector.detect(createFrame(emptyRoom));
+    detector.detect(createFrame(slab));
+    return detector.detect(createFrame(slab), hints);
+  };
+
+  const withoutFace = run();
+  // Where Chrome's Shape Detection API is available it reports boxes in the
+  // analysed frame's own pixels.
+  const withFace = run({ faces: [{ x: 54, y: 20, width: 20, height: 24 }] });
 
   assert.equal(withoutFace.present, false);
   assert.equal(withFace.present, true);
@@ -370,35 +417,17 @@ test("the rig survives a body with no limbs to find", () => {
   assert.equal(detection.limbs.legs, 0);
 });
 
-test("a body that stops moving stays in the silhouette for a moment", () => {
-  const detector = pose.createPoseDetector();
+test("the stateless entry point works when it is handed the scene", () => {
+  // analyzeFrame keeps no state of its own; the caller owns the scene and can
+  // hold it wherever it likes. One frame cannot tell a subject from a room, so
+  // the first call only learns.
+  const scene = pose.createScene(WIDTH * HEIGHT);
   const bones = [...ARMS_DOWN, ...LEGS];
 
-  // Two frames of movement put the whole figure into the silhouette.
-  detector.detect(createFrame(paintFigure(bones, 0)));
-  const moving = detector.detect(createFrame(paintFigure(bones, 2)));
-  assert.ok(moving.box.height > 0.8, `moving box height ${moving.box.height}`);
+  const learning = pose.analyzeFrame(createFrame(emptyRoom), { scene });
+  assert.equal(learning.present, false, "the opening frame is the room");
 
-  // Now the figure holds perfectly still. Frame differencing alone would drop
-  // everything but the skin, taking the legs and the rig with it.
-  const held = detector.detect(createFrame(paintFigure(bones, 2)));
-  assert.ok(held.box.height > 0.8, `held box height ${held.box.height}`);
-  assert.equal(held.limbs.legs, 2);
-
-  // The memory fades, so a body that never moves again does not linger forever.
-  let faded = held;
-  for (let frame = 0; frame < 12; frame += 1) {
-    faded = detector.detect(createFrame(paintFigure(bones, 2)));
-  }
-  assert.ok(faded.box.height < 0.5, `faded box height ${faded.box.height}`);
-});
-
-test("the stateless entry point still works with no memory at all", () => {
-  const bones = [...ARMS_DOWN, ...LEGS];
-  const previous = pose.analyzeFrame(createFrame(paintFigure(bones, 0)));
-  const detection = pose.analyzeFrame(createFrame(paintFigure(bones, 2)), {
-    previousLuma: previous.luma,
-  });
+  const detection = pose.analyzeFrame(createFrame(paintFigure(bones, 2)), { scene });
 
   assert.equal(detection.present, true);
   assert.equal(detection.limbs.legs, 2);
@@ -426,10 +455,10 @@ function paintCar(paint, shift = 0, options = {}) {
   };
 }
 
-// Driving past, so the paint registers as movement.
+// Driving past a room the detector already knows.
 function detectCar(paint, options) {
   const detector = pose.createPoseDetector();
-  let detection = null;
+  let detection = detector.detect(createFrame(emptyRoom));
 
   for (let step = 0; step < 6; step += 1) {
     detection = detector.detect(createFrame(paintCar(paint, step * 3, options)));
@@ -503,7 +532,7 @@ test("a person beside a car is still found, and both are reported", () => {
   // Both shift back and forth rather than drifting, so each stays put while
   // still registering as movement.
   const detector = pose.createPoseDetector();
-  let detection = null;
+  let detection = detector.detect(createFrame(emptyRoom));
 
   for (let step = 0; step < 6; step += 1) {
     const sway = (step % 2) * 2;
