@@ -32,7 +32,6 @@ function createAdapter(landmarker) {
   const mapping = window.StampNotePoseMapping;
   let objects = null;
   let faces = null;
-  let lastTimestamp = -1;
 
   return {
     // The model reads the video element directly, at whatever resolution the
@@ -54,17 +53,10 @@ function createAdapter(landmarker) {
         return mapping.buildDetection(null, []);
       }
 
-      // MediaPipe rejects a timestamp that has not moved on.
-      const timestamp = Math.max(lastTimestamp + 1, Math.round(performance.now()));
-      lastTimestamp = timestamp;
-
-      const pose = landmarker.detectForVideo(video, timestamp);
-      const seen = objects ? objects.detectForVideo(video, timestamp) : null;
+      const pose = landmarker.detect(video);
+      const seen = objects ? objects.detect(video) : null;
       const face = faces
-        ? mapping.toFaceOutlines(
-            faces.detectForVideo(video, timestamp)?.faceLandmarks?.[0],
-            FACE_CONNECTIONS,
-          )
+        ? mapping.toFaceOutlines(faces.detect(video)?.faceLandmarks?.[0], FACE_CONNECTIONS)
         : null;
 
       return mapping.buildDetection(
@@ -74,9 +66,7 @@ function createAdapter(landmarker) {
       );
     },
 
-    reset() {
-      lastTimestamp = -1;
-    },
+    reset() {},
 
     close() {
       landmarker?.close?.();
@@ -91,7 +81,14 @@ function createAdapter(landmarker) {
 async function createLandmarker(fileset) {
   const options = {
     baseOptions: { modelAssetPath: `${BASE}/models/pose_landmarker_lite.task` },
-    runningMode: "VIDEO",
+    // Not VIDEO. In video the landmarker detects once and then tracks, and a
+    // pose it locked onto by mistake is handed back on every later frame — a
+    // phone pointed at a ceiling kept a skeleton across the beams. Looking at
+    // each frame afresh puts the model's own detection confidence back in
+    // charge every time, and against a ceiling it then reports nothing at all.
+    // Tracking is what makes video mode cheaper, and at four frames a second
+    // there is little to save.
+    runningMode: "IMAGE",
     numPoses: 1,
     minPoseDetectionConfidence: 0.5,
     minPosePresenceConfidence: 0.5,
@@ -123,7 +120,7 @@ async function load() {
   // place a threshold lives and `person` can be read without being drawn.
   ObjectDetector.createFromOptions(fileset, {
     baseOptions: { modelAssetPath: `${BASE}/models/efficientdet_lite0.tflite` },
-    runningMode: "VIDEO",
+    runningMode: "IMAGE",
     scoreThreshold: 0.3,
     maxResults: 8,
   })
@@ -134,7 +131,7 @@ async function load() {
 
   FaceLandmarker.createFromOptions(fileset, {
     baseOptions: { modelAssetPath: `${BASE}/models/face_landmarker.task` },
-    runningMode: "VIDEO",
+    runningMode: "IMAGE",
     numFaces: 1,
     outputFaceBlendshapes: false,
     outputFacialTransformationMatrixes: false,

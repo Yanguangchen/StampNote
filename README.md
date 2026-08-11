@@ -29,7 +29,9 @@ The first run downloads about 9 MB — 3.3 MB of WebAssembly and a 5.5 MB pose m
 
 ### Being sure somebody is really there
 
-In video the pose landmarker detects once and then *tracks*, so a pose it locked onto by mistake is reported again on every later frame — and a phone pointed at a ceiling ended up on the 30-second cadence with a skeleton drawn across the beams. Landmarks existing is not evidence that anybody is there, so presence has to be earned on each frame:
+Every model looks at each frame afresh rather than in video mode. Video mode detects once and then *tracks*, which is what makes it cheaper — but a pose it locked onto by mistake is handed back on every later frame, and a phone pointed at a ceiling kept a skeleton across the beams. Looking again each time puts the model's own detection confidence back in charge, and against a ceiling it then reports nothing at all. At four frames a second there is little tracking would have saved.
+
+Landmarks existing is still not evidence that anybody is there, so presence is also earned on each frame:
 
 - The trunk — the four joints reported most reliably and the last to be occluded — must be seen at **0.8** or better. A body properly in frame reports well over 0.9.
 - Between 0.55 and 0.8 the reading needs a second opinion: a **face** where the head should be, or the **object detector** naming a person. That detector looks afresh at every frame instead of tracking, so it cannot inherit the mistake.
