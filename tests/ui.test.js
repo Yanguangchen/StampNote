@@ -592,6 +592,15 @@ test("CSS covers the live frame, the pose overlay and the capture grid", () => {
   assert.match(css, /\.capture\[data-pose="true"\]/);
 });
 
+test("nothing animates behind the picture", () => {
+  // The old card interface panned a grid across the background forever. The
+  // camera is the background now, and a loop under it is both a distraction
+  // and a phone's battery burning on a decoration.
+  assert.equal(/grid-pan/.test(css), false);
+  assert.equal(/animation:[^;]*infinite/.test(css), false);
+  assert.equal(/body::before|body::after/.test(css), false);
+});
+
 test("share control is present and starts hidden", () => {
   const shareButton = tagWithId("button", "share-button");
 
