@@ -29,6 +29,14 @@ const CADENCE = Object.freeze({
   objects: 2000,
 });
 
+// How many people the watch will rig at once. The models run a detector and
+// then one landmark pass per person found, so the cost follows how many are
+// actually there rather than the cap — an empty room costs the same at four as
+// at one. Hands are the dearest of the three and the least missed, so they are
+// held to two people's worth while bodies and faces go wider.
+const MAX_PEOPLE = 4;
+const MAX_HANDS = 4;
+
 // MediaPipe's own answer to which of the 478 points join up. Taken from the
 // library rather than written out here, where a wrong index could not be seen.
 const FACE_CONNECTIONS = Object.freeze({
@@ -51,7 +59,7 @@ function createAdapter(landmarker) {
   // What each model last said, and when. A model not asked on this tick keeps
   // its previous answer rather than blinking out of the picture.
   const ran = { face: 0, hands: 0, objects: 0 };
-  const cached = { face: null, hands: [], vehicles: [], person: 0 };
+  const cached = { faces: [], hands: [], vehicles: [], person: 0 };
 
   return {
     // The model reads the video element directly, at whatever resolution the
@@ -74,12 +82,12 @@ function createAdapter(landmarker) {
 
     detect(video) {
       if (!video?.videoWidth) {
-        return mapping.buildDetection(null, []);
+        return mapping.buildCrowd([], []);
       }
 
       const now = performance.now();
       const pose = landmarker.detect(video);
-      const landmarks = pose?.landmarks?.[0];
+      const poses = pose?.landmarks || [];
 
       if (objects && now - ran.objects >= CADENCE.objects) {
         const seen = objects.detect(video);
@@ -89,16 +97,15 @@ function createAdapter(landmarker) {
         ran.objects = now;
       }
 
-      if (!landmarks) {
+      if (poses.length === 0) {
         // Nobody to hang them on.
-        cached.face = null;
+        cached.faces = [];
         cached.hands = [];
       } else {
         if (faces && now - ran.face >= CADENCE.face) {
-          cached.face = mapping.toFaceOutlines(
-            faces.detect(video)?.faceLandmarks?.[0],
-            FACE_CONNECTIONS,
-          );
+          cached.faces = (faces.detect(video)?.faceLandmarks || [])
+            .map((face) => mapping.toFaceOutlines(face, FACE_CONNECTIONS))
+            .filter(Boolean);
           ran.face = now;
         }
         if (hands && now - ran.hands >= CADENCE.hands) {
@@ -107,8 +114,10 @@ function createAdapter(landmarker) {
         }
       }
 
-      return mapping.buildDetection(landmarks, cached.vehicles, {
-        face: cached.face,
+      // Every pose the model found, each judged on its own confidence, with the
+      // faces and hands handed to whichever body they belong to.
+      return mapping.buildCrowd(poses, cached.vehicles, {
+        faces: cached.faces,
         hands: cached.hands,
         person: cached.person,
       });
@@ -118,7 +127,7 @@ function createAdapter(landmarker) {
       ran.face = 0;
       ran.hands = 0;
       ran.objects = 0;
-      cached.face = null;
+      cached.faces = [];
       cached.hands = [];
       cached.vehicles = [];
       cached.person = 0;
@@ -146,7 +155,7 @@ async function createLandmarker(fileset) {
     // Tracking is what makes video mode cheaper, and at four frames a second
     // there is little to save.
     runningMode: "IMAGE",
-    numPoses: 1,
+    numPoses: MAX_PEOPLE,
     minPoseDetectionConfidence: 0.5,
     minPosePresenceConfidence: 0.5,
     minTrackingConfidence: 0.5,
@@ -189,7 +198,7 @@ async function load() {
   FaceLandmarker.createFromOptions(fileset, {
     baseOptions: { modelAssetPath: `${BASE}/models/face_landmarker.task` },
     runningMode: "IMAGE",
-    numFaces: 1,
+    numFaces: MAX_PEOPLE,
     outputFaceBlendshapes: false,
     outputFacialTransformationMatrixes: false,
   })
@@ -204,7 +213,7 @@ async function load() {
   HandLandmarker.createFromOptions(fileset, {
     baseOptions: { modelAssetPath: `${BASE}/models/hand_landmarker.task` },
     runningMode: "IMAGE",
-    numHands: 2,
+    numHands: MAX_HANDS,
     minHandDetectionConfidence: 0.5,
     minHandPresenceConfidence: 0.5,
   })

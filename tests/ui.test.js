@@ -690,3 +690,29 @@ test("share control is present and starts hidden", () => {
   // Revealed by script only when the browser can share files.
   assert.ok(hasAttribute(shareButton, "hidden"));
 });
+
+test("the watch tracks a room, not just one person", () => {
+  const model = readFileSync(resolve(projectRoot, "pose-model.js"), "utf8");
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const controller = readFileSync(resolve(projectRoot, "auto-capture.js"), "utf8");
+
+  // The models are asked for several people rather than one. Cost follows how
+  // many are actually there, so a raised cap is free in an empty room.
+  assert.match(model, /const MAX_PEOPLE = \d+;/);
+  assert.match(model, /numPoses: MAX_PEOPLE/);
+  assert.match(model, /numFaces: MAX_PEOPLE/);
+  assert.equal(/numPoses: 1/.test(model), false);
+
+  // Every pose is mapped, not just the first one the model listed.
+  assert.match(model, /mapping\.buildCrowd\(poses,/);
+  assert.equal(/pose\?\.landmarks\?\.\[0\]/.test(model), false);
+
+  // The overlay draws everyone, and eases each person towards their own next
+  // position rather than smearing one across the frame into another.
+  assert.match(app, /bodies\.forEach\(\(body\) => drawBody\(/);
+  assert.match(app, /mapping\.blendBodies\(drawn\?\.bodies, target\.bodies, EASE\)/);
+
+  // The count is state, so it can be shown and stored.
+  assert.match(controller, /state\.people = tracked\.people/);
+  assert.match(controller, /\$\{state\.people\} people in frame/);
+});

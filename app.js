@@ -706,8 +706,26 @@
       drawVehicle(context, state.vehicle.box, frame, width);
     }
 
+    if (!state.present) {
+      return;
+    }
+
+    // Everyone the model found. A detector that reports only the one person —
+    // the built-in one — is drawn from the flat fields it does fill in.
+    const bodies = state.bodies?.length
+      ? state.bodies
+      : state.keypoints
+        ? [state]
+        : [];
+
+    bodies.forEach((body) => drawBody(context, body, frame, width));
+  }
+
+  // One person: their bones, their box, their face, their hands.
+  function drawBody(context, state, frame, width) {
     const points = state.keypoints;
-    if (!state.present || !points) {
+
+    if (!points) {
       return;
     }
 
@@ -847,14 +865,21 @@
 
     // Without the mapping's blending — the built-in detector's path — the latest
     // reading is simply drawn as it arrives.
-    drawn = mapping
-      ? {
-          ...target,
-          keypoints: mapping.blendKeypoints(drawn?.keypoints, target.keypoints, EASE),
-          face: mapping.blendSegments(drawn?.face, target.face, EASE),
-          hands: mapping.blendHands(drawn?.hands, target.hands, EASE),
-        }
-      : target;
+    if (!mapping) {
+      drawn = target;
+    } else if (target.bodies?.length) {
+      // Each person is eased towards their own next position. Matching them up
+      // between readings is what stops the overlay dragging one skeleton across
+      // the room into another when the model reports them in a different order.
+      drawn = { ...target, bodies: mapping.blendBodies(drawn?.bodies, target.bodies, EASE) };
+    } else {
+      drawn = {
+        ...target,
+        keypoints: mapping.blendKeypoints(drawn?.keypoints, target.keypoints, EASE),
+        face: mapping.blendSegments(drawn?.face, target.face, EASE),
+        hands: mapping.blendHands(drawn?.hands, target.hands, EASE),
+      };
+    }
 
     drawOverlay(drawn);
   }

@@ -204,3 +204,21 @@ test("sizes are reported in units a person reads", () => {
   assert.equal(storage.formatBytes(2048), "2 KB");
   assert.equal(storage.formatBytes(5 * 1024 * 1024), "5.0 MB");
 });
+
+test("a capture records how many people were in the frame", () => {
+  const crowd = storage.createCaptureRecord({
+    blob: { size: 2048, type: "image/jpeg" },
+    pose: { present: true, confidence: 0.91, pose: "standing", people: 3 },
+  });
+
+  assert.equal(crowd.pose.people, 3);
+
+  // A detector that never counted still records the one person it saw, rather
+  // than a photograph that claims nobody was in it.
+  const single = storage.createCaptureRecord({
+    blob: { size: 2048, type: "image/jpeg" },
+    pose: { present: true, confidence: 0.91, pose: "standing" },
+  });
+
+  assert.equal(single.pose.people, 1);
+});

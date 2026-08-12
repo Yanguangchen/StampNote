@@ -1366,6 +1366,11 @@
     let box = null;
     let face = null;
     let hands = [];
+    // Everyone in frame, and how many that is. Kept beside the leading person
+    // rather than replacing them: the schedule and the stamp still ask "is
+    // there a person", and one answer serves however many there are.
+    let bodies = [];
+    let people = 0;
 
     // Vehicles are steadied the same way and kept in their own drawer. They are
     // reported so they can be drawn; they are deliberately no part of `present`,
@@ -1385,6 +1390,8 @@
         box: present ? box : null,
         face: present ? face : null,
         hands: present ? hands : [],
+        bodies: present ? bodies : [],
+        people: present ? people : 0,
         vehicle: {
           present: vehiclePresent,
           confidence: vehicleConfidence,
@@ -1428,6 +1435,8 @@
           box = reading.box;
           face = reading.face || null;
           hands = reading.hands || [];
+          bodies = reading.bodies || [];
+          people = reading.people ?? (reading.present ? 1 : 0);
 
           if (!present && streak >= settings.enterFrames) {
             present = true;
@@ -1443,6 +1452,8 @@
             box = null;
             face = null;
             hands = [];
+            bodies = [];
+            people = 0;
           }
         }
 

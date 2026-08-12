@@ -44,6 +44,8 @@
       box: null,
       face: null,
       hands: [],
+      bodies: [],
+      people: 0,
       vehicle: null,
       intervalMs: scheduler.intervalFor(false),
       nextDueAt: null,
@@ -86,6 +88,7 @@
               present: state.present,
               confidence: state.confidence,
               pose: state.pose,
+              people: state.people,
             },
           });
 
@@ -131,6 +134,8 @@
         state.pose = "none";
         state.keypoints = null;
         state.box = null;
+        state.bodies = [];
+        state.people = 0;
         state.nextDueAt = null;
         state.waitMs = null;
 
@@ -178,6 +183,8 @@
             state.box = tracked.box;
             state.face = tracked.face || null;
             state.hands = tracked.hands || [];
+            state.bodies = tracked.bodies || [];
+            state.people = tracked.people || 0;
             state.vehicle = tracked.vehicle?.present ? tracked.vehicle : null;
           } finally {
             looking = false;
@@ -188,7 +195,11 @@
         // and then, whatever the schedule was waiting for. It has to be held to
         // count, and has to be let go of before it can be asked for again, so
         // one gesture is one photograph rather than a burst.
-        const posing = state.present && isGesture(state.keypoints);
+        const posing =
+          state.present &&
+          (state.bodies?.length
+            ? state.bodies.some((body) => isGesture(body.keypoints))
+            : isGesture(state.keypoints));
 
         if (!posing) {
           heldSince = null;
@@ -243,7 +254,13 @@
       return "Photo taken";
     }
 
-    const subject = state.present ? "Person in frame" : "No one in frame";
+    // How many, not just whether — the count is the thing being watched, and a
+    // room that goes from one person to three should say so.
+    const subject = !state.present
+      ? "No one in frame"
+      : state.people > 1
+        ? `${state.people} people in frame`
+        : "Person in frame";
     // Named, but never in the position that explains the cadence — the interval
     // that follows is the one a vehicle did not change.
     const vehicle = state.vehicle?.present ? " · vehicle" : "";

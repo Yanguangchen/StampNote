@@ -409,6 +409,166 @@
     return seconded && confidence >= CORROBORATED_CONFIDENCE;
   }
 
+  // ---------------------------------------------------------------------------
+  // More than one person
+  //
+  // The model reports several poses per frame, in no fixed order. Everything
+  // below is about keeping them apart: whose face is whose, whose hands are
+  // whose, and which of last frame's bodies each of this frame's is.
+
+  function centerOf(box) {
+    return box ? { x: box.x + box.width / 2, y: box.y + box.height / 2 } : null;
+  }
+
+  function distanceBetween(left, right) {
+    if (!left || !right) {
+      return Infinity;
+    }
+
+    return Math.hypot(left.x - right.x, left.y - right.y);
+  }
+
+  // Faces and hands come back as their own lists with nothing tying them to a
+  // body, so each one goes to the nearest joint it belongs to — a face to a
+  // head, a hand to a wrist — and only if it is close enough to be plausible.
+  function nearestBody(bodies, point, joints, reach) {
+    let best = null;
+    let bestDistance = reach;
+
+    bodies.forEach((body, index) => {
+      joints.forEach((joint) => {
+        const distance = distanceBetween(body.keypoints?.[joint], point);
+
+        if (distance < bestDistance) {
+          best = index;
+          bestDistance = distance;
+        }
+      });
+    });
+
+    return best;
+  }
+
+  function centroidOf(segments) {
+    const points = (segments || []).flat();
+
+    if (points.length === 0) {
+      return null;
+    }
+
+    return {
+      x: points.reduce((total, point) => total + point.x, 0) / points.length,
+      y: points.reduce((total, point) => total + point.y, 0) / points.length,
+    };
+  }
+
+  // Reach scales with the body, so a person close to the camera can have a face
+  // further from their head in frame terms than one standing at the back.
+  function reachOf(body) {
+    const box = body.box;
+    return box ? Math.max(0.08, Math.max(box.width, box.height) * 0.4) : 0.12;
+  }
+
+  function attachParts(bodies, faces = [], hands = []) {
+    const taken = new Set();
+
+    faces.forEach((face) => {
+      const index = nearestBody(bodies, centroidOf(face), ["head", "neck"], 0.25);
+
+      if (index !== null && !taken.has(index)) {
+        taken.add(index);
+        bodies[index].face = face;
+      }
+    });
+
+    hands.forEach((hand) => {
+      const wrist = hand.points?.[0];
+      const index = nearestBody(bodies, wrist, ["wristLeft", "wristRight"], 0.2);
+
+      if (index !== null) {
+        bodies[index].hands = [...bodies[index].hands, hand];
+      }
+    });
+
+    return bodies;
+  }
+
+  // Which of last frame's bodies is which of this frame's, so the easing walks
+  // each person towards their own next position rather than smearing one across
+  // the room into another. Greedy nearest-centre, and a body with nobody near
+  // enough is somebody who has just walked in.
+  function matchBodies(previous = [], next = []) {
+    const claimed = new Set();
+
+    return next.map((body) => {
+      const here = centerOf(body.box);
+      let best = null;
+      let bestDistance = Infinity;
+
+      previous.forEach((earlier, index) => {
+        if (claimed.has(index)) {
+          return;
+        }
+
+        const distance = distanceBetween(centerOf(earlier.box), here);
+
+        if (distance < bestDistance && distance <= reachOf(body)) {
+          best = index;
+          bestDistance = distance;
+        }
+      });
+
+      if (best !== null) {
+        claimed.add(best);
+        return previous[best];
+      }
+
+      return null;
+    });
+  }
+
+  function blendBodies(from, to = [], amount = 1) {
+    const matched = matchBodies(from || [], to);
+
+    return to.map((body, index) => {
+      const earlier = matched[index];
+
+      // Nobody to ease from: a new arrival is drawn where they are rather than
+      // sliding in from wherever somebody else was standing.
+      if (!earlier) {
+        return body;
+      }
+
+      return {
+        ...body,
+        keypoints: blendKeypoints(earlier.keypoints, body.keypoints, amount),
+        face: blendSegments(earlier.face, body.face, amount),
+        hands: blendHands(earlier.hands, body.hands, amount),
+      };
+    });
+  }
+
+  // One rigged person, from one pose's landmarks.
+  function toBody(landmarks, corroboration = {}) {
+    const keypoints = toKeypoints(landmarks);
+    const confidence = trunkConfidence(landmarks);
+
+    return {
+      present: isPresent(confidence, corroboration),
+      confidence,
+      keypoints,
+      box: boundsOf(keypoints),
+      limbs: countLimbs(keypoints),
+      pose: describePosture(keypoints),
+      face: null,
+      hands: [],
+    };
+  }
+
+  function byConfidence(left, right) {
+    return right.confidence - left.confidence;
+  }
+
   // `present` stays the answer to "is there a person", and it alone reaches the
   // capture schedule. A vehicle rides alongside it, never instead of it.
   function buildDetection(landmarks, vehicles = [], extra = {}) {
@@ -427,6 +587,8 @@
         limbs: { arms: 0, legs: 0 },
         face: null,
         hands: [],
+        bodies: [],
+        people: 0,
         vehicle,
         vehicles: vehicles.length,
       };
@@ -435,6 +597,9 @@
     const keypoints = toKeypoints(landmarks);
     const confidence = trunkConfidence(landmarks);
     const present = isPresent(confidence, { face, person: extra.person });
+    const body = present
+      ? { present, confidence, keypoints, box: boundsOf(keypoints), limbs: countLimbs(keypoints), pose: describePosture(keypoints), face, hands }
+      : null;
 
     return {
       present,
@@ -448,6 +613,46 @@
       limbs: present ? countLimbs(keypoints) : { arms: 0, legs: 0 },
       face: present ? face : null,
       hands: present ? hands : [],
+      bodies: body ? [body] : [],
+      people: body ? 1 : 0,
+      vehicle,
+      vehicles: vehicles.length,
+    };
+  }
+
+  // Every pose in the frame, rigged and counted. The flat fields carry the
+  // clearest person so the schedule, the stamp and the gesture shutter keep
+  // reading exactly what they read when only one person could be seen; the
+  // crowd rides alongside in `bodies`, and `people` is how many there are.
+  function buildCrowd(poses = [], vehicles = [], extra = {}) {
+    const vehicle = vehicles[0] || null;
+    const seen = (poses || []).filter((landmarks) => landmarks && landmarks.length > 0);
+
+    // Each pose is judged on its own confidence. A second person half out of
+    // frame does not get waved through on the strength of the first.
+    const bodies = attachParts(
+      seen
+        .map((landmarks) => toBody(landmarks, { person: extra.person }))
+        .filter((body) => body.present)
+        .sort(byConfidence),
+      extra.faces || [],
+      extra.hands || [],
+    );
+
+    const lead = bodies[0] || null;
+
+    return {
+      present: Boolean(lead),
+      subject: lead ? "person" : vehicle ? "vehicle" : "none",
+      confidence: lead ? lead.confidence : 0,
+      pose: lead ? lead.pose : "none",
+      keypoints: lead ? lead.keypoints : null,
+      box: lead ? lead.box : null,
+      limbs: lead ? lead.limbs : { arms: 0, legs: 0 },
+      face: lead ? lead.face : null,
+      hands: lead ? lead.hands : [],
+      bodies,
+      people: bodies.length,
       vehicle,
       vehicles: vehicles.length,
     };
@@ -462,16 +667,21 @@
     VEHICLE_MAX_AREA,
     VEHICLE_SCORE,
     VISIBLE,
+    attachParts,
+    blendBodies,
     blendHands,
     blendKeypoints,
     blendPoint,
     blendSegments,
     boundsOf,
+    buildCrowd,
     buildDetection,
+    matchBodies,
     countLimbs,
     describePosture,
     isCaptureGesture,
     isPresent,
+    toBody,
     readPeople,
     readVehicles,
     toFaceOutlines,
