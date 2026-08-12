@@ -222,3 +222,44 @@ test("a capture records how many people were in the frame", () => {
 
   assert.equal(single.pose.people, 1);
 });
+
+test("the store sheds its worst photographs, not merely its oldest", () => {
+  const records = [
+    { id: "newest", capturedAtMs: 5000, bytes: 100, score: 0.2 },
+    { id: "empty-room", capturedAtMs: 4000, bytes: 100, score: 0.1 },
+    { id: "blurred", capturedAtMs: 3000, bytes: 100, score: 0.2 },
+    { id: "a-crowd", capturedAtMs: 2000, bytes: 100, score: 0.95 },
+    { id: "one-person", capturedAtMs: 1000, bytes: 100, score: 0.8 },
+  ];
+
+  // Room for three. The two worst go, even though they are the two newest
+  // after the one that was just taken — and the oldest photograph survives
+  // because there are people in it.
+  const expired = storage.selectExpired(records, { maxRecords: 3, maxBytes: 1e9 });
+
+  assert.equal(expired.length, 2);
+  assert.deepEqual([...expired].sort(), ["blurred", "empty-room"]);
+
+  // The newest is never dropped, whatever it scored.
+  assert.equal(expired.includes("newest"), false);
+});
+
+test("a capture carries what the triage made of it", () => {
+  const record = storage.createCaptureRecord({
+    blob: { size: 2048, type: "image/jpeg" },
+    pose: { present: true, confidence: 0.9, pose: "standing" },
+    score: 0.8123,
+    sharpness: 412.7,
+    fingerprint: "a1b2c3d4e5f60718",
+  });
+
+  assert.equal(record.score, 0.812);
+  assert.equal(record.sharpness, 413);
+  assert.equal(record.fingerprint, "a1b2c3d4e5f60718");
+
+  // A capture from a detector that measured nothing carries nothing, rather
+  // than a score somebody might later mistake for a judgement.
+  const unmeasured = storage.createCaptureRecord({ blob: { size: 2048, type: "image/jpeg" } });
+  assert.equal(unmeasured.score, null);
+  assert.equal(unmeasured.fingerprint, null);
+});

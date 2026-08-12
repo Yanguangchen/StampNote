@@ -74,6 +74,12 @@
           }
         : null,
       intervalMs: Number(input.intervalMs) || null,
+      // What the on-device triage made of the frame: how worth keeping it is,
+      // how much detail it carried, and a fingerprint of the view. The score is
+      // what decides which photographs go when the device runs out of room.
+      score: typeof input.score === "number" ? Number(input.score.toFixed(3)) : null,
+      sharpness: typeof input.sharpness === "number" ? Math.round(input.sharpness) : null,
+      fingerprint: typeof input.fingerprint === "string" ? input.fingerprint : null,
       // Whether the schedule asked for this one or somebody did.
       trigger: input.trigger === "gesture" ? "gesture" : "schedule",
       bytes: Number(input.blob?.size) || 0,
@@ -89,26 +95,55 @@
     return (right.capturedAtMs || 0) - (left.capturedAtMs || 0);
   }
 
-  // Oldest first, until both budgets are satisfied. The newest capture is never
-  // dropped: one photo larger than the whole budget should cost the store its
-  // history, not the photo that has just been taken.
+  // Worst first, until both budgets are satisfied — a blurred frame of an empty
+  // room goes before a photograph of somebody, however much older that is.
+  // Photographs with no score sort by age alone, so a store filled before the
+  // triage existed sheds its oldest exactly as it always did.
+  //
+  // The newest capture is never dropped: one photo larger than the whole budget
+  // should cost the store its history, not the photo just taken.
+  function byExpendability(left, right) {
+    const difference = (left.score ?? 0.5) - (right.score ?? 0.5);
+
+    if (difference !== 0) {
+      return difference;
+    }
+
+    return (left.capturedAtMs || 0) - (right.capturedAtMs || 0);
+  }
+
   function selectExpired(records, limits = {}) {
     const maxRecords = limits.maxRecords ?? MAX_RECORDS;
     const maxBytes = limits.maxBytes ?? MAX_BYTES;
     const ordered = [...records].sort(byNewestFirst);
 
-    let bytes = 0;
-    const expired = [];
+    if (ordered.length === 0) {
+      return [];
+    }
 
-    ordered.forEach((record, index) => {
-      bytes += record.bytes || 0;
+    const [newest, ...rest] = ordered;
+    const expendable = [...rest].sort(byExpendability);
+    const expired = new Set();
 
-      if (index > 0 && (index >= maxRecords || bytes > maxBytes)) {
-        expired.push(record.id);
+    let count = ordered.length;
+    let bytes = ordered.reduce((total, record) => total + (record.bytes || 0), 0);
+
+    expendable.forEach((record) => {
+      if (count <= maxRecords && bytes <= maxBytes) {
+        return;
       }
+
+      expired.add(record.id);
+      count -= 1;
+      bytes -= record.bytes || 0;
     });
 
-    return expired;
+    // Never the newest, whatever it costs.
+    expired.delete(newest.id);
+
+    // Returned newest-first, the order the store has always handed them back
+    // in. Which ones are chosen is what changed here, not how they are listed.
+    return ordered.filter((record) => expired.has(record.id)).map((record) => record.id);
   }
 
   function summarize(records) {
@@ -316,6 +351,7 @@
     MAX_RECORDS,
     STORE_NAME,
     buildFileName,
+    byExpendability,
     createCaptureRecord,
     createIndexedDbBackend,
     createMemoryBackend,
