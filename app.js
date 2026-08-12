@@ -6,6 +6,7 @@
   const pose = window.StampNotePose;
   const schedule = window.StampNoteSchedule;
   const storage = window.StampNoteStore;
+  const triage = window.StampNoteTriage;
   const autoCapture = window.StampNoteAutoCapture;
   const addressField = document.querySelector("#address-field");
   const status = document.querySelector("#location-status");
@@ -526,6 +527,18 @@
     sampleContext.drawImage(monitorVideo, 0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT);
     refreshFaceHint(Date.now());
 
+    return sampleContext.getImageData(0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT);
+  }
+
+  // The same small frame, for measuring rather than detecting. The model path
+  // hands the video straight to MediaPipe and never draws this canvas, so the
+  // triage asks for its own copy — once per capture, not once per tick.
+  function readSample() {
+    if (!frameIsReady()) {
+      return null;
+    }
+
+    sampleContext.drawImage(monitorVideo, 0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT);
     return sampleContext.getImageData(0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT);
   }
 
@@ -1161,6 +1174,8 @@
       getAddress: () => addressField.value,
       getFaces: () => faceHint,
       isGesture: (keypoints) => Boolean(window.StampNotePoseMapping?.isCaptureGesture(keypoints)),
+      triage,
+      readSample,
       onUpdate: renderState,
     });
 

@@ -22,6 +22,11 @@
       getAddress = () => "",
       getFaces = () => null,
       isGesture = () => false,
+      // Deciding what is worth keeping, and the small frame to decide it from.
+      // Both optional: without them every photograph is taken and kept, which
+      // is what the watch did before it could tell one frame from another.
+      triage = null,
+      readSample = null,
       gestureHold = GESTURE_HOLD,
       now = () => Date.now(),
       onUpdate = () => {},
@@ -33,6 +38,12 @@
     if (typeof sampleFrame !== "function" || typeof captureImage !== "function") {
       throw new TypeError("Auto capture needs sampleFrame and captureImage functions.");
     }
+
+    // The fingerprint of the last photograph actually kept, and when. Novelty is
+    // measured against what is in the store, not against the frame before —
+    // otherwise a scene that drifts a little each time is always new.
+    let keptFingerprint = null;
+    let keptAt = 0;
 
     const state = {
       running: false,
@@ -54,6 +65,8 @@
       lastCaptureAt: null,
       lastRecord: null,
       gesture: null,
+      skipped: 0,
+      lastSkip: null,
       error: null,
     };
 
@@ -67,10 +80,54 @@
       return state;
     }
 
+    // What the frame itself says: whether the lens found focus, and whether this
+    // is the same view as the last photograph kept. Costs one small frame per
+    // capture — every thirty seconds at the fastest — not one per tick.
+    function measure() {
+      if (!triage || !readSample) {
+        return null;
+      }
+
+      const image = readSample();
+
+      if (!image) {
+        return null;
+      }
+
+      const fingerprint = triage.fingerprintOf(image);
+
+      return {
+        sharpness: triage.sharpnessOf(image),
+        fingerprint,
+        novelty: triage.noveltyOf(fingerprint, keptFingerprint),
+      };
+    }
+
     async function capture(timestamp, intervalMs, trigger = "schedule") {
       busy = true;
 
       try {
+        const measured = measure();
+        const reading = {
+          ...(measured || {}),
+          trigger,
+          present: state.present,
+          confidence: state.confidence,
+          people: state.people,
+          vehicle: Boolean(state.vehicle?.present),
+          sinceKeptMs: keptAt === 0 ? 0 : timestamp - keptAt,
+        };
+
+        // Declining to take one is not a failure: the schedule still moves on
+        // in the `finally` below, so the watch waits its interval rather than
+        // trying again immediately.
+        if (measured && !triage.shouldKeep(reading)) {
+          state.skipped += 1;
+          state.lastSkip = triage.describeSkip(reading);
+          state.error = null;
+          return;
+        }
+
         const image = await captureImage({
           present: state.present,
           confidence: state.confidence,
@@ -90,8 +147,15 @@
               pose: state.pose,
               people: state.people,
             },
+            // What the store sheds first when it runs out of room.
+            score: triage ? triage.scoreCapture(reading) : null,
+            sharpness: measured?.sharpness ?? null,
+            fingerprint: measured?.fingerprint ?? null,
           });
 
+          keptFingerprint = measured?.fingerprint ?? keptFingerprint;
+          keptAt = timestamp;
+          state.lastSkip = null;
           state.captures += 1;
           state.lastRecord = record;
           state.lastCaptureAt = timestamp;
@@ -252,6 +316,11 @@
     }
     if (state.gesture === "captured") {
       return "Photo taken";
+    }
+    // Said once, in place of the countdown, so a watch quietly declining to
+    // photograph a wall does not look like a watch that has stopped.
+    if (state.lastSkip) {
+      return state.lastSkip;
     }
 
     // How many, not just whether — the count is the thing being watched, and a

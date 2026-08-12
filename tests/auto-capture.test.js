@@ -561,3 +561,143 @@ test("a capture records how many people were in it", async () => {
 
   assert.equal(harness.saved[0].pose.people, 3);
 });
+
+// ---------------------------------------------------------------------------
+// Declining to photograph nothing
+
+const triage = require(resolve(__dirname, "..", "photo-triage.js"));
+
+function frameOf(shade) {
+  const width = 32;
+  const height = 32;
+  const data = new Uint8ClampedArray(width * height * 4);
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const offset = (y * width + x) * 4;
+      data[offset] = data[offset + 1] = data[offset + 2] = shade(x, y);
+      data[offset + 3] = 255;
+    }
+  }
+
+  return { width, height, data };
+}
+
+// A room with structure in it, and the same room a moment later.
+const room = (x, y) => 40 + ((x * 3) % 90) + (y < 12 ? 70 : 0);
+const smeared = (x, y) => 128 + Math.sin((x + y) / 12) * 6;
+
+function createTriagedHarness() {
+  const saved = [];
+  const harness = { time: 0, present: false, frame: frameOf(room), saved };
+
+  harness.controller = autoCapture.createAutoCapture({
+    detector: {
+      detect: () => ({
+        present: harness.present,
+        confidence: harness.present ? 0.95 : 0.05,
+        pose: harness.present ? "standing" : "none",
+        keypoints: harness.present ? { head: { x: 0.5, y: 0.2 } } : null,
+        box: harness.present ? { x: 0.4, y: 0.1, width: 0.2, height: 0.8 } : null,
+        people: harness.present ? 1 : 0,
+        vehicle: null,
+      }),
+      reset() {},
+    },
+    tracker: pose.createPoseTracker({ enterFrames: 1, holdMs: 0 }),
+    scheduler: schedule.createCaptureScheduler(),
+    store: {
+      async save(input) {
+        saved.push(input);
+        return { ...input, id: `capture-${saved.length}` };
+      },
+    },
+    sampleFrame: () => harness.frame,
+    captureImage: async () => ({
+      blob: { size: 1024, type: "image/jpeg" },
+      date: new Date(harness.time),
+    }),
+    getAddress: () => "10 Bayfront Avenue",
+    isGesture: () => false,
+    triage,
+    readSample: () => harness.frame,
+    now: () => harness.time,
+  });
+
+  harness.advance = async (milliseconds) => {
+    const target = harness.time + milliseconds;
+
+    while (harness.time < target) {
+      harness.time = Math.min(target, harness.time + autoCapture.SAMPLE_INTERVAL);
+      await harness.controller.tick();
+    }
+  };
+
+  return harness;
+}
+
+test("the same empty view is photographed once, not every two minutes", async () => {
+  const harness = createTriagedHarness();
+
+  harness.controller.start();
+  await harness.controller.tick();
+
+  // The first is always taken — there is nothing yet for it to be the same as.
+  assert.equal(harness.saved.length, 1);
+  assert.ok(harness.saved[0].fingerprint, "the view is fingerprinted so the next can be compared");
+  assert.equal(typeof harness.saved[0].score, "number");
+
+  // Half an hour of the same wall. Only the heartbeat gets through.
+  await harness.advance(30 * 60 * SECOND);
+
+  const state = harness.controller.getState();
+  assert.ok(state.skipped > 5, `expected the identical view to be declined, skipped ${state.skipped}`);
+  assert.ok(
+    harness.saved.length <= 4,
+    `expected roughly one heartbeat per ten minutes, got ${harness.saved.length}`,
+  );
+  assert.match(autoCapture.describeCadence(state), /skipped/i);
+});
+
+test("a person walking in is photographed however dull the frame is", async () => {
+  const harness = createTriagedHarness();
+
+  harness.controller.start();
+  await harness.controller.tick();
+  await harness.advance(10 * SECOND);
+
+  const before = harness.saved.length;
+
+  // Somebody arrives, and the lens has not caught up with them.
+  harness.present = true;
+  harness.frame = frameOf(smeared);
+  await harness.advance(2 * 60 * SECOND);
+
+  assert.ok(harness.saved.length > before + 2, "a person in frame is never declined");
+  assert.equal(harness.controller.getState().lastSkip, null);
+
+  // And they score above the empty room that came before them.
+  const person = harness.saved[harness.saved.length - 1];
+  assert.ok(person.score > harness.saved[0].score);
+});
+
+test("a frame the lens never focused on is declined when nobody is in it", async () => {
+  const harness = createTriagedHarness();
+
+  harness.controller.start();
+  await harness.controller.tick();
+
+  // A new view every time, so novelty cannot be what saves or damns it — only
+  // the focus.
+  let step = 0;
+  Object.defineProperty(harness, "frame", {
+    get: () => {
+      step += 1;
+      return frameOf((x, y) => smeared(x + step * 9, y));
+    },
+  });
+
+  await harness.advance(8 * 60 * SECOND);
+  assert.ok(harness.controller.getState().skipped > 0);
+  assert.match(harness.controller.getState().lastSkip || "", /focus/i);
+});
