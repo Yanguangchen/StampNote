@@ -65,24 +65,45 @@ test("gallery control accepts multiple images", () => {
   assert.equal(hasAttribute(galleryInput, "capture"), false);
 });
 
-test("the toolbar's controls are labelled, in writing and for a pointer", () => {
-  // These sit in the bottom bar with their names beside them, so unlike the
-  // icon-only controls the wording is on screen rather than hidden.
-  [
-    ["label", "for", "gallery-input", "Choose from gallery", "Choose"],
-    ["button", "id", "photo-sheet-toggle", "Photos", "Photos"],
-    ["button", "id", "place-toggle", "Street address", "Place"],
-  ].forEach(([tagName, attribute, id, tooltip, wording]) => {
-    const pattern = new RegExp(
-      `<${tagName}\\b[^>]*${attribute}=["']${escapeRegExp(id)}["'][^>]*>([\\s\\S]*?)</${tagName}>`,
-      "i",
-    );
-    const match = html.match(pattern);
+// Every control on screen is a glyph. Its name is in the markup — so it names
+// the button to a screen reader — but it is only shown when a pointer asks.
+const NAMED_CONTROLS = [
+  ["label", "for", "gallery-input", "Choose"],
+  ["button", "id", "photo-sheet-toggle", "Photos"],
+  ["button", "id", "place-toggle", "Place"],
+  ["button", "id", "monitor-toggle", "Start auto capture"],
+  ["button", "id", "share-button", "Share"],
+  ["button", "id", "captures-save", "Save captures"],
+  ["button", "id", "captures-clear", "Delete captures"],
+];
 
-    assert.ok(match, `Expected a <${tagName}> for ${id}`);
-    assert.match(match[0], new RegExp(`title=["']${escapeRegExp(tooltip)}["']`, "i"));
-    assert.match(match[1], new RegExp(`class=["']tool-name["']>${escapeRegExp(wording)}<`, "i"));
+function controlMarkup(tagName, attribute, id) {
+  const pattern = new RegExp(
+    `<${tagName}\\b[^>]*${attribute}=["']${escapeRegExp(id)}["'][^>]*>([\\s\\S]*?)</${tagName}>`,
+    "i",
+  );
+  const match = html.match(pattern);
+
+  assert.ok(match, `Expected a <${tagName}> for ${id}`);
+  return match;
+}
+
+test("controls carry their name in the markup and nothing beside the glyph", () => {
+  NAMED_CONTROLS.forEach(([tagName, attribute, id, name]) => {
+    const match = controlMarkup(tagName, attribute, id);
+
+    assert.match(match[1], new RegExp(`class=["'][^"']*hint[^"']*["'][^>]*>${escapeRegExp(name)}<`, "i"));
     assert.match(match[1], /<svg\b[^>]*aria-hidden=["']true["']/i);
+
+    // The glyph and the name are the whole of it, so no wording is laid out
+    // next to the icon.
+    const visible = match[1]
+      .replace(/<svg\b[\s\S]*?<\/svg>/gi, "")
+      .replace(/<span\b[^>]*class=["'][^"']*hint[^"']*["'][^>]*>[\s\S]*?<\/span>/gi, "")
+      .replace(/<span\b[^>]*class=["']tool-count["'][^>]*>[\s\S]*?<\/span>/gi, "")
+      .trim();
+
+    assert.equal(visible, "", `Expected no visible text in the ${id} control`);
   });
 
   // The sheet says whether it is open, for anyone who cannot see that it is.
@@ -90,38 +111,29 @@ test("the toolbar's controls are labelled, in writing and for a pointer", () => 
   assert.match(html, /aria-controls=["']photo-sheet["']/i);
 });
 
-test("icon-only controls keep a text name and hide the glyph from assistive tech", () => {
-  const controls = [
-    ["button", "share-button", "Share"],
-    ["button", "monitor-toggle", "Start auto capture"],
-    ["button", "captures-save", "Save captures"],
-    ["button", "captures-clear", "Delete captures"],
-  ];
-
-  controls.forEach(([tagName, id, name]) => {
-    const attribute = tagName === "label" ? "for" : "id";
-    const pattern = new RegExp(
-      `<${tagName}\\b[^>]*${attribute}=["']${escapeRegExp(id)}["'][^>]*>([\\s\\S]*?)</${tagName}>`,
-      "i",
-    );
-    const match = html.match(pattern);
-
-    assert.ok(match, `Expected a <${tagName}> for ${id}`);
-    // The glyph carries no text, so the name has to come from the hidden span.
-    assert.match(match[1], new RegExp(`class=["']?[^"']*visually-hidden[^"']*["']?[^>]*>${escapeRegExp(name)}<`, "i"));
-    assert.match(match[1], /<svg\b[^>]*aria-hidden=["']true["']/i);
-    // A tooltip for anyone using a pointer.
-    assert.match(match[0], new RegExp(`title=["']${escapeRegExp(name)}["']`, "i"));
-
-    // Nothing but the glyph and the hidden name is left, so the control renders
-    // as an icon with no wording beside it.
-    const visible = match[1]
-      .replace(/<svg\b[\s\S]*?<\/svg>/gi, "")
-      .replace(/<span\b[^>]*visually-hidden[^>]*>[\s\S]*?<\/span>/gi, "")
-      .trim();
-
-    assert.equal(visible, "", `Expected no visible text in the ${id} control`);
+test("a control's name is shown above it, only while a pointer is on it", () => {
+  // One tooltip, not two: a title attribute would have the browser drawing its
+  // own next to the styled one.
+  NAMED_CONTROLS.forEach(([tagName, attribute, id]) => {
+    assert.equal(/\btitle=/.test(controlMarkup(tagName, attribute, id)[0]), false);
   });
+  assert.equal(/monitorToggle\.title/.test(readFileSync(resolve(projectRoot, "app.js"), "utf8")), false);
+
+  // Above the control, out of the way of the finger or cursor on it.
+  assert.match(css, /\.hint\s*\{[^}]*position:\s*absolute/);
+  assert.match(css, /\.hint\s*\{[^}]*bottom:\s*calc\(100% \+ 6px\)/);
+
+  // Transparent rather than removed, so it still names the button when it is
+  // not being shown, and never eats the click meant for the control.
+  assert.match(css, /\.hint\s*\{[^}]*opacity:\s*0/);
+  assert.match(css, /\.hint\s*\{[^}]*pointer-events:\s*none/);
+  assert.equal(/\.hint\s*\{[^}]*display:\s*none/.test(css), false);
+
+  // Hover is what reveals it, and only where hovering is a thing that happens.
+  assert.match(css, /@media \(hover: hover\)\s*\{\s*:is\([^)]*\):hover > \.hint/);
+  // A finger has no hover, so a press shows it, and a keyboard gets it on focus.
+  assert.match(css, /:is\([^)]*\):active > \.hint/);
+  assert.match(css, /:is\([^)]*\):focus-visible > \.hint/);
 });
 
 test("the address is typed into a single field, with no location button", () => {
@@ -590,6 +602,16 @@ test("CSS covers the live frame, the pose overlay and the capture grid", () => {
   assert.match(css, /\.monitor video\s*\{[^}]*object-fit:\s*cover/);
   assert.match(css, /\.captures\s*\{[^}]*grid-template-columns/);
   assert.match(css, /\.capture\[data-pose="true"\]/);
+});
+
+test("deleting photos says nothing, and nothing points at a button that is gone", () => {
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+
+  // The grid emptying is the confirmation.
+  assert.equal(/Stored photos deleted/.test(app), false);
+  // There is no Add photo button any more, so no wording may send anyone to it.
+  assert.equal(/Add photo/i.test(app), false);
+  assert.equal(/Add photo/i.test(html), false);
 });
 
 test("nothing animates behind the picture", () => {

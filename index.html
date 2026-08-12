@@ -33,7 +33,7 @@
 
       <div class="stage-empty" id="stage-empty">
         <p class="stage-title">StampNote</p>
-        <p class="stage-hint">Press record to watch, or add a photo you already have.</p>
+        <p class="stage-hint">Press record to watch, or choose a photo you already have.</p>
       </div>
 
       <!-- The address sits across the top of the picture, where the stamp will
@@ -70,7 +70,6 @@
             class="button button-secondary button-icon"
             id="captures-save"
             type="button"
-            title="Save captures"
             hidden
           >
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -78,14 +77,13 @@
               <path d="m7.9 10.7 4.1 4.1 4.1-4.1" />
               <path d="M4 16.4v2.2a2.5 2.5 0 0 0 2.5 2.5h11a2.5 2.5 0 0 0 2.5-2.5v-2.2" />
             </svg>
-            <span class="visually-hidden">Save captures</span>
+            <span class="hint">Save captures</span>
           </button>
 
           <button
             class="button button-secondary button-icon"
             id="share-button"
             type="button"
-            title="Share"
             hidden
           >
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -93,14 +91,13 @@
               <path d="m7.9 7.3 4.1-4.1 4.1 4.1" />
               <path d="M7.4 10.4h-1a2.5 2.5 0 0 0-2.5 2.5v5.9A2.5 2.5 0 0 0 6.4 21.3h11.2a2.5 2.5 0 0 0 2.5-2.5v-5.9a2.5 2.5 0 0 0-2.5-2.5h-1" />
             </svg>
-            <span class="visually-hidden">Share</span>
+            <span class="hint">Share</span>
           </button>
 
           <button
             class="button button-secondary button-icon"
             id="captures-clear"
             type="button"
-            title="Delete captures"
             hidden
           >
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -110,7 +107,7 @@
               <path d="M10.4 10.2v6.6" />
               <path d="M13.6 10.2v6.6" />
             </svg>
-            <span class="visually-hidden">Delete captures</span>
+            <span class="hint">Delete captures</span>
           </button>
         </div>
       </section>
@@ -123,7 +120,6 @@
         class="tool"
         id="photo-sheet-toggle"
         type="button"
-        title="Photos"
         aria-expanded="false"
         aria-controls="photo-sheet"
       >
@@ -133,26 +129,21 @@
           <path d="m4 17.5 4.4-4.4a1.5 1.5 0 0 1 2.1 0L14 16.6" />
           <path d="m13.2 15.2 1.9-1.9a1.5 1.5 0 0 1 2.1 0l2.8 2.8" />
         </svg>
-        <span class="tool-name">Photos</span>
+        <span class="hint">Photos</span>
         <span class="tool-count" id="photo-count" hidden></span>
       </button>
 
       <input class="visually-hidden" id="gallery-input" type="file" accept="image/*" multiple />
-      <label class="tool" for="gallery-input" title="Choose from gallery">
+      <label class="tool" for="gallery-input">
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <path d="M4.5 16.5V6.2a2 2 0 0 1 2-2h7.2" />
           <rect x="8" y="8" width="11.5" height="11.5" rx="2" />
           <path d="m9.2 17.4 3.3-3.3a1.4 1.4 0 0 1 2 0l2.6 2.6" />
         </svg>
-        <span class="tool-name">Choose</span>
+        <span class="hint">Choose</span>
       </label>
 
-      <button
-        class="record"
-        id="monitor-toggle"
-        type="button"
-        title="Start auto capture"
-      >
+      <button class="record" id="monitor-toggle" type="button">
         <svg
           class="icon record-icon"
           id="monitor-icon-start"
@@ -172,15 +163,15 @@
         >
           <rect x="7" y="7" width="10" height="10" rx="2.5" />
         </svg>
-        <span class="visually-hidden" id="monitor-toggle-name">Start auto capture</span>
+        <span class="hint" id="monitor-toggle-name">Start auto capture</span>
       </button>
 
-      <button class="tool" id="place-toggle" type="button" title="Street address">
+      <button class="tool" id="place-toggle" type="button">
         <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
           <path d="M12 21.2s6.4-5.6 6.4-10.4a6.4 6.4 0 1 0-12.8 0C5.6 15.6 12 21.2 12 21.2z" />
           <circle cx="12" cy="10.6" r="2.4" />
         </svg>
-        <span class="tool-name">Place</span>
+        <span class="hint">Place</span>
       </button>
     </nav>
   </body>

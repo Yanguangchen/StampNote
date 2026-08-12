@@ -462,7 +462,6 @@
   function setToggleLabel(running) {
     const name = running ? "Stop auto capture" : "Start auto capture";
 
-    monitorToggle.title = name;
     monitorToggle.dataset.running = String(running);
     if (monitorToggleName) {
       monitorToggleName.textContent = name;
@@ -992,7 +991,7 @@
 
   async function startMonitor() {
     if (!navigator.mediaDevices?.getUserMedia) {
-      setMonitorStatus("This browser cannot open a live camera — use Add photo below.", "error");
+      setMonitorStatus("This browser cannot open a live camera — choose a photo instead.", "error");
       return;
     }
 
@@ -1139,7 +1138,9 @@
     await store.clear();
     releaseThumbnails();
     await renderCaptures();
-    setMonitorStatus("Stored photos deleted.");
+    // The empty grid is the confirmation; a line of text saying so is one more
+    // thing on screen for something the eye has already been told.
+    setMonitorStatus("");
   }
 
   monitorToggle.addEventListener("click", () => {
