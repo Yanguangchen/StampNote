@@ -262,82 +262,78 @@ button {
 }
 
 /* ---------------------------------------------------------------------------
-   The photo sheet
+   The strip of photographs
    --------------------------------------------------------------------------- */
 
-.sheet {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 3;
-  display: flex;
-  flex-direction: column;
-  max-height: 100%;
-  padding: 14px var(--gutter) 16px;
-  border-radius: 18px 18px 0 0;
-  background: var(--glass);
-  backdrop-filter: blur(20px) saturate(150%);
-  -webkit-backdrop-filter: blur(20px) saturate(150%);
-  border-top: 1px solid var(--glass-line);
+/* Under the picture, not behind a button: what has been taken is on screen
+   without asking, and the strip is swiped sideways for the rest. */
+.filmstrip {
+  position: relative;
+  z-index: 4;
+  flex: 0 0 auto;
+  padding: 8px 0 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 16, 14, 0.96);
   animation: rise-in 240ms ease-in-out both;
 }
 
-.sheet-title {
-  margin: 0 0 10px;
-  font-size: 13px;
-  font-weight: 600;
-  text-align: center;
-}
-
-.sheet-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-.sheet-actions {
+/* One row, newest first, scrolled with a thumb. The padding is inside the
+   scroller so the first and last photo clear the edges of the screen. */
+.reel {
   display: flex;
-  justify-content: center;
-  gap: 10px;
-  padding-top: 12px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 var(--gutter);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
 
-.sheet-actions:empty {
+.reel::-webkit-scrollbar {
   display: none;
 }
 
-.previews {
-  display: grid;
-  gap: 8px;
-}
-
-.previews:not(:empty) {
-  margin-bottom: 10px;
-}
-
-.preview {
-  animation: fade-in 320ms ease-in-out both;
-  display: block;
-  width: 100%;
-  height: auto;
-  border-radius: 10px;
-}
-
+/* The two sources of photographs — a stamped upload and a stored capture —
+   sit in the same row rather than in two groups of their own. */
+.previews,
 .captures {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
-  gap: 6px;
+  display: contents;
 }
 
+.preview,
 .capture {
   animation: fade-in 320ms ease-in-out both;
   display: block;
-  width: 100%;
-  aspect-ratio: 1;
-  border-radius: 8px;
+  flex: 0 0 auto;
+  width: 64px;
+  height: 64px;
+  border: 0;
+  padding: 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
   object-fit: cover;
+  scroll-snap-align: start;
+  cursor: pointer;
+}
+
+/* The tile is the button; the picture inside it fills the tile. */
+.preview > canvas,
+.capture > img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+.preview:hover,
+.capture:hover,
+.preview:focus-visible,
+.capture:focus-visible {
+  filter: brightness(1.15);
 }
 
 /* Marks the frames a person was tracked in. */
@@ -346,9 +342,59 @@ button {
   outline-offset: -2px;
 }
 
+.reel-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px var(--gutter) 0;
+}
+
+.reel-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
 #captures-summary {
-  margin-top: 10px;
-  text-align: center;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+   One photograph, whole
+   --------------------------------------------------------------------------- */
+
+.viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: calc(env(safe-area-inset-top, 0px) + 16px) 16px
+    calc(env(safe-area-inset-bottom, 0px) + 16px);
+  background: rgba(4, 8, 7, 0.94);
+  animation: fade-in 160ms ease-in-out both;
+}
+
+.viewer-image {
+  max-width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  border-radius: 12px;
+  object-fit: contain;
+}
+
+.viewer-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -356,13 +402,15 @@ button {
    --------------------------------------------------------------------------- */
 
 /* Everything that is not the picture, within a thumb's reach of the bottom of
-   the screen and padded clear of the home indicator. */
+   the screen and padded clear of the home indicator. Three columns rather than
+   a spread row, so the shutter sits in the true middle of the screen whatever
+   is placed either side of it. */
 .toolbar {
   position: relative;
   z-index: 4;
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-around;
   gap: 4px;
   padding: 6px var(--gutter) calc(env(safe-area-inset-bottom, 0px) + 6px);
   min-height: var(--bar);
@@ -370,13 +418,25 @@ button {
   background: rgba(10, 16, 14, 0.96);
 }
 
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Where the photographs go, at the corner the thumb of a right hand rests on. */
+.toolbar-group-end {
+  justify-content: flex-end;
+}
+
 .tool {
   position: relative;
   display: flex;
-  flex: 1;
+  flex: 0 0 auto;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  min-width: 48px;
   min-height: 44px;
   padding: 6px 4px;
   border: 0;
@@ -389,26 +449,31 @@ button {
     background 180ms ease-in-out;
 }
 
-.tool:hover,
+.tool:hover:not(:disabled),
 .tool[aria-expanded="true"] {
   color: #fff;
   background: rgba(255, 255, 255, 0.08);
 }
 
-/* How many photographs are waiting, on the button that opens them. */
-.tool-count {
-  position: absolute;
-  top: 0;
-  right: calc(50% - 20px);
-  min-width: 16px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: #06231a;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 16px;
-  text-align: center;
+/* Nothing to save yet, rather than a button that has gone missing: the bar
+   keeps its shape as photographs arrive. */
+.tool:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+/* The two beneath the strip, which sit next to a line of text rather than in
+   the bar. */
+.tool-small {
+  min-width: 34px;
+  min-height: 30px;
+  padding: 4px;
+  border-radius: 9px;
+}
+
+.tool-small .icon {
+  width: 17px;
+  height: 17px;
 }
 
 /* The one control that starts and stops the watch, sized and placed like the
@@ -610,20 +675,34 @@ button {
     font-size: 12px;
   }
 
-  /* A sheet that filled the screen would leave nothing to look at, so photos
-     become a strip along the bottom. */
-  .sheet {
-    max-height: 82%;
+  /* Held sideways there is little height to spare, so the strip stops stacking:
+     the photographs and the two controls share one line, the storage readout
+     goes, and the picture keeps the height all of that was taking. */
+  .filmstrip {
+    display: flex;
+    align-items: center;
+    padding: 6px 0;
   }
 
-  .captures {
-    grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+  .reel {
+    flex: 1;
+    min-width: 0;
+    padding-left: calc(env(safe-area-inset-left, 0px) + var(--gutter));
   }
-}
 
-@media (max-width: 900px) {
-  .sheet {
-    padding-bottom: 14px;
+  .reel-foot {
+    flex: 0 0 auto;
+    padding: 0 calc(env(safe-area-inset-right, 0px) + var(--gutter)) 0 4px;
+  }
+
+  #captures-summary {
+    display: none;
+  }
+
+  .preview,
+  .capture {
+    width: 48px;
+    height: 48px;
   }
 }
 
@@ -632,8 +711,10 @@ button {
     font-size: 18px;
   }
 
-  .captures {
-    grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));
+  .preview,
+  .capture {
+    width: 58px;
+    height: 58px;
   }
 }
 
@@ -645,6 +726,7 @@ button {
   }
 
   .stage,
+  .filmstrip,
   .toolbar {
     width: min(980px, 100%);
     margin-inline: auto;

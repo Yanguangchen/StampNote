@@ -69,12 +69,14 @@ test("gallery control accepts multiple images", () => {
 // the button to a screen reader — but it is only shown when a pointer asks.
 const NAMED_CONTROLS = [
   ["label", "for", "gallery-input", "Choose"],
-  ["button", "id", "photo-sheet-toggle", "Photos"],
   ["button", "id", "place-toggle", "Place"],
   ["button", "id", "monitor-toggle", "Start auto capture"],
+  ["button", "id", "captures-save", "Save to this device"],
   ["button", "id", "share-button", "Share"],
-  ["button", "id", "captures-save", "Save captures"],
-  ["button", "id", "captures-clear", "Delete captures"],
+  ["button", "id", "captures-clear", "Delete every photo"],
+  ["button", "id", "viewer-share", "Share this photo"],
+  ["button", "id", "viewer-delete", "Delete this photo"],
+  ["button", "id", "viewer-close", "Close"],
 ];
 
 function controlMarkup(tagName, attribute, id) {
@@ -100,15 +102,10 @@ test("controls carry their name in the markup and nothing beside the glyph", () 
     const visible = match[1]
       .replace(/<svg\b[\s\S]*?<\/svg>/gi, "")
       .replace(/<span\b[^>]*class=["'][^"']*hint[^"']*["'][^>]*>[\s\S]*?<\/span>/gi, "")
-      .replace(/<span\b[^>]*class=["']tool-count["'][^>]*>[\s\S]*?<\/span>/gi, "")
       .trim();
 
     assert.equal(visible, "", `Expected no visible text in the ${id} control`);
   });
-
-  // The sheet says whether it is open, for anyone who cannot see that it is.
-  assert.match(html, /id=["']photo-sheet-toggle["'][^>]*aria-expanded=["']false["']/i);
-  assert.match(html, /aria-controls=["']photo-sheet["']/i);
 });
 
 test("a control's name is shown above it, only while a pointer is on it", () => {
@@ -371,8 +368,8 @@ test("reverse geocoder reports service and empty-address failures", async () => 
 
 test("CSS includes keyboard focus, mobile layout, and reduced motion support", () => {
   assert.match(css, /\.visually-hidden:focus\s*\+\s*\.button/);
-  assert.match(css, /@media\s*\(max-width:\s*900px\)/);
   assert.match(css, /@media\s*\(max-width:\s*560px\)/);
+  assert.match(css, /@media \(min-width: 900px\) and \(orientation: landscape\)/);
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
 });
 
@@ -465,10 +462,19 @@ test("auto capture loads its own scripts, ahead of the app that wires them", () 
   );
 });
 
-test("capture controls stay hidden until something has been captured", () => {
-  assert.ok(hasAttribute(tagWithId("button", "captures-save"), "hidden"));
-  assert.ok(hasAttribute(tagWithId("button", "captures-clear"), "hidden"));
+test("with nothing captured, the strip is away and saving is off", () => {
+  // The strip only exists once there is something in it.
+  assert.ok(hasAttribute(tagWithId("section", "filmstrip"), "hidden"));
   assert.match(html, /id=["']captures["']/);
+
+  // Save keeps its place in the bar and greys out, rather than appearing from
+  // nowhere and moving the buttons either side of it.
+  const save = tagWithId("button", "captures-save");
+  assert.ok(hasAttribute(save, "disabled"));
+  assert.equal(hasAttribute(save, "hidden"), false);
+  assert.match(readFileSync(resolve(projectRoot, "app.js"), "utf8"), /capturesSave\.disabled = !hasCaptures/);
+
+  assert.ok(hasAttribute(tagWithId("button", "captures-clear"), "hidden"));
 });
 
 test("the watch stores captures locally and never uploads them", () => {
@@ -600,7 +606,7 @@ test("CSS covers the live frame, the pose overlay and the capture grid", () => {
   assert.match(css, /\.monitor\s*\{/);
   assert.match(css, /\.monitor-overlay\s*\{/);
   assert.match(css, /\.monitor video\s*\{[^}]*object-fit:\s*cover/);
-  assert.match(css, /\.captures\s*\{[^}]*grid-template-columns/);
+  assert.match(css, /\.reel\s*\{[^}]*overflow-x:\s*auto/);
   assert.match(css, /\.capture\[data-pose="true"\]/);
 });
 
@@ -612,6 +618,60 @@ test("deleting photos says nothing, and nothing points at a button that is gone"
   // There is no Add photo button any more, so no wording may send anyone to it.
   assert.equal(/Add photo/i.test(app), false);
   assert.equal(/Add photo/i.test(html), false);
+});
+
+test("the photographs are a strip under the camera, not a panel over it", () => {
+  // Order on the page: the picture, then the strip of what it has taken, then
+  // the tools. Nothing covers the camera and nothing has to be opened.
+  const stage = html.indexOf('<main class="stage"');
+  const strip = html.indexOf('id="filmstrip"');
+  const toolbar = html.indexOf('<nav class="toolbar"');
+
+  assert.ok(stage > -1 && strip > stage && toolbar > strip);
+  assert.equal(/id=["']photo-sheet["']/.test(html), false);
+
+  // One row, swiped sideways, with both kinds of photograph in it.
+  assert.match(css, /\.reel\s*\{[^}]*display:\s*flex/);
+  assert.match(css, /\.reel\s*\{[^}]*overflow-x:\s*auto/);
+  assert.match(css, /\.previews,\s*\n\.captures\s*\{[^}]*display:\s*contents/);
+
+  // A tile is a button, so it opens the photo whole and a keyboard can reach it.
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  assert.match(app, /tile\.className = "capture"/);
+  assert.match(app, /tile\.addEventListener\("click", \(\) =>\s*\n?\s*openViewer/);
+  assert.match(html, /id=["']viewer["'][^>]*role=["']dialog["']/);
+});
+
+test("the shutter is centred and saving sits in the bottom right corner", () => {
+  // Three columns rather than a spread row: whatever is placed either side, the
+  // record button stays in the middle of the screen.
+  assert.match(css, /\.toolbar\s*\{[^}]*grid-template-columns:\s*1fr auto 1fr/);
+  assert.match(css, /\.toolbar-group-end\s*\{[^}]*justify-content:\s*flex-end/);
+
+  // Save is the last thing in the bar, in the trailing group.
+  const trailing = html.match(/<div class="toolbar-group toolbar-group-end">([\s\S]*?)<\/div>/i);
+  assert.ok(trailing, "Expected a trailing toolbar group");
+  assert.match(trailing[1], /id=["']captures-save["']/);
+
+  // And the record button is between the two groups.
+  assert.ok(html.indexOf('id="monitor-toggle"') > html.indexOf('<div class="toolbar-group">'));
+  assert.ok(html.indexOf('id="monitor-toggle"') < html.indexOf('toolbar-group-end'));
+});
+
+test("a capture is kept without anyone touching the device", () => {
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const controller = readFileSync(resolve(projectRoot, "auto-capture.js"), "utf8");
+
+  // The store write is inside the capture itself — no button, no prompt, no
+  // gesture between taking a photograph and keeping it.
+  assert.match(controller, /async function capture\([\s\S]*?await store\.save\(/);
+  assert.equal(/confirm\(|showSaveFilePicker|click\(\)/.test(controller), false);
+
+  // Copying them out to a folder is the part a browser will not do silently, so
+  // it is armed once and then writes every later capture on its own.
+  assert.match(app, /const canKeepFolder = typeof window\.showDirectoryPicker === "function"/);
+  assert.match(app, /if \(folder\) \{\s*\n\s*writeToFolder\(state\.lastRecord\)/);
+  assert.match(app, /createWritable\(\)/);
 });
 
 test("nothing animates behind the picture", () => {
