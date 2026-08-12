@@ -473,3 +473,112 @@ test("hands above the head is the shutter, and nothing else is", () => {
   );
   assert.equal(mapping.isCaptureGesture(null), false);
 });
+
+// ---------------------------------------------------------------------------
+// More than one person
+
+// The same standing figure, shifted sideways, so several can share a frame.
+function standingAt(x, overrides = {}) {
+  const shift = x - 0.5;
+  const base = standing(overrides);
+
+  return base.map((point) => ({ ...point, x: point.x + shift }));
+}
+
+test("every pose in the frame is rigged, and counted", () => {
+  const crowd = mapping.buildCrowd([standingAt(0.2), standingAt(0.5), standingAt(0.8)]);
+
+  assert.equal(crowd.people, 3);
+  assert.equal(crowd.bodies.length, 3);
+  assert.equal(crowd.present, true);
+
+  // Each carries their own rig, in their own part of the frame.
+  const centres = crowd.bodies.map((body) => Math.round(body.box.x * 100) / 100).sort();
+  assert.equal(new Set(centres).size, 3);
+  crowd.bodies.forEach((body) => assert.ok(body.keypoints.neck && body.keypoints.hipLeft));
+});
+
+test("the flat fields still describe one person, so the schedule is unchanged", () => {
+  const crowd = mapping.buildCrowd([standingAt(0.3), standingAt(0.7)]);
+
+  // Everything that existed before multiple people did still reads the same
+  // way — a single person's keypoints, box, pose and confidence.
+  assert.equal(crowd.subject, "person");
+  assert.ok(crowd.keypoints.neck);
+  assert.ok(crowd.box);
+  assert.equal(crowd.pose, "standing");
+  assert.ok(crowd.confidence > 0.8);
+
+  // And the lead is the clearest of them, not whichever the model listed first.
+  assert.equal(crowd.confidence, Math.max(...crowd.bodies.map((body) => body.confidence)));
+});
+
+test("each person is judged on their own confidence", () => {
+  const faint = standingAt(0.8).map((point) => ({ ...point, visibility: 0.2 }));
+  const crowd = mapping.buildCrowd([standingAt(0.2), faint]);
+
+  // A second figure the model is guessing at does not get waved through on the
+  // strength of the first one standing in plain view.
+  assert.equal(crowd.people, 1);
+  assert.equal(crowd.bodies.length, 1);
+});
+
+test("an empty frame counts nobody", () => {
+  const crowd = mapping.buildCrowd([]);
+
+  assert.equal(crowd.people, 0);
+  assert.deepEqual(crowd.bodies, []);
+  assert.equal(crowd.present, false);
+  assert.equal(crowd.keypoints, null);
+});
+
+test("a face goes to the nearest head and a hand to the nearest wrist", () => {
+  const left = mapping.toBody(standingAt(0.2));
+  const right = mapping.toBody(standingAt(0.8));
+
+  // A face outline sitting on the right-hand figure's head, and a hand at the
+  // left-hand figure's wrist.
+  const rightHead = right.keypoints.head;
+  const face = [
+    [
+      { x: rightHead.x - 0.01, y: rightHead.y },
+      { x: rightHead.x + 0.01, y: rightHead.y },
+    ],
+  ];
+  const leftWrist = left.keypoints.wristLeft;
+  const hand = { points: [{ x: leftWrist.x, y: leftWrist.y }], segments: [] };
+
+  const bodies = mapping.attachParts([left, right], [face], [hand]);
+
+  assert.equal(bodies[1].face, face, "the face belongs to the figure it is drawn on");
+  assert.equal(bodies[0].face, null);
+  assert.equal(bodies[0].hands.length, 1);
+  assert.equal(bodies[1].hands.length, 0);
+});
+
+test("people are matched between readings by where they are, not by list order", () => {
+  const before = [mapping.toBody(standingAt(0.2)), mapping.toBody(standingAt(0.8))];
+  // The model reports the same two people in the opposite order next frame,
+  // each having taken a small step.
+  const after = [mapping.toBody(standingAt(0.82)), mapping.toBody(standingAt(0.22))];
+
+  const matched = mapping.matchBodies(before, after);
+
+  assert.equal(matched[0], before[1], "the figure on the right matches the one on the right");
+  assert.equal(matched[1], before[0]);
+});
+
+test("a new arrival is drawn where they are, not slid in from someone else", () => {
+  const before = [mapping.toBody(standingAt(0.2))];
+  const after = [mapping.toBody(standingAt(0.22)), mapping.toBody(standingAt(0.85))];
+
+  const blended = mapping.blendBodies(before, after, 0.3);
+
+  // The one who was already there has eased a little way from the old position.
+  const eased = blended[0].keypoints.neck.x;
+  assert.ok(eased > before[0].keypoints.neck.x && eased < after[0].keypoints.neck.x);
+
+  // The one who just walked in is drawn exactly where the model found them —
+  // easing them from the other figure would drag a skeleton across the frame.
+  assert.deepEqual(blended[1].keypoints.neck, after[1].keypoints.neck);
+});

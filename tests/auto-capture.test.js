@@ -435,3 +435,129 @@ test("the controller refuses to run without its parts", () => {
     TypeError,
   );
 });
+
+// ---------------------------------------------------------------------------
+// More than one person
+
+// A detector that reports a crowd, the way the model adapter does.
+function createCrowdHarness(bodies = []) {
+  const saved = [];
+  const harness = { time: 0, bodies, saved };
+
+  const controller = autoCapture.createAutoCapture({
+    detector: {
+      detect: () => {
+        const crowd = harness.bodies;
+        const lead = crowd[0] || null;
+
+        return {
+          present: crowd.length > 0,
+          confidence: lead ? 0.9 : 0.05,
+          pose: lead ? "standing" : "none",
+          keypoints: lead ? lead.keypoints : null,
+          box: lead ? lead.box : null,
+          bodies: crowd,
+          people: crowd.length,
+          vehicle: null,
+        };
+      },
+      reset() {},
+    },
+    tracker: pose.createPoseTracker({ enterFrames: 1, holdMs: 0 }),
+    scheduler: schedule.createCaptureScheduler(),
+    store: {
+      async save(input) {
+        saved.push(input);
+        return { ...input, id: `capture-${saved.length}` };
+      },
+    },
+    sampleFrame: () => ({ width: 2, height: 2, data: new Uint8ClampedArray(16) }),
+    captureImage: async () => ({
+      blob: { size: 1024, type: "image/jpeg" },
+      date: new Date(harness.time),
+    }),
+    getAddress: () => "10 Bayfront Avenue",
+    // The real test: hands above the head, read off whichever body has them.
+    isGesture: (keypoints) =>
+      Boolean(keypoints?.head && keypoints.wristLeft && keypoints.wristRight) &&
+      keypoints.wristLeft.y < keypoints.head.y &&
+      keypoints.wristRight.y < keypoints.head.y,
+    gestureHold: 700,
+    now: () => harness.time,
+  });
+
+  harness.controller = controller;
+  harness.advance = async (milliseconds) => {
+    const target = harness.time + milliseconds;
+
+    while (harness.time < target) {
+      harness.time = Math.min(target, harness.time + autoCapture.SAMPLE_INTERVAL);
+      await controller.tick();
+    }
+  };
+
+  return harness;
+}
+
+function bodyAt(x, { handsUp = false } = {}) {
+  const head = { x, y: 0.2 };
+
+  return {
+    present: true,
+    confidence: 0.9,
+    box: { x: x - 0.1, y: 0.1, width: 0.2, height: 0.8 },
+    keypoints: {
+      head,
+      neck: { x, y: 0.3 },
+      wristLeft: { x: x - 0.1, y: handsUp ? 0.05 : 0.55 },
+      wristRight: { x: x + 0.1, y: handsUp ? 0.05 : 0.55 },
+    },
+  };
+}
+
+test("how many people are in frame reaches the state and the badge", async () => {
+  const harness = createCrowdHarness([bodyAt(0.3), bodyAt(0.7)]);
+
+  harness.controller.start();
+  await harness.controller.tick();
+
+  const state = harness.controller.getState();
+  assert.equal(state.people, 2);
+  assert.equal(state.bodies.length, 2);
+  assert.match(autoCapture.describeCadence(state), /2 people in frame/);
+
+  // One person is still one person, not "1 people".
+  harness.bodies = [bodyAt(0.5)];
+  await harness.controller.tick();
+  assert.match(autoCapture.describeCadence(harness.controller.getState()), /Person in frame/);
+
+  harness.bodies = [];
+  await harness.controller.tick();
+  assert.equal(harness.controller.getState().people, 0);
+  assert.match(autoCapture.describeCadence(harness.controller.getState()), /No one in frame/);
+});
+
+test("anyone in the frame can raise their hands to take the photo", async () => {
+  // The person the model happens to list first has their arms down; the second
+  // is the one asking for a photograph.
+  const harness = createCrowdHarness([bodyAt(0.3), bodyAt(0.7, { handsUp: true })]);
+
+  harness.controller.start();
+  await harness.controller.tick();
+  const scheduled = harness.saved.length;
+
+  await harness.advance(900);
+
+  const gestured = harness.saved.filter((record) => record.trigger === "gesture");
+  assert.equal(gestured.length, 1, "the second person's raised hands took a photograph");
+  assert.ok(harness.saved.length > scheduled);
+});
+
+test("a capture records how many people were in it", async () => {
+  const harness = createCrowdHarness([bodyAt(0.25), bodyAt(0.5), bodyAt(0.75)]);
+
+  harness.controller.start();
+  await harness.controller.tick();
+
+  assert.equal(harness.saved[0].pose.people, 3);
+});

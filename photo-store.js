@@ -69,6 +69,8 @@
         ? {
             confidence: Number(pose.confidence?.toFixed?.(3) ?? pose.confidence ?? 0),
             label: pose.pose || "unknown",
+            // How many were in the frame, not just that somebody was.
+            people: Math.max(1, Number(pose.people) || 1),
           }
         : null,
       intervalMs: Number(input.intervalMs) || null,
