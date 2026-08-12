@@ -13,19 +13,45 @@ Press start once and the page takes over:
 
 The interval always counts from the last photo, not from the moment somebody appeared. So a person walking in 100 seconds into a quiet stretch is already overdue under the 30-second rule and is photographed at once, while a person arriving 5 seconds after a photo waits out the balance of the 30. The first photo is taken as soon as the camera opens, which is also the confirmation that the watch is running.
 
-The badge over the video says who is in frame, which cadence is in force, and how long until the next photo. A rigged skeleton is drawn over the tracked pose — head, neck, shoulders, spine and hips in white, and the four limbs in the accent colour — so it is obvious what the page thinks it is looking at.
+The badge over the video says who is in frame, which cadence is in force, and how long until the next photo. A rigged skeleton is drawn over the tracked pose — head, neck, shoulders, spine and hips in white, the four limbs in the accent colour, fingers on the ends of the arms and the face traced over the head — so it is obvious what the page thinks it is looking at.
+
+**Raising both hands above your head takes a photograph.** It has to be held for the better part of a second, so a hand thrown up in conversation is not a shutter press, and it has to be let go of before it counts again, so one gesture is one photograph rather than a burst. It is the one pose nobody makes by accident in front of a camera that is already photographing them.
+
+### The screen
+
+Built for a phone held in landscape, which is how it gets used while recording:
+
+- **The camera is the page.** It fills whatever shape the screen is, so turning the phone changes nothing about the layout, and nothing scrolls away underneath it.
+- **The address sits across the top of the picture**, in the same uppercase it will be stamped in — what is on screen is what is being written onto the photograph, rather than a panel somewhere else on the page.
+- **A toolbar along the bottom** holds everything that is not the picture, within a thumb's reach: the photographs taken so far and how many, a picker for stamping a photograph that already exists, the record button, and the address. It thins to icons in landscape and pads itself clear of a phone's home indicator.
+- **Photos live behind a button** rather than down the page, so the picture keeps the screen.
+
+There is no second camera button. The page is already holding the camera open; a file input that opens the phone's camera app beside it was one camera too many.
 
 Vehicles are recognised and boxed in amber, labelled, and otherwise ignored: **a vehicle never changes the cadence.** A car in an empty frame is still an empty frame as far as the schedule is concerned, and a person who gets out of it starts the 30-second cadence just as they would anywhere else.
 
 ### How people and vehicles are found
 
-Detection is MediaPipe Tasks Vision, committed under `vendor/` rather than pulled from a CDN, so the watch still runs with no network and nothing about its use leaves the device. Two models:
+Detection is MediaPipe Tasks Vision, committed under `vendor/` rather than pulled from a CDN, so the watch still runs with no network and nothing about its use leaves the device. Four models:
 
 - **Pose landmarker (lite)** returns 33 body landmarks, which are mapped onto the joints the overlay draws. It knows the person's own left from their right — something a silhouette never can, since a silhouette only has the left and right of the picture.
+- **Hand landmarker** returns 21 points per hand for both hands — the wrist, then four joints along every finger. The pose model stops at the wrist and reports three coarse hand points, so fingers come only from here.
 - **Face landmarker** returns 478, drawn as the face oval, brows, eyes, irises and lips. The full mesh is 2,556 edges and reads as a grey smear at any size that fits on a phone; the outlines read as a face. Which point joins which comes from MediaPipe itself rather than indices written out by hand, because there is no eyeballing a wrong one among 478.
 - **Object detector (EfficientDet-Lite0)** names `car`, `truck`, `bus` and `motorcycle`. A vehicle is boxed and labelled and nothing more; **it never changes the cadence.**
 
-The first run downloads about 9 MB — 3.3 MB of WebAssembly and a 5.5 MB pose model — and the browser caches it. The face and vehicle models, another 3.6 and 4.4 MB, are fetched afterwards in the background, so the watch starts as soon as people can be tracked and gains the face and vehicle labels a moment later. Landmarks below half visibility are dropped rather than drawn, so an arm behind a person's back leaves a gap instead of a bone through thin air.
+The first run downloads about 9 MB — 3.3 MB of WebAssembly and a 5.5 MB pose model — and the browser caches it. The face, hand and vehicle models, another 3.6, 7.5 and 4.4 MB, are fetched afterwards in the background, so the watch starts as soon as people can be tracked and gains fingers, a face and vehicle labels a moment later. About 24 MB in total, once, which is the price of running the models on the device instead of sending the camera somewhere else.
+
+Landmarks below half visibility are dropped rather than drawn, so an arm behind a person's back leaves a gap instead of a bone through thin air.
+
+### Keeping it moving
+
+Inference is synchronous: every millisecond spent in a model is a millisecond the overlay cannot move. Three things keep it fluid.
+
+**Drawing is not tied to detection.** Detection publishes a target and the screen eases towards it on every animation frame, which turns a row of stills into movement and damps the jitter a per-frame detector always has — at the cost of no extra inference at all. A joint that has just appeared is drawn where it is rather than sliding in from wherever the last one was.
+
+**Models are asked only when their answer is worth having.** The object detector is by far the dearest and the slowest to change its mind — a parked car is still parked two seconds later — so it is asked every two seconds. A face and fingers mean nothing without a body, so on an empty scene neither is asked at all, which is what a watch spends most of its life looking at.
+
+**The loop backs off to suit the device.** Each pass waits at least as long as the last one took, so a phone that gets through a frame in twenty milliseconds keeps the full rate while a slower one leaves half its time for drawing instead of queueing detections behind each other until nothing gets drawn at all.
 
 ### Being sure somebody is really there
 
@@ -57,9 +83,9 @@ Captures are written to IndexedDB on the device and stay there, marked as a pend
 
 The screen is held awake while the watch runs. A backgrounded tab has its camera suspended and its timers throttled by the browser, so tracking pauses when the page is hidden and picks the schedule back up on return — one photo is owed for the whole gap, not one per missed interval. **The page has to stay open and frontmost.**
 
-## Manual capture
+## Stamping a photo you already have
 
-The camera and gallery controls are native HTML file inputs, so the browser keeps the selected photos on the user's device. They remain available for browsers with no live-camera access, and for stamping images that already exist.
+The gallery picker is a native HTML file input, so the browser keeps the chosen photos on the device. It stamps images that already exist, and it is what remains where a live camera cannot be opened at all.
 
 ## Run locally
 
@@ -95,7 +121,7 @@ The models themselves are not tested here — a trained network cannot be exerci
 
 ## Workflow
 
-1. Press start, and the watch photographs the scene on its own — every 30 seconds with a person in frame, every 120 seconds without.
+1. Press record, and the watch photographs the scene on its own — every 30 seconds with a person in frame, every 120 seconds without. Raise both hands above your head to take one there and then.
 2. The street address fills in automatically where the browser allows it; otherwise type it in, and later captures pick it up.
 3. Photos are stamped and stored on the device as they are taken.
 4. Save them out as files, or share a hand-picked image through the OS share sheet. Nothing is uploaded to a server.

@@ -326,3 +326,150 @@ test("only things with wheels are called vehicles", () => {
   assert.deepEqual(mapping.readVehicles(raw, 0, 0), []);
   assert.deepEqual(mapping.readVehicles(null, 200, 100), []);
 });
+
+// The hand landmarker reports 21 points per hand and which hand it is.
+function handResult(sides = ["Left"]) {
+  return {
+    landmarks: sides.map((unused, hand) =>
+      Array.from({ length: 21 }, (ignored, index) => ({
+        x: 0.3 + hand * 0.4 + index / 200,
+        y: 0.5 - index / 200,
+        z: 0,
+      })),
+    ),
+    handedness: sides.map((side) => [{ categoryName: side, score: 0.97 }]),
+  };
+}
+
+const HAND_BONES = [
+  { start: 0, end: 1 },
+  { start: 1, end: 2 },
+  { start: 0, end: 5 },
+];
+
+test("fingers come back as bones and joints, per hand", () => {
+  const hands = mapping.toHands(handResult(["Left", "Right"]), HAND_BONES);
+
+  assert.equal(hands.length, 2);
+  assert.deepEqual(
+    hands.map((hand) => hand.side),
+    ["Left", "Right"],
+  );
+
+  // Twenty-one points apiece — wrist, then four joints along every finger —
+  // which is the whole reason for a second model: the pose landmarker stops at
+  // the wrist.
+  hands.forEach((hand) => {
+    assert.equal(hand.points.length, 21);
+    assert.equal(hand.segments.length, HAND_BONES.length);
+    assert.equal(hand.confidence, 0.97);
+  });
+
+  assert.deepEqual(hands[0].segments[0], [hands[0].points[0], hands[0].points[1]]);
+  assert.deepEqual(mapping.toHands(null, HAND_BONES), []);
+  assert.deepEqual(mapping.toHands(handResult(), null), []);
+});
+
+test("hands ride along with the rest of a detection", () => {
+  const hands = mapping.toHands(handResult(), HAND_BONES);
+  const detection = mapping.buildDetection(standing(), [], { hands });
+
+  assert.equal(detection.hands.length, 1);
+
+  // And go when the person does, like every other part of the rig.
+  const gone = mapping.buildDetection(null, [], { hands });
+  assert.deepEqual(gone.hands, []);
+});
+
+test("what is drawn eases towards the latest reading", () => {
+  // Detection runs a few times a second and the screen redraws sixty. Easing
+  // between the two is what turns a row of stills into movement.
+  const from = { x: 0, y: 0 };
+  const to = { x: 1, y: 1 };
+
+  assert.deepEqual(mapping.blendPoint(from, to, 0.25), { x: 0.25, y: 0.25 });
+  assert.deepEqual(mapping.blendPoint(from, to, 1), to);
+
+  // A joint that has just appeared has nothing to ease from, and one that has
+  // gone should go at once rather than drift off across the picture.
+  assert.deepEqual(mapping.blendPoint(null, to, 0.25), to);
+  assert.equal(mapping.blendPoint(from, null, 0.25), null);
+});
+
+test("easing covers the whole rig, and gives up when the shape changes", () => {
+  const before = mapping.toKeypoints(standing());
+  const after = mapping.toKeypoints(
+    standing({ [LANDMARK.wristLeft]: { x: 0.1, y: 0.3 } }),
+  );
+
+  const midway = mapping.blendKeypoints(before, after, 0.5);
+  assert.equal(midway.wristLeft.x, (before.wristLeft.x + after.wristLeft.x) / 2);
+  assert.deepEqual(midway.neck, before.neck, "a joint that has not moved stays put");
+
+  // Segments only line up frame to frame while there are the same number of
+  // them; when the model changes its mind, the new reading is taken whole.
+  const faceBefore = { oval: [[{ x: 0, y: 0 }, { x: 0, y: 0 }]] };
+  const faceAfter = { oval: [[{ x: 1, y: 1 }, { x: 1, y: 1 }]] };
+  assert.deepEqual(mapping.blendSegments(faceBefore, faceAfter, 0.5).oval[0][0], { x: 0.5, y: 0.5 });
+  assert.deepEqual(
+    mapping.blendSegments({ oval: [] }, faceAfter, 0.5).oval,
+    faceAfter.oval,
+    "a different number of segments is taken as it comes",
+  );
+
+  // Hands are matched up by which hand they are, not by their place in the list.
+  const left = mapping.toHands(handResult(["Left"]), HAND_BONES);
+  const swapped = mapping.toHands(handResult(["Right", "Left"]), HAND_BONES);
+  const blended = mapping.blendHands(left, swapped, 0.5);
+  assert.equal(blended.length, 2);
+  assert.equal(blended[0].side, "Right");
+  assert.deepEqual(mapping.blendHands(null, left, 0.5), left);
+});
+
+test("hands above the head is the shutter, and nothing else is", () => {
+  // It has to be something nobody does by accident in front of a camera that
+  // is already photographing them.
+  const overhead = mapping.toKeypoints(
+    standing({
+      [LANDMARK.wristLeft]: { x: 0.4, y: 0.02 },
+      [LANDMARK.wristRight]: { x: 0.6, y: 0.02 },
+    }),
+  );
+  assert.equal(mapping.isCaptureGesture(overhead), true);
+
+  // Standing normally, waving with one hand, or reaching only as high as the
+  // shoulders are all just somebody in the room.
+  assert.equal(mapping.isCaptureGesture(mapping.toKeypoints(standing())), false);
+  assert.equal(
+    mapping.isCaptureGesture(
+      mapping.toKeypoints(standing({ [LANDMARK.wristLeft]: { x: 0.4, y: 0.02 } })),
+    ),
+    false,
+  );
+  assert.equal(
+    mapping.isCaptureGesture(
+      mapping.toKeypoints(
+        standing({
+          [LANDMARK.wristLeft]: { x: 0.4, y: 0.2 },
+          [LANDMARK.wristRight]: { x: 0.6, y: 0.2 },
+        }),
+      ),
+    ),
+    false,
+    "level with the face is not above the head",
+  );
+
+  // A hand the model could not see cannot be raised.
+  assert.equal(
+    mapping.isCaptureGesture(
+      mapping.toKeypoints(
+        standing({
+          [LANDMARK.wristLeft]: { x: 0.4, y: 0.02, visibility: 0.1 },
+          [LANDMARK.wristRight]: { x: 0.6, y: 0.02 },
+        }),
+      ),
+    ),
+    false,
+  );
+  assert.equal(mapping.isCaptureGesture(null), false);
+});

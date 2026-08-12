@@ -72,6 +72,8 @@
           }
         : null,
       intervalMs: Number(input.intervalMs) || null,
+      // Whether the schedule asked for this one or somebody did.
+      trigger: input.trigger === "gesture" ? "gesture" : "schedule",
       bytes: Number(input.blob?.size) || 0,
       type: input.blob?.type || "image/jpeg",
       name: buildFileName(date, poseDetected),

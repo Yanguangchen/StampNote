@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover so the stage reaches under a phone's rounded corners
+         and home indicator; the toolbar pads itself back out of the way. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0d1512" />
     <title>StampNote</title>
     <link rel="stylesheet" href="styles.css" />
     <script src="address-service.js" defer></script>
@@ -18,51 +21,55 @@
     <script src="app.js" defer></script>
   </head>
   <body>
-    <main>
-      <section class="card monitor-card" aria-labelledby="monitor-title">
-        <h1 id="monitor-title">Auto capture</h1>
+    <main class="stage" aria-labelledby="monitor-title">
+      <h1 id="monitor-title" class="visually-hidden">StampNote auto capture</h1>
 
-        <div class="monitor" id="monitor-frame" hidden>
-          <video id="monitor-video" playsinline muted autoplay></video>
-          <canvas class="monitor-overlay" id="pose-overlay" aria-hidden="true"></canvas>
-          <p class="monitor-badge" id="pose-badge" role="status" aria-live="polite"></p>
+      <!-- The camera fills the stage in whatever shape the screen is, so
+           turning the phone needs no layout of its own. -->
+      <div class="monitor" id="monitor-frame" hidden>
+        <video id="monitor-video" playsinline muted autoplay></video>
+        <canvas class="monitor-overlay" id="pose-overlay" aria-hidden="true"></canvas>
+      </div>
+
+      <div class="stage-empty" id="stage-empty">
+        <p class="stage-title">StampNote</p>
+        <p class="stage-hint">Press record to watch, or choose a photo you already have.</p>
+      </div>
+
+      <!-- The address sits across the top of the picture, where the stamp will
+           put it, rather than in a panel of its own somewhere below. -->
+      <div class="place" id="address-panel" hidden>
+        <label class="visually-hidden" for="address-field">Street address</label>
+        <textarea
+          id="address-field"
+          name="street-address"
+          rows="1"
+          autocomplete="street-address"
+          placeholder="Type the street address"
+        ></textarea>
+        <p class="status" id="location-status" role="status" aria-live="polite"></p>
+        <details class="diagnostics" id="location-diagnostics" hidden>
+          <summary>Why is location blocked?</summary>
+          <pre id="location-diagnostics-body"></pre>
+        </details>
+      </div>
+
+      <p class="monitor-badge" id="pose-badge" role="status" aria-live="polite"></p>
+      <p class="status stage-status" id="monitor-status" role="status" aria-live="polite"></p>
+
+      <!-- Photos, kept out of the way until asked for. -->
+      <section class="sheet" id="photo-sheet" aria-labelledby="photo-sheet-title" hidden>
+        <h2 id="photo-sheet-title" class="sheet-title">Photos</h2>
+        <div class="sheet-body">
+          <div class="previews" id="previews"></div>
+          <div class="captures" id="captures"></div>
+          <p class="status" id="captures-summary"></p>
         </div>
-
-        <div class="actions">
-          <button
-            class="button button-primary button-icon"
-            id="monitor-toggle"
-            type="button"
-            title="Start auto capture"
-          >
-            <svg class="icon" id="monitor-icon-start" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path d="M8.5 5.6 18.4 12 8.5 18.4z" />
-            </svg>
-            <svg
-              class="icon"
-              id="monitor-icon-stop"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-              focusable="false"
-              hidden
-            >
-              <rect x="7" y="7" width="10" height="10" rx="2.5" />
-            </svg>
-            <span class="visually-hidden" id="monitor-toggle-name">Start auto capture</span>
-          </button>
-        </div>
-
-        <p class="status" id="monitor-status" role="status" aria-live="polite"></p>
-
-        <div class="captures" id="captures"></div>
-        <p class="status" id="captures-summary"></p>
-
-        <div class="result-actions">
+        <div class="sheet-actions">
           <button
             class="button button-secondary button-icon"
             id="captures-save"
             type="button"
-            title="Save captures"
             hidden
           >
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -70,14 +77,27 @@
               <path d="m7.9 10.7 4.1 4.1 4.1-4.1" />
               <path d="M4 16.4v2.2a2.5 2.5 0 0 0 2.5 2.5h11a2.5 2.5 0 0 0 2.5-2.5v-2.2" />
             </svg>
-            <span class="visually-hidden">Save captures</span>
+            <span class="hint">Save captures</span>
+          </button>
+
+          <button
+            class="button button-secondary button-icon"
+            id="share-button"
+            type="button"
+            hidden
+          >
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M12 15.4V3.2" />
+              <path d="m7.9 7.3 4.1-4.1 4.1 4.1" />
+              <path d="M7.4 10.4h-1a2.5 2.5 0 0 0-2.5 2.5v5.9A2.5 2.5 0 0 0 6.4 21.3h11.2a2.5 2.5 0 0 0 2.5-2.5v-5.9a2.5 2.5 0 0 0-2.5-2.5h-1" />
+            </svg>
+            <span class="hint">Share</span>
           </button>
 
           <button
             class="button button-secondary button-icon"
             id="captures-clear"
             type="button"
-            title="Delete captures"
             hidden
           >
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
@@ -87,97 +107,72 @@
               <path d="M10.4 10.2v6.6" />
               <path d="M13.6 10.2v6.6" />
             </svg>
-            <span class="visually-hidden">Delete captures</span>
+            <span class="hint">Delete captures</span>
           </button>
         </div>
-      </section>
-
-      <section class="card address-card" id="address-panel" aria-labelledby="address-title" hidden>
-        <h2 id="address-title" class="visually-hidden">Location</h2>
-
-        <div class="address">
-          <label class="visually-hidden" for="address-field">Street address</label>
-
-          <textarea
-            id="address-field"
-            name="street-address"
-            rows="2"
-            autocomplete="street-address"
-            placeholder="Type the street address"
-          ></textarea>
-
-          <p class="status" id="location-status" role="status" aria-live="polite"></p>
-
-          <details class="diagnostics" id="location-diagnostics" hidden>
-            <summary>Why is location blocked?</summary>
-            <pre id="location-diagnostics-body"></pre>
-          </details>
-        </div>
-      </section>
-
-      <section class="card" aria-labelledby="upload-title">
-        <h2 id="upload-title">Add photo</h2>
-
-        <div class="actions">
-          <input
-            class="visually-hidden"
-            id="camera-input"
-            type="file"
-            accept="image/*"
-            capture="environment"
-          />
-          <label class="button button-primary button-icon" for="camera-input" title="Open camera">
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path
-                d="M3 8.5A2.5 2.5 0 0 1 5.5 6h1.7a1 1 0 0 0 .83-.45l.94-1.4a1 1 0 0 1 .83-.45h4.4a1 1 0 0 1 .83.45l.94 1.4a1 1 0 0 0 .83.45h1.7A2.5 2.5 0 0 1 21 8.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5z"
-              />
-              <circle cx="12" cy="12.5" r="3.4" />
-            </svg>
-            <span class="visually-hidden">Open camera</span>
-          </label>
-
-          <input
-            class="visually-hidden"
-            id="gallery-input"
-            type="file"
-            accept="image/*"
-            multiple
-          />
-          <label
-            class="button button-secondary button-icon"
-            for="gallery-input"
-            title="Choose from gallery"
-          >
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <rect x="3" y="5" width="18" height="14" rx="2.5" />
-              <circle cx="8.5" cy="10" r="1.4" />
-              <path d="m4 17.5 4.4-4.4a1.5 1.5 0 0 1 2.1 0L14 16.6" />
-              <path d="m13.2 15.2 1.9-1.9a1.5 1.5 0 0 1 2.1 0l2.8 2.8" />
-            </svg>
-            <span class="visually-hidden">Choose from gallery</span>
-          </label>
-        </div>
-
-        <div class="previews" id="previews"></div>
-
-        <div class="result-actions">
-          <button
-            class="button button-secondary button-icon"
-            id="share-button"
-            type="button"
-            title="Share"
-            hidden
-          >
-            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <path d="M12 15.4V3.2" />
-              <path d="m7.9 7.3 4.1-4.1 4.1 4.1" />
-              <path d="M7.4 10.4h-1a2.5 2.5 0 0 0-2.5 2.5v5.9A2.5 2.5 0 0 0 6.4 21.3h11.2a2.5 2.5 0 0 0 2.5-2.5v-5.9a2.5 2.5 0 0 0-2.5-2.5h-1" />
-            </svg>
-            <span class="visually-hidden">Share</span>
-          </button>
-        </div>
-
       </section>
     </main>
+
+    <!-- Everything that is not the picture lives here, within a thumb's reach
+         of the bottom of the screen. -->
+    <nav class="toolbar" aria-label="Tools">
+      <button
+        class="tool"
+        id="photo-sheet-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="photo-sheet"
+      >
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <rect x="3" y="5" width="18" height="14" rx="2.5" />
+          <circle cx="8.5" cy="10" r="1.4" />
+          <path d="m4 17.5 4.4-4.4a1.5 1.5 0 0 1 2.1 0L14 16.6" />
+          <path d="m13.2 15.2 1.9-1.9a1.5 1.5 0 0 1 2.1 0l2.8 2.8" />
+        </svg>
+        <span class="hint">Photos</span>
+        <span class="tool-count" id="photo-count" hidden></span>
+      </button>
+
+      <input class="visually-hidden" id="gallery-input" type="file" accept="image/*" multiple />
+      <label class="tool" for="gallery-input">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M4.5 16.5V6.2a2 2 0 0 1 2-2h7.2" />
+          <rect x="8" y="8" width="11.5" height="11.5" rx="2" />
+          <path d="m9.2 17.4 3.3-3.3a1.4 1.4 0 0 1 2 0l2.6 2.6" />
+        </svg>
+        <span class="hint">Choose</span>
+      </label>
+
+      <button class="record" id="monitor-toggle" type="button">
+        <svg
+          class="icon record-icon"
+          id="monitor-icon-start"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <circle cx="12" cy="12" r="8" />
+        </svg>
+        <svg
+          class="icon record-icon"
+          id="monitor-icon-stop"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+          focusable="false"
+          hidden
+        >
+          <rect x="7" y="7" width="10" height="10" rx="2.5" />
+        </svg>
+        <span class="hint" id="monitor-toggle-name">Start auto capture</span>
+      </button>
+
+      <button class="tool" id="place-toggle" type="button">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M12 21.2s6.4-5.6 6.4-10.4a6.4 6.4 0 1 0-12.8 0C5.6 15.6 12 21.2 12 21.2z" />
+          <circle cx="12" cy="10.6" r="2.4" />
+        </svg>
+        <span class="hint">Place</span>
+      </button>
+    </nav>
   </body>
 </html>

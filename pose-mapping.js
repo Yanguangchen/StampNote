@@ -51,6 +51,20 @@
   const CORROBORATED_CONFIDENCE = 0.55;
   const PERSON_SCORE = 0.45;
 
+  // Both hands raised clear above the head. It has to be something nobody does
+  // by accident in front of a camera that is already photographing them, and it
+  // has to be readable from the body alone, so it still works before the hand
+  // model has finished downloading.
+  function isCaptureGesture(keypoints) {
+    if (!keypoints?.head || !keypoints.wristLeft || !keypoints.wristRight) {
+      return false;
+    }
+
+    // Up the picture is towards zero. Both wrists above the crown means a
+    // deliberate reach, not a hand brushing past a face.
+    return keypoints.wristLeft.y < keypoints.head.y && keypoints.wristRight.y < keypoints.head.y;
+  }
+
   function midpoint(left, right) {
     if (!left) {
       return right || null;
@@ -265,6 +279,124 @@
     return Object.values(outlines).every((edges) => edges.length === 0) ? null : outlines;
   }
 
+  // Both hands, each 21 points: wrist, then four joints along every finger. The
+  // pose model reports a wrist and three coarse hand points and no fingers at
+  // all, so this is the only place they come from.
+  function toHands(result, connections) {
+    const hands = result?.landmarks || [];
+
+    if (hands.length === 0 || !connections) {
+      return [];
+    }
+
+    return hands
+      .map((points, index) => {
+        const handedness = result.handedness?.[index]?.[0];
+        const segments = connections
+          .map(({ start, end }) => {
+            const from = points[start];
+            const to = points[end];
+
+            return from && to
+              ? [
+                  { x: from.x, y: from.y },
+                  { x: to.x, y: to.y },
+                ]
+              : null;
+          })
+          .filter(Boolean);
+
+        return segments.length === 0
+          ? null
+          : {
+              // The person's own left and right, as the model reports it.
+              side: handedness?.categoryName || "unknown",
+              confidence: handedness?.score ?? 0,
+              points: points.map((point) => ({ x: point.x, y: point.y })),
+              segments,
+            };
+      })
+      .filter(Boolean);
+  }
+
+  // Detection runs a few times a second; the screen redraws sixty. Easing what
+  // is drawn towards the latest reading turns a row of stills into movement,
+  // and damps the jitter a per-frame detector always has, without asking the
+  // models for a single extra inference.
+  //
+  // A joint that has just appeared has nothing to ease from, and one that has
+  // gone should go at once rather than drift off across the picture — so both
+  // take the new value whole.
+  function blendPoint(from, to, amount) {
+    if (!from || !to) {
+      return to || null;
+    }
+
+    return {
+      x: from.x + (to.x - from.x) * amount,
+      y: from.y + (to.y - from.y) * amount,
+    };
+  }
+
+  function blendKeypoints(from, to, amount) {
+    if (!from || !to) {
+      return to || null;
+    }
+
+    return Object.fromEntries(
+      Object.entries(to).map(([joint, point]) => [joint, blendPoint(from[joint], point, amount)]),
+    );
+  }
+
+  // Outlines and hands are lists of segments, which only line up frame to frame
+  // while the model reports the same number of them.
+  function blendSegments(from, to, amount) {
+    if (!from || !to) {
+      return to || null;
+    }
+
+    return Object.fromEntries(
+      Object.entries(to).map(([feature, edges]) => {
+        const previous = from[feature];
+
+        if (!previous || previous.length !== edges.length) {
+          return [feature, edges];
+        }
+
+        return [
+          feature,
+          edges.map(([start, end], index) => [
+            blendPoint(previous[index][0], start, amount),
+            blendPoint(previous[index][1], end, amount),
+          ]),
+        ];
+      }),
+    );
+  }
+
+  function blendHands(from, to, amount) {
+    if (!from || !to) {
+      return to || [];
+    }
+
+    return to.map((hand) => {
+      const previous = from.find((entry) => entry.side === hand.side);
+
+      if (!previous || previous.segments.length !== hand.segments.length) {
+        return hand;
+      }
+
+      return {
+        ...hand,
+        points: hand.points.map((point, index) => blendPoint(previous.points[index], point, amount)),
+        segments: hand.segments.map(([start, end], index) => [
+          blendPoint(previous.segments[index][0], start, amount),
+          blendPoint(previous.segments[index][1], end, amount),
+        ]),
+      };
+    });
+  }
+
   // Two ways to be sure enough: the pose is plainly a body, or it is arguable and
   // something else agrees — a face where the head should be, or the object
   // detector naming a person. One model tracking a ghost cannot satisfy either.
@@ -282,6 +414,7 @@
   function buildDetection(landmarks, vehicles = [], extra = {}) {
     const vehicle = vehicles[0] || null;
     const face = extra.face || null;
+    const hands = extra.hands || [];
 
     if (!landmarks || landmarks.length === 0) {
       return {
@@ -293,6 +426,7 @@
         box: null,
         limbs: { arms: 0, legs: 0 },
         face: null,
+        hands: [],
         vehicle,
         vehicles: vehicles.length,
       };
@@ -313,6 +447,7 @@
       box: present ? boundsOf(keypoints) : null,
       limbs: present ? countLimbs(keypoints) : { arms: 0, legs: 0 },
       face: present ? face : null,
+      hands: present ? hands : [],
       vehicle,
       vehicles: vehicles.length,
     };
@@ -327,14 +462,20 @@
     VEHICLE_MAX_AREA,
     VEHICLE_SCORE,
     VISIBLE,
+    blendHands,
+    blendKeypoints,
+    blendPoint,
+    blendSegments,
     boundsOf,
     buildDetection,
     countLimbs,
     describePosture,
+    isCaptureGesture,
     isPresent,
     readPeople,
     readVehicles,
     toFaceOutlines,
+    toHands,
     toKeypoints,
     trunkConfidence,
   });

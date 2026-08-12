@@ -1365,6 +1365,7 @@
     let keypoints = null;
     let box = null;
     let face = null;
+    let hands = [];
 
     // Vehicles are steadied the same way and kept in their own drawer. They are
     // reported so they can be drawn; they are deliberately no part of `present`,
@@ -1383,6 +1384,7 @@
         keypoints: present ? keypoints : null,
         box: present ? box : null,
         face: present ? face : null,
+        hands: present ? hands : [],
         vehicle: {
           present: vehiclePresent,
           confidence: vehicleConfidence,
@@ -1425,6 +1427,7 @@
           keypoints = reading.keypoints;
           box = reading.box;
           face = reading.face || null;
+          hands = reading.hands || [];
 
           if (!present && streak >= settings.enterFrames) {
             present = true;
@@ -1439,6 +1442,7 @@
             keypoints = null;
             box = null;
             face = null;
+            hands = [];
           }
         }
 
@@ -1457,6 +1461,7 @@
         keypoints = null;
         box = null;
         face = null;
+        hands = [];
         vehiclePresent = false;
         vehicleStreak = 0;
         vehicleSeenAt = 0;
