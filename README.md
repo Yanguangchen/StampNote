@@ -19,13 +19,26 @@ Vehicles are recognised and boxed in amber, labelled, and otherwise ignored: **a
 
 ### How people and vehicles are found
 
-Detection is MediaPipe Tasks Vision, committed under `vendor/` rather than pulled from a CDN, so the watch still runs with no network and nothing about its use leaves the device. Two models:
+Detection is MediaPipe Tasks Vision, committed under `vendor/` rather than pulled from a CDN, so the watch still runs with no network and nothing about its use leaves the device. Four models:
 
 - **Pose landmarker (lite)** returns 33 body landmarks, which are mapped onto the joints the overlay draws. It knows the person's own left from their right — something a silhouette never can, since a silhouette only has the left and right of the picture.
+- **Hand landmarker** returns 21 points per hand for both hands — the wrist, then four joints along every finger. The pose model stops at the wrist and reports three coarse hand points, so fingers come only from here.
 - **Face landmarker** returns 478, drawn as the face oval, brows, eyes, irises and lips. The full mesh is 2,556 edges and reads as a grey smear at any size that fits on a phone; the outlines read as a face. Which point joins which comes from MediaPipe itself rather than indices written out by hand, because there is no eyeballing a wrong one among 478.
 - **Object detector (EfficientDet-Lite0)** names `car`, `truck`, `bus` and `motorcycle`. A vehicle is boxed and labelled and nothing more; **it never changes the cadence.**
 
-The first run downloads about 9 MB — 3.3 MB of WebAssembly and a 5.5 MB pose model — and the browser caches it. The face and vehicle models, another 3.6 and 4.4 MB, are fetched afterwards in the background, so the watch starts as soon as people can be tracked and gains the face and vehicle labels a moment later. Landmarks below half visibility are dropped rather than drawn, so an arm behind a person's back leaves a gap instead of a bone through thin air.
+The first run downloads about 9 MB — 3.3 MB of WebAssembly and a 5.5 MB pose model — and the browser caches it. The face, hand and vehicle models, another 3.6, 7.5 and 4.4 MB, are fetched afterwards in the background, so the watch starts as soon as people can be tracked and gains fingers, a face and vehicle labels a moment later. About 24 MB in total, once, which is the price of running the models on the device instead of sending the camera somewhere else.
+
+Landmarks below half visibility are dropped rather than drawn, so an arm behind a person's back leaves a gap instead of a bone through thin air.
+
+### Keeping it moving
+
+Inference is synchronous: every millisecond spent in a model is a millisecond the overlay cannot move. Three things keep it fluid.
+
+**Drawing is not tied to detection.** Detection publishes a target and the screen eases towards it on every animation frame, which turns a row of stills into movement and damps the jitter a per-frame detector always has — at the cost of no extra inference at all. A joint that has just appeared is drawn where it is rather than sliding in from wherever the last one was.
+
+**Models are asked only when their answer is worth having.** The object detector is by far the dearest and the slowest to change its mind — a parked car is still parked two seconds later — so it is asked every two seconds. A face and fingers mean nothing without a body, so on an empty scene neither is asked at all, which is what a watch spends most of its life looking at.
+
+**The loop backs off to suit the device.** Each pass waits at least as long as the last one took, so a phone that gets through a frame in twenty milliseconds keeps the full rate while a slower one leaves half its time for drawing instead of queueing detections behind each other until nothing gets drawn at all.
 
 ### Being sure somebody is really there
 

@@ -9,11 +9,25 @@
 import {
   FaceLandmarker,
   FilesetResolver,
+  HandLandmarker,
   ObjectDetector,
   PoseLandmarker,
 } from "./vendor/mediapipe/vision_bundle.mjs";
 
 const BASE = "./vendor/mediapipe";
+
+// Inference is synchronous and runs on the same thread as the drawing, so every
+// model asked on a tick is time the overlay cannot move. Measured on a phone
+// standing in for the worst case, the object detector is by far the dearest and
+// the one whose answer changes slowest — a parked car is still parked two
+// seconds later — so it is asked rarely. A face and fingers only mean anything
+// on a body, so on an empty scene neither is asked at all, which is the case a
+// watch spends most of its life in.
+const CADENCE = Object.freeze({
+  face: 0,
+  hands: 400,
+  objects: 2000,
+});
 
 // MediaPipe's own answer to which of the 478 points join up. Taken from the
 // library rather than written out here, where a wrong index could not be seen.
@@ -32,6 +46,12 @@ function createAdapter(landmarker) {
   const mapping = window.StampNotePoseMapping;
   let objects = null;
   let faces = null;
+  let hands = null;
+
+  // What each model last said, and when. A model not asked on this tick keeps
+  // its previous answer rather than blinking out of the picture.
+  const ran = { face: 0, hands: 0, objects: 0 };
+  const cached = { face: null, hands: [], vehicles: [], person: 0 };
 
   return {
     // The model reads the video element directly, at whatever resolution the
@@ -48,30 +68,67 @@ function createAdapter(landmarker) {
       faces = detector;
     },
 
+    attachHandLandmarker(detector) {
+      hands = detector;
+    },
+
     detect(video) {
       if (!video?.videoWidth) {
         return mapping.buildDetection(null, []);
       }
 
+      const now = performance.now();
       const pose = landmarker.detect(video);
-      const seen = objects ? objects.detect(video) : null;
-      const face = faces
-        ? mapping.toFaceOutlines(faces.detect(video)?.faceLandmarks?.[0], FACE_CONNECTIONS)
-        : null;
+      const landmarks = pose?.landmarks?.[0];
 
-      return mapping.buildDetection(
-        pose?.landmarks?.[0],
-        seen ? mapping.readVehicles(seen, video.videoWidth, video.videoHeight) : [],
-        { face, person: seen ? mapping.readPeople(seen) : 0 },
-      );
+      if (objects && now - ran.objects >= CADENCE.objects) {
+        const seen = objects.detect(video);
+
+        cached.vehicles = mapping.readVehicles(seen, video.videoWidth, video.videoHeight);
+        cached.person = mapping.readPeople(seen);
+        ran.objects = now;
+      }
+
+      if (!landmarks) {
+        // Nobody to hang them on.
+        cached.face = null;
+        cached.hands = [];
+      } else {
+        if (faces && now - ran.face >= CADENCE.face) {
+          cached.face = mapping.toFaceOutlines(
+            faces.detect(video)?.faceLandmarks?.[0],
+            FACE_CONNECTIONS,
+          );
+          ran.face = now;
+        }
+        if (hands && now - ran.hands >= CADENCE.hands) {
+          cached.hands = mapping.toHands(hands.detect(video), HandLandmarker.HAND_CONNECTIONS);
+          ran.hands = now;
+        }
+      }
+
+      return mapping.buildDetection(landmarks, cached.vehicles, {
+        face: cached.face,
+        hands: cached.hands,
+        person: cached.person,
+      });
     },
 
-    reset() {},
+    reset() {
+      ran.face = 0;
+      ran.hands = 0;
+      ran.objects = 0;
+      cached.face = null;
+      cached.hands = [];
+      cached.vehicles = [];
+      cached.person = 0;
+    },
 
     close() {
       landmarker?.close?.();
       objects?.close?.();
       faces?.close?.();
+      hands?.close?.();
     },
   };
 }
@@ -139,6 +196,21 @@ async function load() {
     .then((detector) => adapter.attachFaceLandmarker(detector))
     .catch(() => {
       // The body is still rigged; there is simply no face drawn on it.
+    });
+
+  // The pose model reports a wrist and three coarse hand points; fingers come
+  // only from here. Another seven and a half megabytes, so it follows the others
+  // in rather than holding the watch up.
+  HandLandmarker.createFromOptions(fileset, {
+    baseOptions: { modelAssetPath: `${BASE}/models/hand_landmarker.task` },
+    runningMode: "IMAGE",
+    numHands: 2,
+    minHandDetectionConfidence: 0.5,
+    minHandPresenceConfidence: 0.5,
+  })
+    .then((detector) => adapter.attachHandLandmarker(detector))
+    .catch(() => {
+      // Arms still reach the wrist; there are simply no fingers on the end.
     });
 
   return adapter;

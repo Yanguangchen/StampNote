@@ -359,6 +359,12 @@
   // Amber, so a vehicle never reads as the green the watch uses for a person.
   const VEHICLE_COLOR = "rgba(255, 190, 90, 0.95)";
   const FACE_COLOR = "rgba(190, 235, 255, 0.9)";
+  const HAND_COLOR = "rgba(255, 225, 150, 0.95)";
+
+  // How far the drawn pose travels towards the latest reading each animation
+  // frame. Detection runs a few times a second and the screen redraws sixty;
+  // easing between the two is what turns a row of stills into movement.
+  const EASE = 0.28;
 
   // Everything drawn over the camera is sized from the width it is drawn at, so
   // the rig reads the same on a phone and on a wide display.
@@ -405,6 +411,9 @@
   let faceHint = null;
   let usingModel = false;
   let modelDetector = null;
+  let target = null;
+  let drawn = null;
+  let painter = null;
   let faceHintAt = 0;
   let facePending = false;
 
@@ -609,6 +618,49 @@
     context.restore();
   }
 
+  // Both hands, twenty-one points each: wrist, then four joints along every
+  // finger. The pose model reports a wrist and nothing past it.
+  function drawHands(context, hands, frame, stroke) {
+    if (!hands || hands.length === 0) {
+      return;
+    }
+
+    const at = (point) => [
+      frame.left + point.x * frame.width,
+      frame.top + point.y * frame.height,
+    ];
+
+    context.save();
+    context.strokeStyle = HAND_COLOR;
+    context.fillStyle = HAND_COLOR;
+    context.lineWidth = Math.max(1, stroke * 0.7);
+    context.lineCap = "round";
+    context.lineJoin = "round";
+
+    hands.forEach((hand) => {
+      context.beginPath();
+      hand.segments.forEach(([from, to]) => {
+        const start = at(from);
+        const end = at(to);
+
+        context.moveTo(start[0], start[1]);
+        context.lineTo(end[0], end[1]);
+      });
+      context.stroke();
+
+      // Fingertips and knuckles, small enough not to swamp a hand held close.
+      hand.points.forEach((point) => {
+        const [x, y] = at(point);
+
+        context.beginPath();
+        context.arc(x, y, Math.max(1, stroke * 0.5), 0, Math.PI * 2);
+        context.fill();
+      });
+    });
+
+    context.restore();
+  }
+
   function drawOverlay(state) {
     if (!poseOverlay) {
       return;
@@ -704,6 +756,8 @@
       drawFace(context, state.face, frame, stroke);
     }
 
+    drawHands(context, state.hands, frame, stroke);
+
     const head = at(points.head);
     const neck = at(points.neck);
 
@@ -745,17 +799,46 @@
     });
   }
 
+  // Detection publishes a target; the paint loop below walks the drawn pose
+  // towards it. Drawing straight from here would show the overlay stepping four
+  // times a second, which is what it did.
   function renderState(state) {
     if (poseBadge) {
       poseBadge.textContent = autoCapture.describeCadence(state);
       poseBadge.dataset.present = String(state.present);
     }
 
-    drawOverlay(state);
+    target = state;
 
     if (state.error) {
       setMonitorStatus(state.error, "error");
     }
+  }
+
+  // Sixty times a second, ease what is drawn a little further towards the last
+  // reading. It costs no extra inference — the models are asked no more often
+  // than before — and it damps the jitter a per-frame detector always has.
+  function paint() {
+    painter = window.requestAnimationFrame(paint);
+
+    if (!target) {
+      return;
+    }
+
+    const mapping = window.StampNotePoseMapping;
+
+    // Without the mapping's blending — the built-in detector's path — the latest
+    // reading is simply drawn as it arrives.
+    drawn = mapping
+      ? {
+          ...target,
+          keypoints: mapping.blendKeypoints(drawn?.keypoints, target.keypoints, EASE),
+          face: mapping.blendSegments(drawn?.face, target.face, EASE),
+          hands: mapping.blendHands(drawn?.hands, target.hands, EASE),
+        }
+      : target;
+
+    drawOverlay(drawn);
   }
 
   function releaseThumbnails() {
@@ -847,6 +930,32 @@
     }
   }
 
+  // Inference is synchronous, so every millisecond of it is a millisecond the
+  // overlay cannot move. Rather than a fixed timer that a slow device can never
+  // keep up with — queueing ticks behind each other until nothing gets drawn at
+  // all — each pass waits at least as long as the last one took. A phone that
+  // gets through a frame in twenty milliseconds keeps the full rate; one that
+  // takes half a second backs off by itself and leaves half the time for
+  // drawing.
+  async function look() {
+    if (!controller) {
+      return;
+    }
+
+    const started = performance.now();
+    const before = controller.getState().captures;
+    const state = await controller.tick();
+
+    if (state.captures !== before) {
+      renderCaptures();
+    }
+
+    if (controller) {
+      const spent = performance.now() - started;
+      sampleTimer = window.setTimeout(look, Math.max(autoCapture.SAMPLE_INTERVAL, spent));
+    }
+  }
+
   async function startMonitor() {
     if (!navigator.mediaDevices?.getUserMedia) {
       setMonitorStatus("This browser cannot open a live camera — use Add photo below.", "error");
@@ -898,14 +1007,11 @@
     });
 
     controller.start();
-    sampleTimer = window.setInterval(async () => {
-      const before = controller.getState().captures;
-      const state = await controller.tick();
-
-      if (state.captures !== before) {
-        renderCaptures();
-      }
-    }, autoCapture.SAMPLE_INTERVAL);
+    target = null;
+    drawn = null;
+    window.cancelAnimationFrame(painter);
+    painter = window.requestAnimationFrame(paint);
+    look();
 
     if (monitorFrame) {
       monitorFrame.hidden = false;
@@ -923,8 +1029,12 @@
   }
 
   function stopMonitor() {
-    window.clearInterval(sampleTimer);
+    window.clearTimeout(sampleTimer);
     sampleTimer = null;
+    window.cancelAnimationFrame(painter);
+    painter = null;
+    target = null;
+    drawn = null;
 
     stream?.getTracks().forEach((track) => track.stop());
     stream = null;
@@ -941,6 +1051,9 @@
 
     releaseWakeLock();
 
+    if (poseOverlay?.width) {
+      poseOverlay.getContext("2d").clearRect(0, 0, poseOverlay.width, poseOverlay.height);
+    }
     if (monitorFrame) {
       monitorFrame.hidden = true;
     }

@@ -37,6 +37,7 @@
       keypoints: null,
       box: null,
       face: null,
+      hands: [],
       vehicle: null,
       intervalMs: scheduler.intervalFor(false),
       nextDueAt: null,
@@ -48,6 +49,7 @@
     };
 
     let busy = false;
+    let looking = false;
 
     function publish() {
       onUpdate({ ...state });
@@ -142,7 +144,10 @@
       },
 
       async tick() {
-        if (!state.running || state.paused || busy) {
+        // Inference can take longer than the interval between ticks on a slow
+        // device. Without this the timer queues them up behind each other and
+        // the page never gets a moment to draw.
+        if (!state.running || state.paused || busy || looking) {
           return { ...state };
         }
 
@@ -150,16 +155,23 @@
         const frame = sampleFrame();
 
         if (frame) {
-          const detection = detector.detect(frame, { faces: getFaces() });
-          const tracked = tracker.update(detection, timestamp);
+          looking = true;
 
-          state.present = tracked.present;
-          state.confidence = tracked.confidence;
-          state.pose = tracked.pose;
-          state.keypoints = tracked.keypoints;
-          state.box = tracked.box;
-          state.face = tracked.face || null;
-          state.vehicle = tracked.vehicle?.present ? tracked.vehicle : null;
+          try {
+            const detection = detector.detect(frame, { faces: getFaces() });
+            const tracked = tracker.update(detection, timestamp);
+
+            state.present = tracked.present;
+            state.confidence = tracked.confidence;
+            state.pose = tracked.pose;
+            state.keypoints = tracked.keypoints;
+            state.box = tracked.box;
+            state.face = tracked.face || null;
+            state.hands = tracked.hands || [];
+            state.vehicle = tracked.vehicle?.present ? tracked.vehicle : null;
+          } finally {
+            looking = false;
+          }
         }
 
         // Only `present` — whether a person is in frame — is put to the
