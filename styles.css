@@ -1,76 +1,47 @@
 :root {
   --ink: #14201c;
+  --paper: #f2f5f3;
+  --shell: #0d1512;
   --muted: #5d6b64;
-  --glass: rgba(255, 255, 255, 0.45);
-  --glass-strong: rgba(255, 255, 255, 0.6);
-  --glass-line: rgba(255, 255, 255, 0.55);
-  --accent: #1f5b46;
-  --tile: 26px;
-  --grid-line: rgba(31, 91, 70, 0.07);
-  --grid-major: rgba(31, 91, 70, 0.13);
+  --dim: rgba(255, 255, 255, 0.62);
+  --glass: rgba(18, 28, 24, 0.62);
+  --glass-line: rgba(255, 255, 255, 0.16);
+  --accent: #46d39f;
+  --accent-deep: #1f5b46;
+  --danger: #ff8f6b;
+  --bar: 76px;
+  --gutter: 12px;
 }
 
 * {
   box-sizing: border-box;
 }
 
-html {
-  scroll-behavior: smooth;
+html,
+body {
+  height: 100%;
 }
 
+/* The picture is the page, so the page does not scroll and nothing reflows when
+   the phone is turned. Dynamic viewport units keep the toolbar off the browser
+   chrome that slides in and out on a phone. */
 body {
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
   margin: 0;
-  min-height: 100vh;
-  display: grid;
-  /* Plain centring first, then safe centring where supported, so a tall card
-     never overflows past the top edge. The shorthand is avoided because an
-     unparsed `safe` keyword there would drop centring on both axes. */
-  align-items: center;
-  align-items: safe center;
-  padding: 24px;
-  overflow-x: hidden;
-  color: var(--ink);
-  background: linear-gradient(140deg, #eef4ef 0%, #eaf0f6 55%, #f4eef3 100%);
+  overflow: hidden;
+  background: var(--shell);
+  color: #fff;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 14px;
-}
-
-/* Ruled document grid the card frosts over. Oversized and offset so the
-   looping pan never exposes an edge. */
-body::before {
-  content: "";
-  position: fixed;
-  z-index: -1;
-  inset: calc(var(--tile) * -2);
-  animation: grid-pan 24s linear infinite;
-  background-image:
-    linear-gradient(var(--grid-major) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-major) 1px, transparent 1px),
-    linear-gradient(var(--grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
-  background-size:
-    calc(var(--tile) * 5) calc(var(--tile) * 5),
-    calc(var(--tile) * 5) calc(var(--tile) * 5),
-    var(--tile) var(--tile),
-    var(--tile) var(--tile);
+  -webkit-font-smoothing: antialiased;
 }
 
 input,
 textarea,
 button {
   font: inherit;
-}
-
-@keyframes rise-in {
-  from {
-    opacity: 0;
-    transform: translateY(14px) scale(0.985);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
 }
 
 @keyframes fade-in {
@@ -82,88 +53,35 @@ button {
   }
 }
 
-/* Pans exactly five tiles, the major-line period, so the loop is seamless. */
-@keyframes grid-pan {
+@keyframes rise-in {
   from {
-    transform: translate3d(0, 0, 0);
+    opacity: 0;
+    transform: translateY(12px);
   }
   to {
-    transform: translate3d(calc(var(--tile) * 5), calc(var(--tile) * 5), 0);
+    opacity: 1;
+    transform: none;
   }
 }
 
-/* min-width: 0 on both stops the stamped canvas's intrinsic width (its full
-   pixel size) from setting the grid item's automatic minimum, which otherwise
-   stretches the column far past the card and throws the centring off. */
-main {
-  display: grid;
-  gap: 16px;
-  width: 100%;
-  min-width: 0;
-}
+/* ---------------------------------------------------------------------------
+   The stage: camera, and everything drawn over it
+   --------------------------------------------------------------------------- */
 
-.card {
-  animation: rise-in 520ms ease-in-out both;
-  width: min(380px, 100%);
-  min-width: 0;
-  margin-inline: auto;
-  padding: 28px;
-  border: 1px solid var(--glass-line);
-  border-radius: 20px;
-  background: var(--glass);
-  backdrop-filter: blur(22px) saturate(160%);
-  -webkit-backdrop-filter: blur(22px) saturate(160%);
-  box-shadow: 0 18px 45px rgba(20, 40, 34, 0.14);
-  text-align: center;
-}
-
-.card h1,
-.card h2 {
-  margin: 0 0 20px;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.actions {
-  display: flex;
-  justify-content: center;
-  gap: 12px;
-}
-
-.address {
-  display: grid;
-  gap: 8px;
-}
-
-.address {
-  animation: rise-in 420ms ease-in-out both;
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.5);
-}
-
-/* On its own card the divider has nothing to divide. */
-.address-card > .address {
-  margin-top: 0;
-  padding-top: 0;
-  border-top: 0;
-}
-
-/* The watch is the thing being watched, so its card is given the room. The
-   others stay narrow — an address and two upload buttons gain nothing by it. */
-.monitor-card {
-  width: min(760px, 100%);
-}
-
-/* Live camera, with the tracked pose drawn over it. */
-.monitor {
+.stage {
   position: relative;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
-  margin-bottom: 16px;
-  border-radius: 14px;
-  background: #0d1512;
-  aspect-ratio: 4 / 3;
-  box-shadow: 0 8px 20px rgba(20, 40, 34, 0.18);
+  background: #0a100e;
+}
+
+/* The camera fills whatever shape the screen is — portrait, landscape, a
+   desktop window — and the overlay maps its keypoints through the same crop,
+   so turning the phone needs no layout of its own. */
+.monitor {
+  position: absolute;
+  inset: 0;
 }
 
 .monitor video {
@@ -181,16 +99,104 @@ main {
   pointer-events: none;
 }
 
+.stage-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+}
+
+.stage-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.stage-hint {
+  margin: 0;
+  max-width: 30ch;
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ---------------------------------------------------------------------------
+   The address, across the top of the picture
+   --------------------------------------------------------------------------- */
+
+/* Where the stamp itself will put it, so what is on screen is what is being
+   written onto the photograph — not a panel somewhere else on the page. */
+.place {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 2;
+  display: grid;
+  gap: 4px;
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) var(--gutter) 12px;
+  background: linear-gradient(rgba(8, 14, 12, 0.78), rgba(8, 14, 12, 0));
+  animation: fade-in 260ms ease-in-out both;
+}
+
+.place textarea {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
+  resize: none;
+  overflow: hidden;
+  transition:
+    background 200ms ease-in-out,
+    border-color 200ms ease-in-out;
+}
+
+.place textarea::placeholder {
+  color: var(--dim);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.place textarea:focus,
+.place textarea:hover {
+  border-color: var(--glass-line);
+  background: rgba(8, 14, 12, 0.55);
+  outline: none;
+}
+
+.place .status {
+  text-align: center;
+}
+
+/* ---------------------------------------------------------------------------
+   Readouts over the picture
+   --------------------------------------------------------------------------- */
+
 .monitor-badge {
   position: absolute;
-  bottom: 8px;
+  bottom: 10px;
   left: 50%;
   transform: translateX(-50%);
+  z-index: 2;
   margin: 0;
-  padding: 4px 10px;
-  max-width: calc(100% - 16px);
+  padding: 5px 12px;
+  max-width: calc(100% - 24px);
   border-radius: 999px;
-  background: rgba(13, 21, 18, 0.72);
+  background: rgba(8, 14, 12, 0.72);
   color: #fff;
   font-size: 11px;
   white-space: nowrap;
@@ -198,18 +204,131 @@ main {
   text-overflow: ellipsis;
 }
 
+.monitor-badge:empty {
+  display: none;
+}
+
 .monitor-badge[data-present="true"] {
   background: rgba(31, 91, 70, 0.85);
 }
 
-.captures {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
+.status {
+  animation: fade-in 220ms ease-in-out both;
+  margin: 0;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
-.captures:not(:empty) {
-  margin-top: 16px;
+.status:empty {
+  display: none;
+}
+
+.status[data-state="error"] {
+  color: var(--danger);
+}
+
+.stage-status {
+  position: absolute;
+  right: var(--gutter);
+  bottom: 34px;
+  left: var(--gutter);
+  z-index: 2;
+  text-align: center;
+}
+
+.diagnostics {
+  color: var(--dim);
+  font-size: 11px;
+  text-align: center;
+}
+
+.diagnostics summary {
+  cursor: pointer;
+}
+
+.diagnostics pre {
+  margin: 6px 0 0;
+  padding: 8px;
+  max-height: 28vh;
+  overflow: auto;
+  border-radius: 8px;
+  background: rgba(8, 14, 12, 0.72);
+  font-size: 10px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------------------
+   The photo sheet
+   --------------------------------------------------------------------------- */
+
+.sheet {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  padding: 14px var(--gutter) 16px;
+  border-radius: 18px 18px 0 0;
+  background: var(--glass);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  border-top: 1px solid var(--glass-line);
+  animation: rise-in 240ms ease-in-out both;
+}
+
+.sheet-title {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+.sheet-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.sheet-actions {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+  padding-top: 12px;
+}
+
+.sheet-actions:empty {
+  display: none;
+}
+
+.previews {
+  display: grid;
+  gap: 8px;
+}
+
+.previews:not(:empty) {
+  margin-bottom: 10px;
+}
+
+.preview {
+  animation: fade-in 320ms ease-in-out both;
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
+.captures {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 6px;
 }
 
 .capture {
@@ -219,51 +338,119 @@ main {
   aspect-ratio: 1;
   border-radius: 8px;
   object-fit: cover;
-  box-shadow: 0 4px 12px rgba(20, 40, 34, 0.16);
 }
 
 /* Marks the frames a person was tracked in. */
 .capture[data-pose="true"] {
-  outline: 2px solid rgba(31, 91, 70, 0.75);
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 
 #captures-summary {
   margin-top: 10px;
+  text-align: center;
 }
 
-/* Once a stamped photo exists the card outgrows the viewport, so it anchors
-   to the top instead of staying vertically centred. */
-body.is-stamped {
-  align-items: start;
-}
+/* ---------------------------------------------------------------------------
+   The toolbar
+   --------------------------------------------------------------------------- */
 
-[hidden] {
-  display: none !important;
-}
-
-.button {
-  min-height: 42px;
+/* Everything that is not the picture, within a thumb's reach of the bottom of
+   the screen and padded clear of the home indicator. */
+.toolbar {
+  position: relative;
+  z-index: 4;
   display: flex;
   align-items: center;
-  justify-content: center;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 500;
-  transition:
-    background 220ms ease-in-out,
-    box-shadow 220ms ease-in-out,
-    transform 220ms ease-in-out;
+  justify-content: space-around;
+  gap: 4px;
+  padding: 6px var(--gutter) calc(env(safe-area-inset-bottom, 0px) + 6px);
+  min-height: var(--bar);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(10, 16, 14, 0.96);
 }
 
-/* Icon-only controls: the accessible name lives in a visually-hidden span, and
-   the title attribute gives pointer users a tooltip. */
-.button-icon {
+.tool {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 4px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--dim);
+  cursor: pointer;
+  transition:
+    color 180ms ease-in-out,
+    background 180ms ease-in-out;
+}
+
+.tool:hover,
+.tool[aria-expanded="true"] {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tool-name {
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+/* How many photographs are waiting, on the button that opens them. */
+.tool-count {
+  position: absolute;
+  top: 2px;
+  right: calc(50% - 22px);
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #06231a;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* The one control that starts and stops the watch, sized and placed like the
+   shutter on a camera because that is what it is. */
+.record {
+  display: flex;
   flex: 0 0 auto;
-  width: 52px;
-  padding: 0;
+  align-items: center;
+  justify-content: center;
+  width: 58px;
+  height: 58px;
+  border: 3px solid rgba(255, 255, 255, 0.85);
+  border-radius: 50%;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  transition:
+    transform 180ms ease-in-out,
+    color 180ms ease-in-out;
+}
+
+.record:hover {
+  transform: scale(1.04);
+}
+
+.record:active {
+  transform: scale(0.96);
+}
+
+.record-icon {
+  width: 34px;
+  height: 34px;
+  fill: currentColor;
+  stroke: none;
+}
+
+.record[data-running="true"] {
+  color: var(--danger);
 }
 
 .icon {
@@ -276,35 +463,24 @@ body.is-stamped {
   stroke-linejoin: round;
 }
 
-.result-actions {
+.button {
   display: flex;
+  align-items: center;
   justify-content: center;
-  gap: 12px;
-}
-
-.button-primary {
+  min-height: 42px;
+  border: 1px solid var(--glass-line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.08);
   color: #fff;
-  background: rgba(31, 91, 70, 0.85);
-  box-shadow: 0 6px 16px rgba(31, 91, 70, 0.25);
-}
-
-.button-primary:hover {
-  background: rgba(31, 91, 70, 0.95);
-  box-shadow: 0 10px 22px rgba(31, 91, 70, 0.28);
+  cursor: pointer;
+  transition:
+    background 200ms ease-in-out,
+    transform 200ms ease-in-out;
 }
 
 .button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
   transform: translateY(-1px);
-}
-
-.button-secondary {
-  color: var(--accent);
-  border-color: var(--glass-line);
-  background: var(--glass-strong);
-}
-
-.button-secondary:hover {
-  background: rgba(255, 255, 255, 0.8);
 }
 
 .button:disabled {
@@ -312,28 +488,20 @@ body.is-stamped {
   opacity: 0.6;
 }
 
-textarea {
-  transition:
-    background 220ms ease-in-out,
-    border-color 220ms ease-in-out;
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--glass-line);
-  border-radius: 12px;
-  background: var(--glass-strong);
-  color: inherit;
-  font-size: 13px;
-  text-align: center;
-  resize: none;
+/* Icon-only controls: the accessible name lives in a visually-hidden span, and
+   the title attribute gives pointer users a tooltip. */
+.button-icon {
+  flex: 0 0 auto;
+  width: 52px;
+  padding: 0;
 }
 
-textarea:focus-visible {
-  outline: 2px solid rgba(31, 91, 70, 0.6);
-  outline-offset: -1px;
+.button-secondary {
+  color: #fff;
 }
 
-textarea::placeholder {
-  color: var(--muted);
+[hidden] {
+  display: none !important;
 }
 
 .visually-hidden {
@@ -348,98 +516,101 @@ textarea::placeholder {
   border: 0;
 }
 
-.visually-hidden:focus + .button {
+.visually-hidden:focus + .button,
+.visually-hidden:focus + .tool {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
-.status {
-  animation: fade-in 260ms ease-in-out both;
-  margin: 0;
-  color: var(--muted);
-  font-size: 11px;
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
-.status:empty {
-  display: none;
-}
+/* ---------------------------------------------------------------------------
+   Turning the phone
+   --------------------------------------------------------------------------- */
 
-.status[data-state="error"] {
-  color: #a83c22;
-}
+/* Landscape on a phone is all width and no height, and it is how this gets held
+   while recording. The toolbar thins out, the labels go, and the picture keeps
+   everything the toolbar gives up. */
+@media (orientation: landscape) and (max-height: 560px) {
+  :root {
+    --bar: 56px;
+    --gutter: 10px;
+  }
 
-.diagnostics {
-  margin-top: 8px;
-  color: var(--muted);
-  font-size: 11px;
-}
+  .toolbar {
+    padding-right: calc(env(safe-area-inset-right, 0px) + var(--gutter));
+    padding-left: calc(env(safe-area-inset-left, 0px) + var(--gutter));
+  }
 
-.diagnostics summary {
-  cursor: pointer;
-}
+  .tool-name {
+    display: none;
+  }
 
-.diagnostics pre {
-  margin: 8px 0 0;
-  padding: 8px;
-  border-radius: 8px;
-  background: rgba(20, 40, 34, 0.06);
-  font-size: 10px;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
+  .record {
+    width: 44px;
+    height: 44px;
+    border-width: 2px;
+  }
 
-.previews {
-  display: grid;
-  gap: 10px;
-}
+  .record-icon {
+    width: 26px;
+    height: 26px;
+  }
 
-.previews:not(:empty) {
-  margin-top: 16px;
-}
+  .place {
+    padding-top: calc(env(safe-area-inset-top, 0px) + 4px);
+    padding-bottom: 8px;
+  }
 
-.preview {
-  animation: rise-in 420ms ease-in-out both;
-  display: block;
-  width: 100%;
-  max-width: 100%;
-  height: auto;
-  border-radius: 12px;
-  box-shadow: 0 8px 20px rgba(20, 40, 34, 0.16);
-}
+  .place textarea {
+    font-size: 12px;
+  }
 
-#share-button {
-  margin-top: 14px;
+  /* A sheet that filled the screen would leave nothing to look at, so photos
+     become a strip along the bottom. */
+  .sheet {
+    max-height: 82%;
+  }
+
+  .captures {
+    grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+  }
 }
 
 @media (max-width: 900px) {
-  .card {
-    padding: 24px;
+  .sheet {
+    padding-bottom: 14px;
   }
 }
 
 @media (max-width: 560px) {
+  .stage-title {
+    font-size: 18px;
+  }
+
+  .captures {
+    grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));
+  }
+}
+
+/* Wide screens: the picture would otherwise stretch to a letterbox, so the
+   whole thing is held to a phone-ish column in the middle. */
+@media (min-width: 900px) and (orientation: landscape) {
   body {
-    padding: 16px;
+    align-items: center;
   }
 
-  body::before {
-    --tile: 20px;
-  }
-
-  /* A phone held upright has height to spare and no width, and the rear camera
-     hands back an upright frame anyway — a landscape box would crop most of a
-     standing person out of a picture whose whole subject is a standing person. */
-  .monitor {
-    aspect-ratio: 3 / 4;
+  .stage,
+  .toolbar {
+    width: min(980px, 100%);
+    margin-inline: auto;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto;
-  }
-
   *,
   *::before,
   *::after {

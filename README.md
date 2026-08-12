@@ -13,7 +13,20 @@ Press start once and the page takes over:
 
 The interval always counts from the last photo, not from the moment somebody appeared. So a person walking in 100 seconds into a quiet stretch is already overdue under the 30-second rule and is photographed at once, while a person arriving 5 seconds after a photo waits out the balance of the 30. The first photo is taken as soon as the camera opens, which is also the confirmation that the watch is running.
 
-The badge over the video says who is in frame, which cadence is in force, and how long until the next photo. A rigged skeleton is drawn over the tracked pose — head, neck, shoulders, spine and hips in white, and the four limbs in the accent colour — so it is obvious what the page thinks it is looking at.
+The badge over the video says who is in frame, which cadence is in force, and how long until the next photo. A rigged skeleton is drawn over the tracked pose — head, neck, shoulders, spine and hips in white, the four limbs in the accent colour, fingers on the ends of the arms and the face traced over the head — so it is obvious what the page thinks it is looking at.
+
+**Raising both hands above your head takes a photograph.** It has to be held for the better part of a second, so a hand thrown up in conversation is not a shutter press, and it has to be let go of before it counts again, so one gesture is one photograph rather than a burst. It is the one pose nobody makes by accident in front of a camera that is already photographing them.
+
+### The screen
+
+Built for a phone held in landscape, which is how it gets used while recording:
+
+- **The camera is the page.** It fills whatever shape the screen is, so turning the phone changes nothing about the layout, and nothing scrolls away underneath it.
+- **The address sits across the top of the picture**, in the same uppercase it will be stamped in — what is on screen is what is being written onto the photograph, rather than a panel somewhere else on the page.
+- **A toolbar along the bottom** holds everything that is not the picture, within a thumb's reach: the photographs taken so far and how many, a picker for stamping a photograph that already exists, the record button, and the address. It thins to icons in landscape and pads itself clear of a phone's home indicator.
+- **Photos live behind a button** rather than down the page, so the picture keeps the screen.
+
+There is no second camera button. The page is already holding the camera open; a file input that opens the phone's camera app beside it was one camera too many.
 
 Vehicles are recognised and boxed in amber, labelled, and otherwise ignored: **a vehicle never changes the cadence.** A car in an empty frame is still an empty frame as far as the schedule is concerned, and a person who gets out of it starts the 30-second cadence just as they would anywhere else.
 
@@ -70,9 +83,9 @@ Captures are written to IndexedDB on the device and stay there, marked as a pend
 
 The screen is held awake while the watch runs. A backgrounded tab has its camera suspended and its timers throttled by the browser, so tracking pauses when the page is hidden and picks the schedule back up on return — one photo is owed for the whole gap, not one per missed interval. **The page has to stay open and frontmost.**
 
-## Manual capture
+## Stamping a photo you already have
 
-The camera and gallery controls are native HTML file inputs, so the browser keeps the selected photos on the user's device. They remain available for browsers with no live-camera access, and for stamping images that already exist.
+The gallery picker is a native HTML file input, so the browser keeps the chosen photos on the device. It stamps images that already exist, and it is what remains where a live camera cannot be opened at all.
 
 ## Run locally
 
@@ -108,7 +121,7 @@ The models themselves are not tested here — a trained network cannot be exerci
 
 ## Workflow
 
-1. Press start, and the watch photographs the scene on its own — every 30 seconds with a person in frame, every 120 seconds without.
+1. Press record, and the watch photographs the scene on its own — every 30 seconds with a person in frame, every 120 seconds without. Raise both hands above your head to take one there and then.
 2. The street address fills in automatically where the browser allows it; otherwise type it in, and later captures pick it up.
 3. Photos are stamped and stored on the device as they are taken.
 4. Save them out as files, or share a hand-picked image through the OS share sheet. Nothing is uploaded to a server.

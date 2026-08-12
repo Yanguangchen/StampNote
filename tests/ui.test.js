@@ -39,19 +39,21 @@ test("page has the required HTML foundation", () => {
   assert.match(html, /<html\s+lang=["']en["']/i);
   assert.match(
     html,
-    /<meta\s+name=["']viewport["']\s+content=["']width=device-width, initial-scale=1\.0["']/i,
+    // viewport-fit=cover so the picture reaches under a phone's rounded corners.
+    /<meta\s+name=["']viewport["']\s+content=["']width=device-width, initial-scale=1\.0, viewport-fit=cover["']/i,
   );
   assert.match(html, /<link\s+rel=["']stylesheet["']\s+href=["']styles\.css["']/i);
   assert.ok(existsSync(resolve(projectRoot, "styles.css")));
 });
 
-test("camera control requests the rear-facing camera", () => {
-  const cameraInput = tagWithId("input", "camera-input");
-
-  assert.ok(hasAttribute(cameraInput, "type", "file"));
-  assert.ok(hasAttribute(cameraInput, "accept", "image/*"));
-  assert.ok(hasAttribute(cameraInput, "capture", "environment"));
-  assert.equal(hasAttribute(cameraInput, "multiple"), false);
+test("the live camera is the camera, so there is no second one", () => {
+  // A file input that opens the phone's camera app sat beside a page already
+  // holding the camera open. Choosing a photograph that already exists is a
+  // different job and keeps its button.
+  assert.equal(/id=["']camera-input["']/.test(html), false);
+  assert.equal(/capture=["']environment["']/.test(html), false);
+  assert.equal(/Open camera/.test(html), false);
+  assert.match(html, /id=["']gallery-input["']/);
 });
 
 test("gallery control accepts multiple images", () => {
@@ -63,21 +65,33 @@ test("gallery control accepts multiple images", () => {
   assert.equal(hasAttribute(galleryInput, "capture"), false);
 });
 
-test("upload controls have visible, correctly wired labels", () => {
-  assert.match(
-    html,
-    /<label\b[^>]*for=["']camera-input["'][^>]*>[\s\S]*?Open camera[\s\S]*?<\/label>/i,
-  );
-  assert.match(
-    html,
-    /<label\b[^>]*for=["']gallery-input["'][^>]*>[\s\S]*?Choose from gallery[\s\S]*?<\/label>/i,
-  );
+test("the toolbar's controls are labelled, in writing and for a pointer", () => {
+  // These sit in the bottom bar with their names beside them, so unlike the
+  // icon-only controls the wording is on screen rather than hidden.
+  [
+    ["label", "for", "gallery-input", "Choose from gallery", "Choose"],
+    ["button", "id", "photo-sheet-toggle", "Photos", "Photos"],
+    ["button", "id", "place-toggle", "Street address", "Place"],
+  ].forEach(([tagName, attribute, id, tooltip, wording]) => {
+    const pattern = new RegExp(
+      `<${tagName}\\b[^>]*${attribute}=["']${escapeRegExp(id)}["'][^>]*>([\\s\\S]*?)</${tagName}>`,
+      "i",
+    );
+    const match = html.match(pattern);
+
+    assert.ok(match, `Expected a <${tagName}> for ${id}`);
+    assert.match(match[0], new RegExp(`title=["']${escapeRegExp(tooltip)}["']`, "i"));
+    assert.match(match[1], new RegExp(`class=["']tool-name["']>${escapeRegExp(wording)}<`, "i"));
+    assert.match(match[1], /<svg\b[^>]*aria-hidden=["']true["']/i);
+  });
+
+  // The sheet says whether it is open, for anyone who cannot see that it is.
+  assert.match(html, /id=["']photo-sheet-toggle["'][^>]*aria-expanded=["']false["']/i);
+  assert.match(html, /aria-controls=["']photo-sheet["']/i);
 });
 
 test("icon-only controls keep a text name and hide the glyph from assistive tech", () => {
   const controls = [
-    ["label", "camera-input", "Open camera"],
-    ["label", "gallery-input", "Choose from gallery"],
     ["button", "share-button", "Share"],
     ["button", "monitor-toggle", "Start auto capture"],
     ["button", "captures-save", "Save captures"],
@@ -538,12 +552,17 @@ test("the overlay follows the crop the video is displayed with", () => {
   assert.equal(/point\.x \* width/.test(app), false);
 });
 
-test("the watch is given a display worth looking at", () => {
-  // The rig is the point of the live view, so the card carrying it is wider
-  // than the rest and turns upright on a phone, where the height is.
-  assert.match(css, /\.monitor-card\s*\{[^}]*width:\s*min\(760px/);
-  assert.match(css, /@media \(max-width: 560px\)[\s\S]*\.monitor\s*\{\s*aspect-ratio:\s*3 \/ 4/);
-  assert.match(html, /class=["']card monitor-card["']/);
+test("the watch is given the whole screen, whichever way the phone is held", () => {
+  // The camera fills the stage in whatever shape the screen is, so turning the
+  // phone needs no layout of its own — and the overlay maps its keypoints
+  // through the same crop.
+  assert.match(css, /\.stage\s*\{[^}]*position:\s*relative/);
+  assert.match(css, /\.monitor\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*0/);
+  assert.match(css, /height:\s*100dvh/);
+
+  // Landscape on a phone is all width and no height, and it is how this gets
+  // held while recording.
+  assert.match(css, /@media \(orientation: landscape\) and \(max-height: 560px\)/);
 
   // Bones and labels are sized from the width they are drawn at, so the rig
   // does not thin to a scratch on a larger display.

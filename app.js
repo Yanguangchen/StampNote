@@ -14,7 +14,9 @@
   const shareButton = document.querySelector("#share-button");
   const diagnostics = document.querySelector("#location-diagnostics");
   const diagnosticsBody = document.querySelector("#location-diagnostics-body");
-  const photoInputs = document.querySelectorAll("#camera-input, #gallery-input");
+  // The live camera is the camera now, so the only file input left is the one
+  // that stamps a photograph you already have.
+  const galleryInput = document.querySelector("#gallery-input");
 
   const monitorFrame = document.querySelector("#monitor-frame");
   const monitorVideo = document.querySelector("#monitor-video");
@@ -29,6 +31,11 @@
   const capturesSummary = document.querySelector("#captures-summary");
   const capturesSave = document.querySelector("#captures-save");
   const capturesClear = document.querySelector("#captures-clear");
+  const stageEmpty = document.querySelector("#stage-empty");
+  const photoSheet = document.querySelector("#photo-sheet");
+  const photoSheetToggle = document.querySelector("#photo-sheet-toggle");
+  const photoCount = document.querySelector("#photo-count");
+  const placeToggle = document.querySelector("#place-toggle");
 
   if (!service || !stamp || !addressField || !status || !addressPanel) {
     return;
@@ -122,7 +129,7 @@
     if (shareButton && typeof navigator.canShare === "function") {
       shareButton.hidden = false;
     }
-    document.body.classList.add("is-stamped");
+    openSheet(true);
     scheduleAutoSave();
   }
 
@@ -316,12 +323,10 @@
     }
   }
 
-  photoInputs.forEach((input) => {
-    input.addEventListener("change", () => {
-      if (input.files && input.files.length > 0) {
-        addPhotos(input.files);
-      }
-    });
+  galleryInput?.addEventListener("change", () => {
+    if (galleryInput.files && galleryInput.files.length > 0) {
+      addPhotos(galleryInput.files);
+    }
   });
 
   addressField.addEventListener("input", render);
@@ -417,6 +422,30 @@
   let faceHintAt = 0;
   let facePending = false;
 
+  // Photos live behind a button rather than down the page, so the picture keeps
+  // the screen. Opening it is also what shows a freshly stamped upload.
+  function openSheet(open) {
+    if (!photoSheet || !photoSheetToggle) {
+      return;
+    }
+
+    photoSheet.hidden = !open;
+    photoSheetToggle.setAttribute("aria-expanded", String(Boolean(open)));
+
+    // The readouts sit over the picture the sheet is covering, and a frosted
+    // panel shows them through rather than hiding them.
+    if (poseBadge) {
+      poseBadge.hidden = Boolean(open);
+    }
+    if (monitorStatus) {
+      monitorStatus.hidden = Boolean(open);
+    }
+
+    if (open) {
+      renderCaptures();
+    }
+  }
+
   function setMonitorStatus(message, state = "idle") {
     if (!monitorStatus) {
       return;
@@ -434,6 +463,7 @@
     const name = running ? "Stop auto capture" : "Start auto capture";
 
     monitorToggle.title = name;
+    monitorToggle.dataset.running = String(running);
     if (monitorToggleName) {
       monitorToggleName.textContent = name;
     }
@@ -891,6 +921,10 @@
     if (capturesClear) {
       capturesClear.hidden = !hasCaptures;
     }
+    if (photoCount) {
+      photoCount.textContent = String(usage.count);
+      photoCount.hidden = !hasCaptures;
+    }
   }
 
   // Keeps the screen awake so the schedule keeps running: a locked phone
@@ -1003,6 +1037,7 @@
       captureImage,
       getAddress: () => addressField.value,
       getFaces: () => faceHint,
+      isGesture: (keypoints) => Boolean(window.StampNotePoseMapping?.isCaptureGesture(keypoints)),
       onUpdate: renderState,
     });
 
@@ -1016,7 +1051,9 @@
     if (monitorFrame) {
       monitorFrame.hidden = false;
     }
-    document.body.classList.add("is-stamped");
+    if (stageEmpty) {
+      stageEmpty.hidden = true;
+    }
     setToggleLabel(true);
     setMonitorStatus(
       model
@@ -1056,6 +1093,12 @@
     }
     if (monitorFrame) {
       monitorFrame.hidden = true;
+    }
+    if (stageEmpty) {
+      stageEmpty.hidden = false;
+    }
+    if (poseBadge) {
+      poseBadge.textContent = "";
     }
     setToggleLabel(false);
     setMonitorStatus("Auto capture stopped. Your photos are still stored on this device.");
@@ -1117,6 +1160,21 @@
 
   capturesSave?.addEventListener("click", saveCaptures);
   capturesClear?.addEventListener("click", clearCaptures);
+
+  photoSheetToggle?.addEventListener("click", () => {
+    openSheet(photoSheet.hidden);
+  });
+
+  // The address is part of the picture rather than a panel of its own, so this
+  // reveals that strip and puts the cursor in it.
+  placeToggle?.addEventListener("click", () => {
+    addressPanel.hidden = false;
+    addressField.focus();
+
+    if (!addressField.value.trim()) {
+      autoLocate();
+    }
+  });
 
   // A hidden tab has its camera suspended and its timers throttled, so tracking
   // pauses rather than scoring stale frames, and picks the schedule back up on

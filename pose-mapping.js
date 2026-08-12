@@ -51,6 +51,20 @@
   const CORROBORATED_CONFIDENCE = 0.55;
   const PERSON_SCORE = 0.45;
 
+  // Both hands raised clear above the head. It has to be something nobody does
+  // by accident in front of a camera that is already photographing them, and it
+  // has to be readable from the body alone, so it still works before the hand
+  // model has finished downloading.
+  function isCaptureGesture(keypoints) {
+    if (!keypoints?.head || !keypoints.wristLeft || !keypoints.wristRight) {
+      return false;
+    }
+
+    // Up the picture is towards zero. Both wrists above the crown means a
+    // deliberate reach, not a hand brushing past a face.
+    return keypoints.wristLeft.y < keypoints.head.y && keypoints.wristRight.y < keypoints.head.y;
+  }
+
   function midpoint(left, right) {
     if (!left) {
       return right || null;
@@ -456,6 +470,7 @@
     buildDetection,
     countLimbs,
     describePosture,
+    isCaptureGesture,
     isPresent,
     readPeople,
     readVehicles,

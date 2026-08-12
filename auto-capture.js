@@ -7,6 +7,10 @@
   // driven by a real camera in the browser or by plain objects in a test.
   const SAMPLE_INTERVAL = 250;
 
+  // Long enough that a hand thrown up in conversation is not a shutter press,
+  // short enough that holding the pose does not feel like a punishment.
+  const GESTURE_HOLD = 700;
+
   function createAutoCapture(options = {}) {
     const {
       detector,
@@ -17,6 +21,8 @@
       captureImage,
       getAddress = () => "",
       getFaces = () => null,
+      isGesture = () => false,
+      gestureHold = GESTURE_HOLD,
       now = () => Date.now(),
       onUpdate = () => {},
     } = options;
@@ -45,18 +51,21 @@
       captures: 0,
       lastCaptureAt: null,
       lastRecord: null,
+      gesture: null,
       error: null,
     };
 
     let busy = false;
     let looking = false;
+    let heldSince = null;
+    let armed = true;
 
     function publish() {
       onUpdate({ ...state });
       return state;
     }
 
-    async function capture(timestamp, intervalMs) {
+    async function capture(timestamp, intervalMs, trigger = "schedule") {
       busy = true;
 
       try {
@@ -72,6 +81,7 @@
             date: image.date instanceof Date ? image.date : new Date(timestamp),
             address: getAddress(),
             intervalMs,
+            trigger,
             pose: {
               present: state.present,
               confidence: state.confidence,
@@ -174,6 +184,28 @@
           }
         }
 
+        // Hands above the head is a shutter press: it takes a photograph there
+        // and then, whatever the schedule was waiting for. It has to be held to
+        // count, and has to be let go of before it can be asked for again, so
+        // one gesture is one photograph rather than a burst.
+        const posing = state.present && isGesture(state.keypoints);
+
+        if (!posing) {
+          heldSince = null;
+          armed = true;
+          state.gesture = null;
+        } else if (armed) {
+          heldSince = heldSince ?? timestamp;
+          state.gesture = "holding";
+
+          if (timestamp - heldSince >= gestureHold) {
+            armed = false;
+            heldSince = null;
+            state.gesture = "captured";
+            await capture(timestamp, scheduler.intervalFor(state.present), "gesture");
+          }
+        }
+
         // Only `present` — whether a person is in frame — is put to the
         // schedule. A vehicle is carried along for the interface to draw and
         // changes nothing about when a photograph is taken.
@@ -204,6 +236,13 @@
 
     const seconds = Math.round((state.intervalMs || 0) / 1000);
     const wait = state.waitMs === null ? null : Math.max(0, Math.round(state.waitMs / 1000));
+    if (state.gesture === "holding") {
+      return "Hands up — hold it";
+    }
+    if (state.gesture === "captured") {
+      return "Photo taken";
+    }
+
     const subject = state.present ? "Person in frame" : "No one in frame";
     // Named, but never in the position that explains the cadence — the interval
     // that follows is the one a vehicle did not change.
@@ -214,6 +253,7 @@
   }
 
   const api = Object.freeze({
+    GESTURE_HOLD,
     SAMPLE_INTERVAL,
     createAutoCapture,
     describeCadence,

@@ -16,6 +16,7 @@ function createHarness(options = {}) {
     time: 0,
     present: false,
     vehicle: false,
+    gesture: false,
     frame: { width: 2, height: 2, data: new Uint8ClampedArray(16) },
     address: "10 Bayfront Avenue",
     captureFails: false,
@@ -55,6 +56,8 @@ function createHarness(options = {}) {
       return { blob: { size: 1024, type: "image/jpeg" }, date: new Date(harness.time) };
     },
     getAddress: () => harness.address,
+    isGesture: () => harness.gesture,
+    gestureHold: options.gestureHold ?? 700,
     now: () => harness.time,
     onUpdate: options.onUpdate,
   });
@@ -160,6 +163,74 @@ test("a person arriving at a car still switches the cadence", async () => {
   assert.equal(state.intervalMs, 30 * SECOND);
   assert.ok(state.vehicle, "the car is still there alongside them");
   assert.equal(harness.saved.length, 2);
+});
+
+test("hands above the head take a photograph there and then", async () => {
+  const harness = createHarness();
+
+  harness.present = true;
+  harness.controller.start();
+  await harness.controller.tick();
+  assert.equal(harness.saved.length, 1, "the opening photograph");
+
+  // A hand thrown up in conversation is not a shutter press. The hold is
+  // counted from the first frame it is seen in, which is a quarter-second in.
+  harness.gesture = true;
+  await harness.advance(500);
+  assert.equal(harness.saved.length, 1);
+  assert.equal(harness.controller.getState().gesture, "holding");
+
+  // Held past the 700 milliseconds, it is.
+  await harness.advance(600);
+  assert.equal(harness.saved.length, 2);
+  assert.equal(harness.saved[1].trigger, "gesture", "and it is recorded as one");
+
+  // One gesture is one photograph: keeping the pose does not fire a burst.
+  await harness.advance(4 * SECOND);
+  assert.equal(harness.saved.length, 2);
+
+  // Letting go and doing it again does.
+  harness.gesture = false;
+  await harness.advance(SECOND);
+  harness.gesture = true;
+  await harness.advance(SECOND);
+  assert.equal(harness.saved.length, 3);
+});
+
+test("the gesture does not disturb the schedule it interrupted", async () => {
+  const harness = createHarness();
+
+  harness.present = true;
+  harness.controller.start();
+  await harness.controller.tick();
+
+  // Ten seconds in, someone asks for one by hand.
+  await harness.advance(10 * SECOND);
+  harness.gesture = true;
+  await harness.advance(SECOND);
+  assert.equal(harness.saved.length, 2);
+
+  harness.gesture = false;
+
+  // The 30-second cadence then carries on from the photograph just taken,
+  // rather than from the one before it.
+  await harness.advance(28 * SECOND);
+  assert.equal(harness.saved.length, 2);
+  await harness.advance(2 * SECOND);
+  assert.equal(harness.saved.length, 3);
+});
+
+test("nobody in frame means nobody to make the gesture", async () => {
+  const harness = createHarness();
+
+  harness.gesture = true;
+  harness.controller.start();
+  await harness.controller.tick();
+  await harness.advance(3 * SECOND);
+
+  // The pose comes off a body; with no body there is nothing to read.
+  assert.equal(harness.saved.length, 1, "only the opening photograph");
+  assert.equal(harness.controller.getState().gesture, null);
 });
 
 test("the cadence switches the moment someone walks in or out", async () => {
@@ -337,6 +408,17 @@ test("the badge says who is in frame, at what cadence, and when the next photo l
       waitMs: 45000,
     }),
     "No one in frame · vehicle · every 120s · next in 45s",
+  );
+
+  // While the shutter pose is being held, the badge is about that and nothing
+  // else — it is the one moment the cadence is not what matters.
+  assert.equal(
+    autoCapture.describeCadence({ running: true, present: true, gesture: "holding" }),
+    "Hands up — hold it",
+  );
+  assert.equal(
+    autoCapture.describeCadence({ running: true, present: true, gesture: "captured" }),
+    "Photo taken",
   );
 });
 

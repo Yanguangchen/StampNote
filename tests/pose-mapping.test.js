@@ -425,3 +425,51 @@ test("easing covers the whole rig, and gives up when the shape changes", () => {
   assert.equal(blended[0].side, "Right");
   assert.deepEqual(mapping.blendHands(null, left, 0.5), left);
 });
+
+test("hands above the head is the shutter, and nothing else is", () => {
+  // It has to be something nobody does by accident in front of a camera that
+  // is already photographing them.
+  const overhead = mapping.toKeypoints(
+    standing({
+      [LANDMARK.wristLeft]: { x: 0.4, y: 0.02 },
+      [LANDMARK.wristRight]: { x: 0.6, y: 0.02 },
+    }),
+  );
+  assert.equal(mapping.isCaptureGesture(overhead), true);
+
+  // Standing normally, waving with one hand, or reaching only as high as the
+  // shoulders are all just somebody in the room.
+  assert.equal(mapping.isCaptureGesture(mapping.toKeypoints(standing())), false);
+  assert.equal(
+    mapping.isCaptureGesture(
+      mapping.toKeypoints(standing({ [LANDMARK.wristLeft]: { x: 0.4, y: 0.02 } })),
+    ),
+    false,
+  );
+  assert.equal(
+    mapping.isCaptureGesture(
+      mapping.toKeypoints(
+        standing({
+          [LANDMARK.wristLeft]: { x: 0.4, y: 0.2 },
+          [LANDMARK.wristRight]: { x: 0.6, y: 0.2 },
+        }),
+      ),
+    ),
+    false,
+    "level with the face is not above the head",
+  );
+
+  // A hand the model could not see cannot be raised.
+  assert.equal(
+    mapping.isCaptureGesture(
+      mapping.toKeypoints(
+        standing({
+          [LANDMARK.wristLeft]: { x: 0.4, y: 0.02, visibility: 0.1 },
+          [LANDMARK.wristRight]: { x: 0.6, y: 0.02 },
+        }),
+      ),
+    ),
+    false,
+  );
+  assert.equal(mapping.isCaptureGesture(null), false);
+});
