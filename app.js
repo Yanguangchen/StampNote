@@ -32,10 +32,13 @@
   const capturesSave = document.querySelector("#captures-save");
   const capturesClear = document.querySelector("#captures-clear");
   const stageEmpty = document.querySelector("#stage-empty");
-  const photoSheet = document.querySelector("#photo-sheet");
-  const photoSheetToggle = document.querySelector("#photo-sheet-toggle");
-  const photoCount = document.querySelector("#photo-count");
+  const filmstrip = document.querySelector("#filmstrip");
   const placeToggle = document.querySelector("#place-toggle");
+  const viewer = document.querySelector("#viewer");
+  const viewerImage = document.querySelector("#viewer-image");
+  const viewerShare = document.querySelector("#viewer-share");
+  const viewerDelete = document.querySelector("#viewer-delete");
+  const viewerClose = document.querySelector("#viewer-close");
 
   if (!service || !stamp || !addressField || !status || !addressPanel) {
     return;
@@ -122,14 +125,24 @@
         address: addressField.value,
         date: photo.date,
       });
-      photo.canvas.className = "preview";
-      previews.append(photo.canvas);
+
+      // A tile in the strip, like a capture, and it opens the same viewer.
+      const tile = document.createElement("button");
+
+      tile.type = "button";
+      tile.className = "preview";
+      tile.setAttribute("aria-label", "Stamped photo — open");
+      tile.append(photo.canvas);
+      tile.addEventListener("click", () => {
+        openViewer({ url: photo.canvas.toDataURL("image/jpeg", 0.92), label: "Stamped photo" });
+      });
+      previews.append(tile);
     });
 
     if (shareButton && typeof navigator.canShare === "function") {
       shareButton.hidden = false;
     }
-    openSheet(true);
+    showFilmstrip();
     scheduleAutoSave();
   }
 
@@ -421,30 +434,6 @@
   let painter = null;
   let faceHintAt = 0;
   let facePending = false;
-
-  // Photos live behind a button rather than down the page, so the picture keeps
-  // the screen. Opening it is also what shows a freshly stamped upload.
-  function openSheet(open) {
-    if (!photoSheet || !photoSheetToggle) {
-      return;
-    }
-
-    photoSheet.hidden = !open;
-    photoSheetToggle.setAttribute("aria-expanded", String(Boolean(open)));
-
-    // The readouts sit over the picture the sheet is covering, and a frosted
-    // panel shows them through rather than hiding them.
-    if (poseBadge) {
-      poseBadge.hidden = Boolean(open);
-    }
-    if (monitorStatus) {
-      monitorStatus.hidden = Boolean(open);
-    }
-
-    if (open) {
-      renderCaptures();
-    }
-  }
 
   function setMonitorStatus(message, state = "idle") {
     if (!monitorStatus) {
@@ -874,6 +863,17 @@
     thumbnailUrls.splice(0).forEach((url) => URL.revokeObjectURL(url));
   }
 
+  // The strip is only there when there is something in it, so an empty app is
+  // the picture and nothing else.
+  function showFilmstrip() {
+    if (!filmstrip) {
+      return;
+    }
+
+    const tiles = (previews?.childElementCount || 0) + (capturesList?.childElementCount || 0);
+    filmstrip.hidden = tiles === 0;
+  }
+
   async function renderCaptures() {
     if (!capturesList) {
       return;
@@ -891,15 +891,35 @@
 
       const url = URL.createObjectURL(record.blob);
       const image = new Image();
+      // A button, not a bare image: it opens the photo whole, and a tap target
+      // wants to be reachable by a keyboard and named to a screen reader.
+      const tile = document.createElement("button");
 
       thumbnailUrls.push(url);
-      image.className = "capture";
       image.src = url;
-      image.alt = record.poseDetected
-        ? `Capture with a person in frame at ${record.capturedAt}`
-        : `Capture at ${record.capturedAt}`;
-      image.dataset.pose = String(record.poseDetected);
-      capturesList.append(image);
+      image.alt = "";
+
+      tile.type = "button";
+      tile.className = "capture";
+      tile.dataset.pose = String(record.poseDetected);
+      tile.setAttribute(
+        "aria-label",
+        record.poseDetected
+          ? `Capture with a person in frame at ${record.capturedAt} — open`
+          : `Capture at ${record.capturedAt} — open`,
+      );
+      tile.append(image);
+      tile.addEventListener("click", () =>
+        openViewer({
+          url,
+          id: record.id,
+          blob: record.blob,
+          name: record.name,
+          type: record.type,
+          label: `Capture at ${record.capturedAt}`,
+        }),
+      );
+      capturesList.append(tile);
     });
 
     const usage = await store.usage(records);
@@ -910,19 +930,92 @@
       const where = store.isPersistent() ? "on this device" : "in this tab only";
 
       capturesSummary.textContent = hasCaptures
-        ? `${kept} stored ${where} · ${storage.formatBytes(usage.bytes)}`
+        ? `${kept} kept ${where} · ${storage.formatBytes(usage.bytes)}`
         : "";
     }
 
+    // Disabled rather than hidden, so the bar keeps its shape as photographs
+    // arrive and the save button does not move under a thumb.
     if (capturesSave) {
-      capturesSave.hidden = !hasCaptures;
+      capturesSave.disabled = !hasCaptures;
     }
     if (capturesClear) {
       capturesClear.hidden = !hasCaptures;
     }
-    if (photoCount) {
-      photoCount.textContent = String(usage.count);
-      photoCount.hidden = !hasCaptures;
+
+    showFilmstrip();
+  }
+
+  // ---------------------------------------------------------------------------
+  // One photograph, whole
+
+  let viewing = null;
+
+  function openViewer(item) {
+    if (!viewer || !viewerImage) {
+      return;
+    }
+
+    viewing = item;
+    viewerImage.src = item.url;
+    viewerImage.alt = item.label || "Photo";
+    viewer.hidden = false;
+
+    // Only a stored capture can be deleted; a stamped upload is not in the
+    // store to delete from.
+    if (viewerDelete) {
+      viewerDelete.hidden = !item.id;
+    }
+    if (viewerShare) {
+      viewerShare.hidden = typeof navigator.canShare !== "function";
+    }
+
+    viewerClose?.focus();
+  }
+
+  function closeViewer() {
+    if (!viewer) {
+      return;
+    }
+
+    viewer.hidden = true;
+    // The URL belongs to the strip, which is still showing it, so it is let go
+    // of here rather than revoked.
+    viewerImage?.removeAttribute("src");
+    viewing = null;
+  }
+
+  async function deleteViewed() {
+    if (!viewing?.id) {
+      return;
+    }
+
+    await store.remove(viewing.id);
+    closeViewer();
+    await renderCaptures();
+  }
+
+  async function shareViewed() {
+    if (!viewing?.blob) {
+      setMonitorStatus("This photo cannot be shared from here.", "error");
+      return;
+    }
+
+    const file = new File([viewing.blob], viewing.name || "stampnote.jpg", {
+      type: viewing.type || "image/jpeg",
+    });
+
+    if (!navigator.canShare?.({ files: [file] })) {
+      setMonitorStatus("Sharing is not available here — save it instead.", "error");
+      return;
+    }
+
+    try {
+      await navigator.share({ files: [file] });
+    } catch (error) {
+      if (error?.name !== "AbortError") {
+        setMonitorStatus("Sharing failed — save it instead.", "error");
+      }
     }
   }
 
@@ -981,6 +1074,12 @@
 
     if (state.captures !== before) {
       renderCaptures();
+      // Already in the device's own store by now. If a folder has been armed,
+      // the copy out to it happens here — the whole point being that no one has
+      // to be holding the phone for it.
+      if (folder) {
+        writeToFolder(state.lastRecord);
+      }
     }
 
     if (controller) {
@@ -1103,10 +1202,114 @@
     setMonitorStatus("Auto capture stopped. Your photos are still stored on this device.");
   }
 
+  // ---------------------------------------------------------------------------
+  // Keeping the photographs outside the app
+  //
+  // Every capture is already written to the device's own store the moment it is
+  // taken: that needs no button, no folder and no tap, and it survives a reload.
+  // This is the other half — copying them out into the file system, which a page
+  // is not allowed to do silently. Where the File System Access API exists a
+  // folder is chosen once and everything after it is written there on its own.
+  // Where it does not, which today is every phone browser, a photo can only
+  // leave the app as a download, and a download needs a press.
+  const canKeepFolder = typeof window.showDirectoryPicker === "function";
+  const exported = new Set();
+  let folder = null;
+
+  function setSaveLabel() {
+    const name = capturesSave?.querySelector(".hint");
+
+    if (!name) {
+      return;
+    }
+
+    name.textContent = folder
+      ? `Saving into ${folder.name}`
+      : canKeepFolder
+        ? "Keep saving into a folder"
+        : "Save to this device";
+    capturesSave.dataset.armed = String(Boolean(folder));
+  }
+
+  async function folderIsWritable() {
+    if (!folder) {
+      return false;
+    }
+
+    try {
+      return (await folder.queryPermission({ mode: "readwrite" })) === "granted";
+    } catch {
+      return false;
+    }
+  }
+
+  async function writeToFolder(record) {
+    if (!record?.blob || exported.has(record.id) || !(await folderIsWritable())) {
+      return false;
+    }
+
+    try {
+      const handle = await folder.getFileHandle(record.name, { create: true });
+      const writable = await handle.createWritable();
+
+      await writable.write(record.blob);
+      await writable.close();
+      exported.add(record.id);
+      return true;
+    } catch {
+      // A folder that has been moved or deleted, or had its permission taken
+      // back. Better to fall back to the button than to fail on every capture.
+      folder = null;
+      setSaveLabel();
+      return false;
+    }
+  }
+
+  async function keepFolder() {
+    try {
+      folder = await window.showDirectoryPicker({
+        id: "stampnote",
+        mode: "readwrite",
+        startIn: "pictures",
+      });
+    } catch (error) {
+      if (error?.name !== "AbortError") {
+        setMonitorStatus("That folder could not be opened.", "error");
+      }
+      return false;
+    }
+
+    setSaveLabel();
+    return true;
+  }
+
   async function saveCaptures() {
     const records = await store.list();
 
     if (records.length === 0) {
+      return;
+    }
+
+    // One press arms the folder; every capture after it writes itself.
+    if (canKeepFolder && !folder && !(await keepFolder())) {
+      return;
+    }
+
+    if (folder) {
+      let written = 0;
+
+      for (const record of records) {
+        if (await writeToFolder(record)) {
+          written += 1;
+        }
+      }
+
+      setMonitorStatus(
+        written > 0
+          ? `${written} photo(s) written to ${folder.name}. New ones follow on their own.`
+          : `Everything is already in ${folder.name}.`,
+        "success",
+      );
       return;
     }
 
@@ -1162,8 +1365,21 @@
   capturesSave?.addEventListener("click", saveCaptures);
   capturesClear?.addEventListener("click", clearCaptures);
 
-  photoSheetToggle?.addEventListener("click", () => {
-    openSheet(photoSheet.hidden);
+  viewerClose?.addEventListener("click", closeViewer);
+  viewerDelete?.addEventListener("click", deleteViewed);
+  viewerShare?.addEventListener("click", shareViewed);
+
+  // The dark around the photograph is a way out of it, as is Escape.
+  viewer?.addEventListener("click", (event) => {
+    if (event.target === viewer) {
+      closeViewer();
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && viewer && !viewer.hidden) {
+      closeViewer();
+    }
   });
 
   // The address is part of the picture rather than a panel of its own, so this
@@ -1204,5 +1420,6 @@
   });
 
   setToggleLabel(false);
+  setSaveLabel();
   renderCaptures();
 })();
