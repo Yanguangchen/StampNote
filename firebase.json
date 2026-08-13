@@ -1,0 +1,13 @@
+{
+  "firestore": {
+    "rules": "firestore.rules"
+  },
+  "auth": {
+    "providers": {
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "StampNote",
+        "supportEmail": "yanguangchensp@gmail.com"
+      }
+    }
+  }
+}

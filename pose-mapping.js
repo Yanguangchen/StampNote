@@ -252,6 +252,49 @@
   // Which point joins which comes from MediaPipe itself — `FACE_LANDMARKS_LIPS`
   // and its siblings, passed in by the loader — rather than indices written out
   // here by hand. There are 478 of them and no way to eyeball a wrong one.
+  const FACE_IDENTITY_LANDMARKS = Object.freeze([
+    10, 152, 33, 133, 263, 362, 1, 4, 168, 70, 300, 93, 323, 234, 454,
+  ]);
+  const FACE_IDENTITIES = new WeakMap();
+
+  function faceSignatureOf(faceLandmarks) {
+    const points = FACE_IDENTITY_LANDMARKS.map((index) => faceLandmarks?.[index]);
+    if (
+      points.some(
+        (point) =>
+          !point ||
+          !Number.isFinite(point.x) ||
+          !Number.isFinite(point.y) ||
+          !Number.isFinite(point.z),
+      )
+    ) {
+      return null;
+    }
+
+    // Pairwise 3D distances discard image position and head roll. Dividing by
+    // the outer-eye distance also discards camera distance, leaving only coarse
+    // face geometry. No pixels, image crop, name or database are involved.
+    const leftEye = faceLandmarks[33];
+    const rightEye = faceLandmarks[263];
+    const scale = Math.hypot(
+      rightEye.x - leftEye.x,
+      rightEye.y - leftEye.y,
+      rightEye.z - leftEye.z,
+    );
+    if (!Number.isFinite(scale) || scale < 0.001) return null;
+
+    const signature = [];
+    points.forEach((point, index) => {
+      for (let otherIndex = index + 1; otherIndex < points.length; otherIndex += 1) {
+        const other = points[otherIndex];
+        signature.push(
+          Math.hypot(point.x - other.x, point.y - other.y, point.z - other.z) / scale,
+        );
+      }
+    });
+    return signature;
+  }
+
   function toFaceOutlines(faceLandmarks, connections) {
     if (!faceLandmarks || faceLandmarks.length === 0 || !connections) {
       return null;
@@ -276,7 +319,11 @@
       Object.entries(connections).map(([feature, edges]) => [feature, trace(edges)]),
     );
 
-    return Object.values(outlines).every((edges) => edges.length === 0) ? null : outlines;
+    if (Object.values(outlines).every((edges) => edges.length === 0)) return null;
+
+    const identitySignature = faceSignatureOf(faceLandmarks);
+    if (identitySignature) FACE_IDENTITIES.set(outlines, identitySignature);
+    return outlines;
   }
 
   // Both hands, each 21 points: wrist, then four joints along every finger. The
@@ -450,7 +497,10 @@
   }
 
   function centroidOf(segments) {
-    const points = (segments || []).flat();
+    const groups = Array.isArray(segments) ? segments : Object.values(segments || {});
+    const points = groups
+      .flat(2)
+      .filter((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y));
 
     if (points.length === 0) {
       return null;
@@ -478,6 +528,10 @@
       if (index !== null && !taken.has(index)) {
         taken.add(index);
         bodies[index].face = face;
+        const identitySignature = FACE_IDENTITIES.get(face);
+        if (identitySignature) {
+          bodies[index].faceSignature = identitySignature;
+        }
       }
     });
 
@@ -504,6 +558,19 @@
       const here = centerOf(body.box);
       let best = null;
       let bestDistance = Infinity;
+
+      // Once the session tracker has named a body, that identity is stronger
+      // evidence than proximity. This prevents the drawing interpolation from
+      // swapping two correctly tracked labels as people cross paths.
+      if (Number.isInteger(body.personId)) {
+        const identified = previous.findIndex(
+          (earlier, index) => !claimed.has(index) && earlier.personId === body.personId,
+        );
+        if (identified !== -1) {
+          claimed.add(identified);
+          return previous[identified];
+        }
+      }
 
       previous.forEach((earlier, index) => {
         if (claimed.has(index)) {
@@ -679,6 +746,7 @@
     matchBodies,
     countLimbs,
     describePosture,
+    faceSignatureOf,
     isCaptureGesture,
     isPresent,
     toBody,

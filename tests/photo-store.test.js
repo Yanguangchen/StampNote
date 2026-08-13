@@ -32,6 +32,7 @@ test("a capture record carries what a later upload would need", () => {
 
   // Nothing has left the device, so the queue starts full.
   assert.equal(record.status, "local");
+  assert.equal(record.aiReview, null);
   assert.equal(record.name, "stampnote-20260811-143205-pose.jpg");
 });
 
@@ -73,6 +74,41 @@ test("the oldest captures are dropped once the record limit is passed", async ()
   assert.deepEqual(
     listed.map((record) => new Date(record.capturedAtMs).getMinutes()),
     [4, 3, 2],
+  );
+});
+
+test("automatic AI review waits for eight eligible photos and protects gestures", () => {
+  const scheduled = Array.from({ length: 9 }, (_, index) => ({
+    id: `scheduled-${index + 1}`,
+    blob: fakeBlob(10),
+    capturedAtMs: (index + 1) * 1000,
+    trigger: "schedule",
+    aiReview: null,
+  }));
+  const gesture = {
+    id: "hands-up",
+    blob: fakeBlob(10),
+    capturedAtMs: 500,
+    trigger: "gesture",
+    aiReview: null,
+  };
+  const reviewed = {
+    id: "already-reviewed",
+    blob: fakeBlob(10),
+    capturedAtMs: 250,
+    trigger: "schedule",
+    aiReview: { action: "keep" },
+  };
+
+  assert.deepEqual(
+    storage.selectAiReviewBatch([gesture, reviewed, ...scheduled.slice(0, 7)], 8),
+    [],
+  );
+  assert.deepEqual(
+    storage
+      .selectAiReviewBatch([scheduled[8], gesture, reviewed, ...scheduled.slice(0, 8)], 8)
+      .map((record) => record.id),
+    scheduled.slice(0, 8).map((record) => record.id),
   );
 });
 
@@ -223,6 +259,29 @@ test("a capture records how many people were in the frame", () => {
   assert.equal(single.pose.people, 1);
 });
 
+test("a capture records the cumulative anonymous session count", () => {
+  const occupied = storage.createCaptureRecord({
+    blob: { size: 2048, type: "image/jpeg" },
+    uniquePeopleSeen: 4,
+    pose: { present: true, confidence: 0.91, pose: "standing", people: 2 },
+  });
+  assert.equal(occupied.uniquePeopleSeen, 4);
+
+  const emptyLater = storage.createCaptureRecord({
+    blob: { size: 2048, type: "image/jpeg" },
+    uniquePeopleSeen: 4,
+    pose: { present: false },
+  });
+  assert.equal(emptyLater.pose, null);
+  assert.equal(emptyLater.uniquePeopleSeen, 4);
+
+  assert.equal(
+    storage.createCaptureRecord({ uniquePeopleSeen: Number.POSITIVE_INFINITY }).uniquePeopleSeen,
+    0,
+  );
+  assert.equal(storage.createCaptureRecord({ uniquePeopleSeen: 20_000 }).uniquePeopleSeen, 10_000);
+});
+
 test("the store sheds its worst photographs, not merely its oldest", () => {
   const records = [
     { id: "newest", capturedAtMs: 5000, bytes: 100, score: 0.2 },
@@ -262,4 +321,292 @@ test("a capture carries what the triage made of it", () => {
   const unmeasured = storage.createCaptureRecord({ blob: { size: 2048, type: "image/jpeg" } });
   assert.equal(unmeasured.score, null);
   assert.equal(unmeasured.fingerprint, null);
+});
+
+test("AI rejects stay recoverable until the user purges them", async () => {
+  const store = createStore();
+  const kept = await store.save({ blob: fakeBlob(10), date: new Date(2026, 0, 1) });
+  const rejected = await store.save({ blob: fakeBlob(20), date: new Date(2026, 0, 2) });
+
+  await store.applyAiReviews(
+    [
+      {
+        id: kept.id,
+        action: "keep",
+        recommendation: "keep",
+        relevance: 0.9,
+        informationGain: 0.8,
+        quality: 0.7,
+        confidence: 0.95,
+        duplicateOf: null,
+        reason: "Shows useful work.",
+      },
+      {
+        id: rejected.id,
+        action: "discard",
+        recommendation: "discard",
+        discardBasis: "redundant",
+        relevance: 0.1,
+        informationGain: 0.1,
+        quality: 0.8,
+        confidence: 0.96,
+        duplicateOf: kept.id,
+        reason: "Adds no new information.",
+      },
+    ],
+    { model: "gemini-3.1-flash-lite" },
+  );
+
+  assert.deepEqual((await store.listActive()).map((record) => record.id), [kept.id]);
+  assert.deepEqual((await store.listDiscarded()).map((record) => record.id), [rejected.id]);
+  assert.equal((await store.listDiscarded())[0].aiReview.discardBasis, "redundant");
+  assert.equal((await store.usage()).discarded, 1);
+  assert.equal((await store.usage()).active, 1);
+
+  const restored = await store.restoreAiDiscard(rejected.id);
+  assert.equal(restored.aiReview.action, "keep");
+  assert.ok(restored.aiReview.restoredAt);
+  assert.equal((await store.listActive()).length, 2);
+
+  await store.applyAiReviews([
+    {
+      id: rejected.id,
+      action: "discard",
+      recommendation: "discard",
+      discardBasis: "redundant",
+      confidence: 0.98,
+      reason: "Still redundant.",
+    },
+  ]);
+  assert.equal(await store.purgeAiDiscarded(), 1);
+  assert.equal((await store.list()).length, 1);
+});
+
+test("gesture captures cannot be put in the AI review bin", async () => {
+  const store = createStore();
+  const requested = await store.save({
+    blob: fakeBlob(10),
+    date: new Date(2026, 0, 1),
+    trigger: "gesture",
+  });
+
+  const [updated] = await store.applyAiReviews([
+    {
+      id: requested.id,
+      action: "discard",
+      recommendation: "discard",
+      confidence: 1,
+      reason: "Attempted discard.",
+    },
+  ]);
+
+  assert.equal(updated.aiReview.action, "keep");
+  assert.equal(updated.aiReview.confidence, 1);
+  assert.equal((await store.listDiscarded()).length, 0);
+});
+
+test("the store rejects malformed or low-confidence discard actions", async () => {
+  const store = createStore();
+  const malformed = await store.save({ blob: fakeBlob(10), date: new Date(2026, 0, 1) });
+  const uncertain = await store.save({ blob: fakeBlob(10), date: new Date(2026, 0, 2) });
+
+  const updated = await store.applyAiReviews([
+    {
+      id: malformed.id,
+      action: "discard",
+      recommendation: "discard",
+      discardBasis: "not_applicable",
+      confidence: 0.99,
+    },
+    {
+      id: uncertain.id,
+      action: "discard",
+      recommendation: "discard",
+      discardBasis: "irrelevant",
+      confidence: 0.79,
+    },
+  ]);
+
+  assert.deepEqual(
+    updated.map((record) => record.aiReview.action),
+    ["review", "review"],
+  );
+  // They do not become high-confidence rejects, but the model did flag both
+  // for discard, so both leave the main gallery for the recoverable bin.
+  assert.equal((await store.listDiscarded()).length, 2);
+  assert.equal((await store.listActive()).length, 0);
+  assert.equal((await store.usage()).needsReview, 2);
+  assert.equal(storage.AI_DISCARD_CONFIDENCE, 0.8);
+});
+
+test("missing output stays visible rather than becoming an AI flag", async () => {
+  const store = createStore();
+  const record = await store.save({ blob: fakeBlob(10), date: new Date(2026, 0, 1) });
+
+  await store.applyAiReviews([
+    {
+      id: record.id,
+      action: "review",
+      recommendation: "keep",
+      discardBasis: "not_applicable",
+      confidence: 0,
+    },
+  ]);
+
+  assert.equal((await store.listActive()).length, 1);
+  assert.equal((await store.listDiscarded()).length, 0);
+});
+
+test("storage pressure prunes AI rejects before kept photos", () => {
+  const records = [
+    { id: "new", capturedAtMs: 3000, bytes: 100, score: 0.1 },
+    { id: "good", capturedAtMs: 2000, bytes: 100, score: 0.9 },
+    {
+      id: "ai-reject",
+      capturedAtMs: 1000,
+      bytes: 100,
+      score: 1,
+      aiReview: { action: "discard" },
+    },
+  ];
+
+  assert.deepEqual(storage.selectExpired(records, { maxRecords: 2, maxBytes: 1e9 }), [
+    "ai-reject",
+  ]);
+});
+
+function fakeIndexedDb(options = {}) {
+  const rows = new Map();
+  const calls = { clear: 0, created: 0, deleted: [], open: 0, put: [] };
+  const database = {
+    objectStoreNames: {
+      contains() {
+        return calls.created > 0;
+      },
+    },
+    createObjectStore(name, configuration) {
+      calls.created += 1;
+      calls.createdStore = { name, configuration };
+    },
+    transaction(name, mode) {
+      const transaction = {
+        error: options.transactionError || null,
+        objectStore(receivedName) {
+          assert.equal(receivedName, storage.STORE_NAME);
+          return {
+            clear() {
+              rows.clear();
+              calls.clear += 1;
+              finish();
+            },
+            delete(id) {
+              rows.delete(id);
+              calls.deleted.push(id);
+              finish();
+            },
+            getAll() {
+              const request = {};
+              queueMicrotask(() => {
+                request.result = [...rows.values()];
+                request.onsuccess?.();
+              });
+              return request;
+            },
+            put(record) {
+              rows.set(record.id, record);
+              calls.put.push(record.id);
+              finish();
+            },
+          };
+        },
+      };
+      calls.transaction = { name, mode };
+
+      function finish() {
+        queueMicrotask(() => {
+          if (options.transactionOutcome === "abort") transaction.onabort?.();
+          else if (options.transactionOutcome === "error") transaction.onerror?.();
+          else transaction.oncomplete?.();
+        });
+      }
+
+      return transaction;
+    },
+  };
+  const factory = {
+    open(name, version) {
+      calls.open += 1;
+      calls.openedWith = { name, version };
+      const request = {};
+      queueMicrotask(() => {
+        request.result = database;
+        if (options.openOutcome === "blocked") {
+          request.onblocked?.();
+          return;
+        }
+        if (options.openOutcome === "error") {
+          request.error = options.openError || new Error("open failed");
+          request.onerror?.();
+          return;
+        }
+        request.onupgradeneeded?.();
+        request.onsuccess?.();
+      });
+      return request;
+    },
+  };
+
+  return { calls, factory, rows };
+}
+
+test("the IndexedDB backend upgrades once and persists every CRUD operation", async () => {
+  const indexedDb = fakeIndexedDb();
+  const backend = storage.createIndexedDbBackend(indexedDb.factory);
+
+  assert.equal(backend.persistent, true);
+  await backend.ready();
+  await backend.ready();
+  assert.equal(indexedDb.calls.open, 1);
+  assert.deepEqual(indexedDb.calls.openedWith, {
+    name: storage.DB_NAME,
+    version: storage.DB_VERSION,
+  });
+  assert.deepEqual(indexedDb.calls.createdStore, {
+    name: storage.STORE_NAME,
+    configuration: { keyPath: "id" },
+  });
+
+  await backend.put({ id: "one", value: 1 });
+  await backend.put({ id: "two", value: 2 });
+  assert.deepEqual(await backend.getAll(), [
+    { id: "one", value: 1 },
+    { id: "two", value: 2 },
+  ]);
+  assert.deepEqual(indexedDb.calls.transaction, {
+    name: storage.STORE_NAME,
+    mode: "readonly",
+  });
+
+  await backend.remove("one");
+  assert.deepEqual(await backend.getAll(), [{ id: "two", value: 2 }]);
+  await backend.clear();
+  assert.deepEqual(await backend.getAll(), []);
+  assert.deepEqual(indexedDb.calls.deleted, ["one"]);
+  assert.equal(indexedDb.calls.clear, 1);
+});
+
+test("IndexedDB blocked, aborted, and failed transactions surface useful errors", async () => {
+  const blocked = storage.createIndexedDbBackend(fakeIndexedDb({ openOutcome: "blocked" }).factory);
+  await assert.rejects(blocked.ready(), /Another tab/);
+
+  const abortError = new Error("quota aborted transaction");
+  const aborted = storage.createIndexedDbBackend(
+    fakeIndexedDb({ transactionOutcome: "abort", transactionError: abortError }).factory,
+  );
+  await assert.rejects(aborted.put({ id: "one" }), abortError);
+
+  const failed = storage.createIndexedDbBackend(
+    fakeIndexedDb({ transactionOutcome: "error" }).factory,
+  );
+  await assert.rejects(failed.clear(), /local photo store failed/);
 });

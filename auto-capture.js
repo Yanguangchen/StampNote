@@ -15,6 +15,9 @@
     const {
       detector,
       tracker,
+      personTracker = null,
+      faceIdentity = null,
+      enrollmentDetector = null,
       scheduler,
       store,
       sampleFrame,
@@ -44,10 +47,14 @@
     // otherwise a scene that drifts a little each time is always new.
     let keptFingerprint = null;
     let keptAt = 0;
+    const enrollmentRequired = typeof faceIdentity?.enrollmentState === "function";
+    let enrollmentSkipped = false;
 
     const state = {
       running: false,
       paused: false,
+      activityStarted: !enrollmentRequired,
+      faceEnrollment: enrollmentRequired ? faceIdentity.enrollmentState() : null,
       present: false,
       confidence: 0,
       pose: "none",
@@ -57,6 +64,9 @@
       hands: [],
       bodies: [],
       people: 0,
+      personIds: [],
+      peopleSeen: 0,
+      faceRecognitionReady: false,
       vehicle: null,
       intervalMs: scheduler.intervalFor(false),
       nextDueAt: null,
@@ -75,9 +85,33 @@
     let heldSince = null;
     let armed = true;
 
+    function snapshot() {
+      return {
+        ...state,
+        faceEnrollment: state.faceEnrollment ? { ...state.faceEnrollment } : null,
+      };
+    }
+
     function publish() {
-      onUpdate({ ...state });
+      onUpdate(snapshot());
       return state;
+    }
+
+    function clearTrackedPose() {
+      state.present = false;
+      state.confidence = 0;
+      state.pose = "none";
+      state.keypoints = null;
+      state.box = null;
+      state.face = null;
+      state.hands = [];
+      state.bodies = [];
+      state.people = 0;
+      state.personIds = [];
+      state.vehicle = null;
+      state.gesture = null;
+      heldSince = null;
+      armed = true;
     }
 
     // What the frame itself says: whether the lens found focus, and whether this
@@ -132,6 +166,16 @@
           present: state.present,
           confidence: state.confidence,
           pose: state.pose,
+          // Only the public, anonymous marker fields cross into the saved-image
+          // renderer. Clothing histograms and tracker state stay in memory.
+          bodies: (state.bodies || [])
+            .filter((body) => body?.box && Number.isInteger(body.personId))
+            .map((body) => ({
+              box: body.box,
+              personId: body.personId,
+              workerId: body.workerId || null,
+              personLabel: body.personLabel,
+            })),
         });
 
         if (image?.blob) {
@@ -139,6 +183,9 @@
             blob: image.blob,
             date: image.date instanceof Date ? image.date : new Date(timestamp),
             address: getAddress(),
+            // Cumulative anonymous count for this camera run. It is a number,
+            // not the transient labels or body signatures used to derive it.
+            uniquePeopleSeen: state.peopleSeen,
             intervalMs,
             trigger,
             pose: {
@@ -173,17 +220,26 @@
 
     return {
       getState() {
-        return { ...state };
+        return snapshot();
       },
 
       start() {
         detector.reset?.();
+        enrollmentDetector?.reset?.();
         tracker.reset();
+        personTracker?.reset?.();
+        faceIdentity?.reset?.();
         scheduler.reset();
+        enrollmentSkipped = false;
 
         state.running = true;
         state.paused = false;
+        state.activityStarted = !enrollmentRequired;
+        state.faceEnrollment = enrollmentRequired ? faceIdentity.enrollmentState() : null;
         state.captures = 0;
+        state.personIds = [];
+        state.peopleSeen = 0;
+        state.faceRecognitionReady = false;
         state.error = null;
         state.lastRecord = null;
         state.lastCaptureAt = null;
@@ -194,15 +250,43 @@
       stop() {
         state.running = false;
         state.paused = false;
+        state.activityStarted = false;
+        state.faceEnrollment = null;
         state.present = false;
         state.pose = "none";
         state.keypoints = null;
         state.box = null;
         state.bodies = [];
         state.people = 0;
+        state.personIds = [];
+        state.peopleSeen = 0;
+        state.faceRecognitionReady = false;
+        personTracker?.reset?.();
+        faceIdentity?.reset?.();
         state.nextDueAt = null;
         state.waitMs = null;
 
+        return publish();
+      },
+
+      // Face enrollment improves session-long matching, but it must never trap
+      // someone whose camera or device cannot produce an embedding. The user is
+      // always given an explicit way to begin without it.
+      skipFaceEnrollment() {
+        if (!state.running || !enrollmentRequired || state.activityStarted) {
+          return snapshot();
+        }
+
+        enrollmentSkipped = true;
+        state.activityStarted = true;
+        state.faceEnrollment = {
+          ...faceIdentity.enrollmentState(),
+          required: false,
+          status: "skipped",
+        };
+        state.nextDueAt = null;
+        state.waitMs = null;
+        scheduler.reset();
         return publish();
       },
 
@@ -217,6 +301,7 @@
         state.paused = Boolean(paused);
         if (!state.paused) {
           detector.reset?.();
+          enrollmentDetector?.reset?.();
         }
 
         return publish();
@@ -247,12 +332,82 @@
             state.box = tracked.box;
             state.face = tracked.face || null;
             state.hands = tracked.hands || [];
-            state.bodies = tracked.bodies || [];
-            state.people = tracked.people || 0;
+            const trackableBodies = tracked.bodies?.length
+              ? tracked.bodies
+              : tracked.present && tracked.keypoints
+                ? [
+                    {
+                      present: true,
+                      confidence: tracked.confidence,
+                      pose: tracked.pose,
+                      keypoints: tracked.keypoints,
+                      box: tracked.box,
+                      face: tracked.face,
+                      hands: tracked.hands,
+                    },
+                  ]
+                : [];
+            // A close face can fill the guide while the pose model sees too
+            // little torso to create a body. During the opening scan, use the
+            // focused face-only landmarker so recognition does not depend on a
+            // visible shoulder or hip. Normal activity returns to pose bodies.
+            const enrollmentBodies =
+              enrollmentRequired && !state.activityStarted && enrollmentDetector?.detect
+                ? enrollmentDetector.detect(frame)?.bodies || []
+                : trackableBodies;
+            // The tracker samples a tiny local colour histogram from this frame
+            // so a person can recover their session ID after leaving the view.
+            const identityBodies = faceIdentity?.describe
+              ? await faceIdentity.describe(enrollmentBodies, frame, timestamp)
+              : enrollmentBodies;
+            const hasFaceEmbedding = identityBodies.some((body) => body?.faceEmbedding);
+            const identified =
+              !enrollmentRequired || state.activityStarted || hasFaceEmbedding
+                ? personTracker?.update?.(identityBodies, timestamp, frame)
+                : null;
+            state.bodies = identified?.bodies || tracked.bodies || [];
+            state.people = identified?.visibleCount ?? tracked.people ?? 0;
+            state.personIds = state.bodies
+              .map((body) => body.personId)
+              .filter((id) => Number.isInteger(id));
+            state.peopleSeen = identified?.uniqueCount ?? state.peopleSeen;
+            state.faceRecognitionReady = Boolean(identified?.faceRecognitionReady);
             state.vehicle = tracked.vehicle?.present ? tracked.vehicle : null;
+            state.error = null;
+            if (enrollmentRequired && !enrollmentSkipped) {
+              state.faceEnrollment = faceIdentity.enrollmentState();
+            }
+          } catch {
+            // MediaPipe can throw once when a phone resumes its camera or loses
+            // its GPU context. Letting that rejection escape kills the caller's
+            // timer and leaves the last skeleton painted forever. Drop the stale
+            // pose, reset both sides of tracking, and let the next tick retry.
+            detector.reset?.();
+            enrollmentDetector?.reset?.();
+            tracker.reset();
+            clearTrackedPose();
+            state.error = "Tracking restarted after a camera hiccup.";
+            return publish();
           } finally {
             looking = false;
           }
+        }
+
+        // Keep both shutter paths and the schedule still while the initial face
+        // samples are collected. Completion resets the schedule so the activity
+        // begins from this moment rather than catching up on enrollment time.
+        if (!state.activityStarted) {
+          if (state.faceEnrollment?.status === "complete") {
+            state.activityStarted = true;
+            scheduler.reset();
+          }
+          state.intervalMs = scheduler.intervalFor(state.present);
+          state.nextDueAt = null;
+          state.waitMs = null;
+          state.gesture = null;
+          heldSince = null;
+          armed = true;
+          return publish();
         }
 
         // Hands above the head is a shutter press: it takes a photograph there
@@ -308,6 +463,24 @@
     if (state.paused) {
       return "Paused — this page has to stay open and awake.";
     }
+    if (!state.activityStarted && state.faceEnrollment?.required) {
+      const prompts = {
+        loading: "Preparing attendance taking…",
+        no_face: "Come closer for attendance taking",
+        move_closer: "Move closer — fill the face guide",
+        look_straight: "Look straight at the camera",
+        center_face: "Center your face in the guide",
+        one_person: "One person at a time for the first scan",
+        hold_still: "Hold still so the next face view stays sharp",
+        face_changed: "Keep the same face in the guide",
+        scanning: `Face scan ${state.faceEnrollment.samples || 0} of ${
+          state.faceEnrollment.total || 5
+        } — hold still`,
+        not_recognized: "Worker not recognized — move closer or enroll first",
+        unavailable: "Face scan unavailable — continue without it",
+      };
+      return prompts[state.faceEnrollment.status] || "Move closer for attendance taking";
+    }
 
     const seconds = Math.round((state.intervalMs || 0) / 1000);
     const wait = state.waitMs === null ? null : Math.max(0, Math.round(state.waitMs / 1000));
@@ -325,17 +498,29 @@
 
     // How many, not just whether — the count is the thing being watched, and a
     // room that goes from one person to three should say so.
+    const labels = (state.bodies || [])
+      .map((body) => body?.personLabel)
+      .filter((label) => typeof label === "string" && label.trim());
     const subject = !state.present
       ? "No one in frame"
       : state.people > 1
-        ? `${state.people} people in frame`
-        : "Person in frame";
+        ? labels.length === state.people
+          ? `${labels.join(", ")} in frame`
+          : `${state.people} tracked workers in frame`
+        : labels.length === 1
+          ? `${labels[0]} in frame`
+          : "Tracked worker in frame";
     // Named, but never in the position that explains the cadence — the interval
     // that follows is the one a vehicle did not change.
+    const uniquePeople = Math.max(0, Math.floor(Number(state.peopleSeen) || 0));
+    const unique = uniquePeople
+      ? ` · ${uniquePeople} unique ${uniquePeople === 1 ? "person" : "people"} this session`
+      : "";
+    const faceRecognition = state.faceRecognitionReady ? " · face match on-device" : "";
     const vehicle = state.vehicle?.present ? " · vehicle" : "";
     const next = wait === null ? "" : ` · next in ${wait}s`;
 
-    return `${subject}${vehicle} · every ${seconds}s${next}`;
+    return `${subject}${unique}${faceRecognition}${vehicle} · every ${seconds}s${next}`;
   }
 
   const api = Object.freeze({

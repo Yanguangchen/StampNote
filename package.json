@@ -4,10 +4,18 @@
   "private": true,
   "description": "A private, browser-based image annotation toolkit.",
   "scripts": {
+    "dev": "vercel dev",
     "start": "node server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "test:coverage": "node --experimental-test-coverage --test"
   },
   "engines": {
-    "node": ">=18"
+    "node": "24.x"
+  },
+  "dependencies": {
+    "@ai-sdk/google": "^4.0.42",
+    "ai": "^7.0.62",
+    "dotenv": "^17.4.2",
+    "zod": "^4.4.3"
   }
 }

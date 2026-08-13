@@ -9,6 +9,7 @@
   --accent: #46d39f;
   --accent-deep: #1f5b46;
   --danger: #ff8f6b;
+  --record: #ff3b30;
   --bar: 76px;
   --gutter: 12px;
 }
@@ -64,6 +65,135 @@ button {
   }
 }
 
+@keyframes shutter-flash {
+  0% {
+    opacity: 0;
+  }
+  10%,
+  32% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes shutter-confirmation {
+  0%,
+  18% {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  30%,
+  72% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
+}
+
+@keyframes face-scan {
+  0%,
+  12% {
+    opacity: 0;
+    transform: translateY(0);
+  }
+  24%,
+  76% {
+    opacity: 0.8;
+  }
+  88%,
+  100% {
+    opacity: 0;
+    transform: translateY(178px);
+  }
+}
+
+@keyframes face-match-card {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes face-match-check {
+  0% {
+    opacity: 0;
+    transform: scale(0.55) rotate(-12deg);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(1.08) rotate(0);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes ai-core-throb {
+  0%,
+  100% {
+    transform: scale(0.9);
+    box-shadow:
+      0 0 0 0 rgba(87, 222, 255, 0.28),
+      0 0 28px rgba(130, 91, 255, 0.5);
+  }
+  50% {
+    transform: scale(1.05);
+    box-shadow:
+      0 0 0 18px rgba(87, 222, 255, 0),
+      0 0 58px rgba(195, 92, 255, 0.72);
+  }
+}
+
+@keyframes ai-orbit-clockwise {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes ai-orbit-counterclockwise {
+  to {
+    transform: rotate(-1turn);
+  }
+}
+
+@keyframes ai-scan-sweep {
+  0%,
+  100% {
+    opacity: 0;
+    transform: translateY(-54px) scaleX(0.55);
+  }
+  25%,
+  75% {
+    opacity: 0.9;
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(54px) scaleX(1);
+  }
+}
+
+@keyframes ai-signal-wave {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scaleY(0.35);
+  }
+  50% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+}
+
 /* ---------------------------------------------------------------------------
    The stage: camera, and everything drawn over it
    --------------------------------------------------------------------------- */
@@ -74,6 +204,247 @@ button {
   min-height: 0;
   overflow: hidden;
   background: #0a100e;
+}
+
+/* The gesture is a shutter button, so its acknowledgement is deliberately
+   impossible to miss. Fixed positioning includes the toolbar and filmstrip in
+   the flash instead of making it look like another camera overlay. */
+.capture-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  opacity: 0;
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.capture-flash.is-visible {
+  animation: shutter-flash 560ms ease-out both;
+}
+
+.capture-flash-confirmation {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: rgba(8, 14, 12, 0.88);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  opacity: 0;
+  box-shadow: 0 8px 28px rgba(8, 14, 12, 0.22);
+}
+
+.capture-flash.is-visible .capture-flash-confirmation {
+  animation: shutter-confirmation 560ms ease-out both;
+}
+
+.capture-flash-icon {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The AI indicator is deliberately bigger than a toolbar spinner: Gemini is a
+   meaningful processing step, while pointer-events keep capture uninterrupted. */
+.ai-review-loader {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: calc(env(safe-area-inset-top, 0px) + 20px) 20px
+    calc(env(safe-area-inset-bottom, 0px) + 20px);
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 44%, rgba(103, 64, 255, 0.25), transparent 42%),
+    rgba(4, 8, 14, 0.74);
+  backdrop-filter: blur(5px) saturate(1.25);
+  -webkit-backdrop-filter: blur(5px) saturate(1.25);
+  animation: fade-in 180ms ease-out both;
+}
+
+.ai-review-loader[hidden] {
+  display: none;
+}
+
+.ai-review-loader-card {
+  display: grid;
+  justify-items: center;
+  width: min(100%, 390px);
+  padding: clamp(24px, 7vw, 38px);
+  border: 1px solid rgba(116, 224, 255, 0.28);
+  border-radius: 30px;
+  background:
+    linear-gradient(145deg, rgba(17, 31, 45, 0.96), rgba(17, 10, 36, 0.95)) padding-box,
+    linear-gradient(135deg, rgba(86, 228, 255, 0.6), rgba(187, 92, 255, 0.52)) border-box;
+  box-shadow:
+    0 28px 90px rgba(0, 0, 0, 0.56),
+    0 0 70px rgba(106, 72, 255, 0.2),
+    inset 0 1px rgba(255, 255, 255, 0.08);
+  text-align: center;
+}
+
+.ai-review-throbber {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: clamp(142px, 38vw, 178px);
+  aspect-ratio: 1;
+  margin-bottom: 22px;
+  overflow: hidden;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(86, 226, 255, 0.11), transparent 66%);
+}
+
+.ai-review-core {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 72px;
+  aspect-ratio: 1;
+  border-radius: 24px;
+  background: conic-gradient(from 210deg, #57e4ff, #8875ff, #d767ff, #57e4ff);
+  animation: ai-core-throb 1.55s ease-in-out infinite;
+}
+
+.ai-review-core::before {
+  position: absolute;
+  inset: 3px;
+  border-radius: 21px;
+  background: #0b1020;
+  content: "";
+}
+
+.ai-review-core span {
+  position: relative;
+  z-index: 1;
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 23px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-shadow: 0 0 16px rgba(115, 225, 255, 0.9);
+}
+
+.ai-review-orbit {
+  position: absolute;
+  border: 1px solid rgba(132, 220, 255, 0.36);
+  border-radius: 50%;
+}
+
+.ai-review-orbit::before,
+.ai-review-orbit::after {
+  position: absolute;
+  width: 9px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: #66e7ff;
+  box-shadow: 0 0 14px currentColor;
+  color: #66e7ff;
+  content: "";
+}
+
+.ai-review-orbit::before {
+  top: -5px;
+  left: 50%;
+}
+
+.ai-review-orbit::after {
+  right: 8%;
+  bottom: 14%;
+  background: #d274ff;
+  color: #d274ff;
+}
+
+.ai-review-orbit-outer {
+  inset: 8px;
+  border-style: dashed;
+  animation: ai-orbit-clockwise 5s linear infinite;
+}
+
+.ai-review-orbit-inner {
+  inset: 26px;
+  border-color: rgba(204, 111, 255, 0.38);
+  animation: ai-orbit-counterclockwise 3.2s linear infinite;
+}
+
+.ai-review-scan {
+  position: absolute;
+  z-index: 3;
+  width: 118px;
+  height: 2px;
+  border-radius: 999px;
+  background: #76ebff;
+  box-shadow:
+    0 0 12px rgba(118, 235, 255, 0.95),
+    0 7px 22px rgba(118, 235, 255, 0.35);
+  animation: ai-scan-sweep 1.9s ease-in-out infinite;
+}
+
+.ai-review-loader-kicker {
+  margin: 0 0 8px;
+  color: #79e9ff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.ai-review-loader h2 {
+  margin: 0;
+  font-size: clamp(25px, 7vw, 34px);
+  letter-spacing: -0.03em;
+}
+
+.ai-review-loader p:last-of-type {
+  min-height: 42px;
+  margin: 9px 0 15px;
+  max-width: 31ch;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.ai-review-signal {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+}
+
+.ai-review-signal i {
+  width: 3px;
+  height: 15px;
+  border-radius: 999px;
+  background: linear-gradient(#65e8ff, #c36bff);
+  transform-origin: center;
+  animation: ai-signal-wave 900ms ease-in-out infinite;
+}
+
+.ai-review-signal i:nth-child(2) {
+  animation-delay: 90ms;
+}
+
+.ai-review-signal i:nth-child(3) {
+  animation-delay: 180ms;
+}
+
+.ai-review-signal i:nth-child(4) {
+  animation-delay: 270ms;
+}
+
+.ai-review-signal i:nth-child(5) {
+  animation-delay: 360ms;
 }
 
 /* The camera fills whatever shape the screen is — portrait, landscape, a
@@ -97,6 +468,237 @@ button {
   width: 100%;
   height: 100%;
   pointer-events: none;
+}
+
+/* A short enrollment screen lives over the actual camera rather than before
+   camera permission, so "closer" and "centered" have immediate visual meaning. */
+.face-enrollment {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  padding: calc(env(safe-area-inset-top, 0px) + 18px) 20px 18px;
+  overflow: auto;
+  background:
+    radial-gradient(circle at 50% 38%, rgba(8, 14, 12, 0.08), rgba(8, 14, 12, 0.44) 64%),
+    linear-gradient(rgba(8, 14, 12, 0.18), rgba(8, 14, 12, 0.66));
+  animation: fade-in 180ms ease-out both;
+}
+
+.face-enrollment-card {
+  display: grid;
+  justify-items: center;
+  width: min(100%, 360px);
+  color: #fff;
+  text-align: center;
+  text-shadow: 0 2px 12px rgba(3, 8, 6, 0.9);
+}
+
+.face-enrollment-kicker {
+  margin: 0 0 10px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.face-scan-frame {
+  position: relative;
+  width: 176px;
+  height: 224px;
+  margin-bottom: 18px;
+  overflow: hidden;
+  border: 2px solid rgba(255, 255, 255, 0.86);
+  border-radius: 48% 48% 44% 44% / 42% 42% 54% 54%;
+  box-shadow:
+    0 0 0 1px rgba(70, 211, 159, 0.55),
+    0 0 32px rgba(70, 211, 159, 0.24),
+    0 18px 44px rgba(3, 8, 6, 0.3);
+}
+
+.face-scan-line {
+  position: absolute;
+  top: 14px;
+  right: 12px;
+  left: 12px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 12px rgba(70, 211, 159, 0.9);
+  animation: face-scan 2.4s ease-in-out 4;
+}
+
+.face-scan-success {
+  position: absolute;
+  inset: 0;
+  display: none;
+  place-items: center;
+  color: #07110d;
+  font-size: 72px;
+  font-weight: 800;
+  line-height: 1;
+  text-shadow: none;
+}
+
+.face-enrollment[data-status="complete"] .face-scan-frame {
+  width: 144px;
+  height: 144px;
+  margin-bottom: 20px;
+  border-color: var(--accent);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow:
+    0 0 0 8px rgba(70, 211, 159, 0.22),
+    0 0 0 16px rgba(70, 211, 159, 0.08),
+    0 0 52px rgba(70, 211, 159, 0.58);
+}
+
+.face-enrollment[data-status="complete"] {
+  background:
+    radial-gradient(circle at 50% 38%, rgba(70, 211, 159, 0.26), transparent 48%),
+    rgba(3, 10, 7, 0.88);
+}
+
+.face-enrollment[data-status="complete"] .face-enrollment-card {
+  width: min(100%, 460px);
+  padding: clamp(24px, 6vw, 38px);
+  border: 1px solid rgba(112, 255, 201, 0.38);
+  border-radius: 30px;
+  background: rgba(7, 20, 14, 0.92);
+  box-shadow:
+    0 28px 80px rgba(0, 0, 0, 0.5),
+    inset 0 1px rgba(255, 255, 255, 0.08);
+  animation: face-match-card 280ms cubic-bezier(0.2, 0.9, 0.2, 1) both;
+}
+
+.face-enrollment[data-status="complete"] .face-scan-line {
+  display: none;
+}
+
+.face-enrollment[data-status="complete"] .face-scan-success {
+  display: grid;
+  animation: face-match-check 420ms 120ms cubic-bezier(0.2, 0.9, 0.2, 1.2) both;
+}
+
+.face-enrollment[data-status="complete"] h2 {
+  font-size: clamp(34px, 10vw, 54px);
+  letter-spacing: -0.04em;
+}
+
+.face-enrollment[data-status="complete"] #face-enrollment-message {
+  min-height: 0;
+  margin-bottom: 16px;
+  color: rgba(255, 255, 255, 0.76);
+  font-size: 15px;
+}
+
+.face-enrollment[data-status="complete"] .face-enrollment-progress-row,
+.face-enrollment[data-status="complete"] .face-enrollment-privacy,
+.face-enrollment[data-status="complete"] .face-enrollment-skip {
+  display: none;
+}
+
+.face-enrollment h2 {
+  margin: 0;
+  font-size: clamp(21px, 5vw, 28px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+#face-enrollment-message {
+  min-height: 42px;
+  margin: 8px 0 14px;
+  max-width: 32ch;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.face-enrollment-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(100%, 280px);
+}
+
+.face-enrollment-progress-row progress {
+  width: 100%;
+  height: 7px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  accent-color: var(--accent);
+}
+
+.face-enrollment-progress-row progress::-webkit-progress-bar {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.face-enrollment-progress-row progress::-webkit-progress-value {
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.face-enrollment-count {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.face-enrollment-match {
+  display: grid;
+  gap: 3px;
+  min-width: min(100%, 300px);
+  padding: 14px 22px 16px;
+  border: 1px solid rgba(70, 211, 159, 0.46);
+  border-radius: 18px;
+  background: rgba(70, 211, 159, 0.12);
+  text-shadow: none;
+}
+
+.face-enrollment-match span {
+  color: rgba(168, 255, 221, 0.82);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.face-enrollment-match strong {
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: clamp(36px, 11vw, 64px);
+  line-height: 1.05;
+  letter-spacing: 0.06em;
+  overflow-wrap: anywhere;
+}
+
+.face-enrollment-privacy {
+  margin: 12px 0 14px;
+  max-width: 38ch;
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.face-enrollment-skip {
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(8, 14, 12, 0.72);
+  color: #fff;
+  cursor: pointer;
+  text-shadow: none;
+}
+
+.face-enrollment-skip:hover {
+  background: rgba(8, 14, 12, 0.92);
 }
 
 .stage-empty {
@@ -342,6 +944,19 @@ button {
   outline-offset: -2px;
 }
 
+/* A low-confidence discard recommendation stays among the kept photos with an
+   amber edge. High-confidence rejects only appear in the review bin, in red. */
+.capture[data-ai-review="review"] {
+  outline: 2px solid var(--warning, #ffc56d);
+  outline-offset: -2px;
+}
+
+.capture[data-ai-review="discard"] {
+  outline: 2px solid var(--danger);
+  outline-offset: -2px;
+  opacity: 0.72;
+}
+
 .reel-foot {
   display: flex;
   align-items: center;
@@ -389,6 +1004,15 @@ button {
   min-height: 0;
   border-radius: 12px;
   object-fit: contain;
+}
+
+.viewer-review {
+  max-width: min(680px, 100%);
+  margin: -4px 0 0;
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: center;
 }
 
 .viewer-actions {
@@ -476,43 +1100,130 @@ button {
   height: 17px;
 }
 
-/* The one control that starts and stops the watch, sized and placed like the
-   shutter on a camera because that is what it is. */
+/* A proper camera shutter: a machined outer ring, a recessed well and a raised
+   red plunger. Its depth collapses under a finger instead of merely shrinking. */
 .record {
   position: relative;
+  isolation: isolate;
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  width: 58px;
-  height: 58px;
-  border: 3px solid rgba(255, 255, 255, 0.85);
+  width: 62px;
+  height: 62px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.58);
   border-radius: 50%;
-  background: none;
-  color: var(--accent);
+  appearance: none;
+  background:
+    radial-gradient(circle at 32% 24%, rgba(255, 255, 255, 0.82) 0 3%, transparent 15%),
+    linear-gradient(145deg, #7d8782 0%, #3c4541 31%, #151c19 67%, #050807 100%);
+  color: var(--record);
+  box-shadow:
+    0 5px 0 #030504,
+    0 9px 15px rgba(0, 0, 0, 0.52),
+    inset 0 1px 1px rgba(255, 255, 255, 0.68),
+    inset 0 -2px 3px rgba(0, 0, 0, 0.72);
   cursor: pointer;
+  transform: translateY(-2px);
+  -webkit-tap-highlight-color: transparent;
   transition:
-    transform 180ms ease-in-out,
+    transform 90ms ease-out,
+    box-shadow 90ms ease-out,
     color 180ms ease-in-out;
 }
 
-.record:hover {
-  transform: scale(1.04);
+.record::before {
+  position: absolute;
+  inset: 5px;
+  z-index: 0;
+  border: 1px solid rgba(0, 0, 0, 0.9);
+  border-radius: inherit;
+  background:
+    radial-gradient(circle at 50% 62%, #303934 0%, #18201c 56%, #080c0a 100%);
+  box-shadow:
+    inset 0 4px 6px rgba(0, 0, 0, 0.9),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.18),
+    0 1px 0 rgba(255, 255, 255, 0.2);
+  content: "";
+  pointer-events: none;
+}
+
+.record::after {
+  position: absolute;
+  top: 9px;
+  left: 17px;
+  z-index: 1;
+  width: 27px;
+  height: 9px;
+  border-radius: 50%;
+  background: linear-gradient(rgba(255, 255, 255, 0.22), transparent);
+  content: "";
+  filter: blur(0.5px);
+  pointer-events: none;
+}
+
+@media (hover: hover) {
+  .record:hover {
+    transform: translateY(-3px);
+    box-shadow:
+      0 6px 0 #030504,
+      0 11px 18px rgba(0, 0, 0, 0.56),
+      inset 0 1px 1px rgba(255, 255, 255, 0.72),
+      inset 0 -2px 3px rgba(0, 0, 0, 0.72);
+  }
 }
 
 .record:active {
-  transform: scale(0.96);
+  transform: translateY(3px);
+  box-shadow:
+    0 0 0 #030504,
+    0 3px 6px rgba(0, 0, 0, 0.44),
+    inset 0 2px 4px rgba(0, 0, 0, 0.72);
 }
 
-.record-icon {
-  width: 34px;
-  height: 34px;
+.record:active::before {
+  box-shadow:
+    inset 0 6px 8px rgba(0, 0, 0, 0.92),
+    inset 0 -1px 1px rgba(255, 255, 255, 0.1);
+}
+
+.record .record-icon {
+  position: relative;
+  z-index: 2;
+  width: 40px;
+  height: 40px;
   fill: currentColor;
   stroke: none;
+  filter:
+    drop-shadow(0 3px 0 #9d110a)
+    drop-shadow(0 5px 5px rgba(0, 0, 0, 0.68));
+  transition:
+    transform 90ms ease-out,
+    filter 90ms ease-out;
+}
+
+.record:active .record-icon {
+  transform: translateY(2px) scale(0.94);
+  filter:
+    drop-shadow(0 1px 0 #8d100a)
+    drop-shadow(0 2px 2px rgba(0, 0, 0, 0.58));
 }
 
 .record[data-running="true"] {
-  color: var(--danger);
+  color: #ff5a51;
+  border-color: rgba(255, 173, 168, 0.72);
+  box-shadow:
+    0 5px 0 #030504,
+    0 9px 15px rgba(0, 0, 0, 0.52),
+    0 0 0 2px rgba(255, 59, 48, 0.18),
+    0 0 18px rgba(255, 59, 48, 0.3),
+    inset 0 1px 1px rgba(255, 255, 255, 0.68),
+    inset 0 -2px 3px rgba(0, 0, 0, 0.72);
+}
+
+.record[data-running="true"]::before {
+  background: radial-gradient(circle at 50% 58%, #3d1a17 0%, #21110f 58%, #090706 100%);
 }
 
 .icon {
@@ -658,12 +1369,27 @@ button {
   .record {
     width: 44px;
     height: 44px;
-    border-width: 2px;
+    box-shadow:
+      0 4px 0 #030504,
+      0 7px 10px rgba(0, 0, 0, 0.5),
+      inset 0 1px 1px rgba(255, 255, 255, 0.64),
+      inset 0 -2px 3px rgba(0, 0, 0, 0.72);
   }
 
-  .record-icon {
-    width: 26px;
-    height: 26px;
+  .record::before {
+    inset: 4px;
+  }
+
+  .record::after {
+    top: 6px;
+    left: 12px;
+    width: 19px;
+    height: 7px;
+  }
+
+  .record .record-icon {
+    width: 29px;
+    height: 29px;
   }
 
   .place {
@@ -673,6 +1399,77 @@ button {
 
   .place textarea {
     font-size: 12px;
+  }
+
+  .face-enrollment {
+    place-items: center;
+    padding: 8px calc(env(safe-area-inset-right, 0px) + 16px) 8px
+      calc(env(safe-area-inset-left, 0px) + 16px);
+  }
+
+  .face-enrollment-card {
+    grid-template-columns: 156px minmax(220px, 360px);
+    column-gap: 20px;
+    width: min(100%, 560px);
+  }
+
+  .face-enrollment-kicker,
+  .face-enrollment h2,
+  #face-enrollment-message,
+  .face-enrollment-progress-row,
+  .face-enrollment-match,
+  .face-enrollment-privacy,
+  .face-enrollment-skip {
+    grid-column: 2;
+  }
+
+  .face-enrollment-kicker {
+    align-self: end;
+  }
+
+  .face-scan-frame {
+    grid-row: 1 / 7;
+    width: 150px;
+    height: 190px;
+    margin: 0;
+    align-self: center;
+  }
+
+  .face-enrollment[data-status="complete"] .face-enrollment-card {
+    grid-template-columns: 132px minmax(220px, 380px);
+    width: min(100%, 600px);
+    padding: 20px 24px;
+  }
+
+  .face-enrollment[data-status="complete"] .face-scan-frame {
+    width: 124px;
+    height: 124px;
+    margin: 0;
+  }
+
+  .face-enrollment[data-status="complete"] h2 {
+    font-size: clamp(30px, 7vw, 46px);
+  }
+
+  .face-enrollment[data-status="complete"] #face-enrollment-message {
+    margin: 4px 0 8px;
+  }
+
+  .face-enrollment[data-status="complete"] .face-enrollment-match {
+    padding: 9px 16px 11px;
+  }
+
+  .face-enrollment[data-status="complete"] .face-enrollment-match strong {
+    font-size: clamp(30px, 7vw, 52px);
+  }
+
+  #face-enrollment-message {
+    min-height: auto;
+    margin-bottom: 8px;
+  }
+
+  .face-enrollment-privacy {
+    margin: 7px 0;
   }
 
   /* Held sideways there is little height to spare, so the strip stops stacking:
@@ -739,5 +1536,16 @@ button {
   *::after {
     animation: none !important;
     transition: none !important;
+  }
+
+  /* Keep the success cue without a bright or moving full-screen flash. */
+  .capture-flash.is-visible {
+    opacity: 1;
+    background: transparent;
+  }
+
+  .capture-flash.is-visible .capture-flash-confirmation {
+    opacity: 1;
+    transform: none;
   }
 }

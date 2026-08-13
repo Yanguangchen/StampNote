@@ -34,3 +34,4 @@ desktop.ini
 
 # Stamped exports, if any land in the project folder
 stamped-*.jpg
+.env*.local

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">StampNote</title>
+  <!-- Full-bleed background keeps the same asset valid as a maskable icon;
+       each operating system applies its own outer shape. -->
+  <rect width="512" height="512" fill="#0d1512" />
+  <circle cx="256" cy="238" r="142" fill="#f2f5f3" />
+  <circle cx="256" cy="238" r="96" fill="#ff3b30" />
+  <path d="M166 392h180" fill="none" stroke="#46d39f" stroke-linecap="round" stroke-width="28" />
+</svg>

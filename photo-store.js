@@ -1,12 +1,15 @@
 (function initializePhotoStore(globalScope) {
   "use strict";
 
-  // Captures land here first and stay here. Nothing is uploaded: the record
-  // keeps a "local" status so a later sync step has a queue to drain, and until
-  // that exists the queue simply never drains.
+  // Captures land here first and stay here. This store never uploads them: the
+  // record keeps a "local" status so a later sync step has a queue to drain,
+  // while the optional AI flow only reads a capture after explicit consent.
   const DB_NAME = "stampnote";
   const STORE_NAME = "captures";
   const DB_VERSION = 1;
+  // Match the server's decision boundary so a stale or malformed response
+  // cannot bypass the same minimum confidence in the browser.
+  const AI_DISCARD_CONFIDENCE = 0.8;
 
   // Roughly two hours at the 30-second cadence. Past that the oldest captures
   // are dropped rather than filling the device.
@@ -53,6 +56,11 @@
     return `${(value / (1024 * 1024)).toFixed(1)} MB`;
   }
 
+  function safeCount(value, maximum = 10_000) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.max(0, Math.min(maximum, Math.floor(number))) : 0;
+  }
+
   function createCaptureRecord(input = {}) {
     const date =
       input.date instanceof Date && !Number.isNaN(input.date.getTime()) ? input.date : new Date();
@@ -64,13 +72,16 @@
       capturedAt: date.toISOString(),
       capturedAtMs: date.getTime(),
       address: String(input.address || "").trim(),
+      // Anonymous cumulative count since this recording run began. Person IDs
+      // and body geometry never enter the record.
+      uniquePeopleSeen: safeCount(input.uniquePeopleSeen),
       poseDetected,
       pose: poseDetected
         ? {
             confidence: Number(pose.confidence?.toFixed?.(3) ?? pose.confidence ?? 0),
             label: pose.pose || "unknown",
             // How many were in the frame, not just that somebody was.
-            people: Math.max(1, Number(pose.people) || 1),
+            people: Math.max(1, safeCount(pose.people) || 1),
           }
         : null,
       intervalMs: Number(input.intervalMs) || null,
@@ -87,12 +98,28 @@
       name: buildFileName(date, poseDetected),
       // Flipped by markSynced() once something has taken the photo elsewhere.
       status: "local",
+      // Added only after an explicit AI review. A discard recommendation goes
+      // to a recoverable on-device bin, not deletion; the original blob stays
+      // here until the user deletes it or storage pressure prunes it.
+      aiReview: null,
       blob: input.blob || null,
     };
   }
 
   function byNewestFirst(left, right) {
     return (right.capturedAtMs || 0) - (left.capturedAtMs || 0);
+  }
+
+  // A supported high-confidence discard is an AI reject; a lower-confidence or
+  // unsupported discard recommendation is an uncertain flag. Both belong in
+  // the recoverable bin. Missing model output recommends keep, so it stays in
+  // the main gallery even though its action is "review".
+  function isAiFlagged(record) {
+    return (
+      record?.aiReview?.action === "discard" ||
+      (record?.aiReview?.action === "review" &&
+        record.aiReview.recommendation === "discard")
+    );
   }
 
   // Worst first, until both budgets are satisfied — a blurred frame of an empty
@@ -103,6 +130,13 @@
   // The newest capture is never dropped: one photo larger than the whole budget
   // should cost the store its history, not the photo just taken.
   function byExpendability(left, right) {
+    const aiDifference =
+      (isAiFlagged(left) ? -1 : 0) - (isAiFlagged(right) ? -1 : 0);
+
+    if (aiDifference !== 0) {
+      return aiDifference;
+    }
+
     const difference = (left.score ?? 0.5) - (right.score ?? 0.5);
 
     if (difference !== 0) {
@@ -146,9 +180,32 @@
     return ordered.filter((record) => expired.has(record.id)).map((record) => record.id);
   }
 
+  // Automatic review waits for a complete group: partial groups stay local for
+  // the next capture (or the manual review button). Oldest-first ordering makes
+  // duplicate comparisons chronological, while gesture-requested photographs
+  // never enter the AI path at all.
+  function selectAiReviewBatch(records, batchSize = 8) {
+    const size = Math.max(1, Math.floor(Number(batchSize) || 1));
+    const eligible = [...(records || [])]
+      .filter(
+        (record) => record?.blob && record.trigger !== "gesture" && !record.aiReview,
+      )
+      .sort((left, right) => (left.capturedAtMs || 0) - (right.capturedAtMs || 0));
+
+    return eligible.length >= size ? eligible.slice(0, size) : [];
+  }
+
   function summarize(records) {
+    const discarded = records.filter(isAiFlagged).length;
+
     return {
       count: records.length,
+      active: records.length - discarded,
+      discarded,
+      needsReview: records.filter(
+        (record) => isAiFlagged(record) && record.aiReview?.action === "review",
+      ).length,
+      aiReviewed: records.filter((record) => Boolean(record.aiReview)).length,
       bytes: records.reduce((total, record) => total + (record.bytes || 0), 0),
       pending: records.filter((record) => record.status === "local").length,
       oldest: records.length > 0 ? records[records.length - 1].capturedAt : null,
@@ -313,6 +370,114 @@
         return (await list()).filter((record) => record.status === "local");
       },
 
+      async listActive() {
+        return (await list()).filter((record) => !isAiFlagged(record));
+      },
+
+      async listDiscarded() {
+        return (await list()).filter(isAiFlagged);
+      },
+
+      async applyAiReviews(decisions, metadata = {}) {
+        await ready();
+        const records = await backend.getAll();
+        const byId = new Map(records.map((record) => [record.id, record]));
+        const reviewedAt = metadata.reviewedAt || new Date().toISOString();
+        const updated = [];
+
+        for (const decision of decisions || []) {
+          const record = byId.get(decision?.id);
+          if (!record) {
+            continue;
+          }
+
+          const protectedCapture = record.trigger === "gesture";
+          const discardBasis = ["irrelevant", "redundant", "unusable"].includes(
+            decision.discardBasis,
+          )
+            ? decision.discardBasis
+            : "not_applicable";
+          let requestedAction = ["keep", "discard", "review"].includes(decision.action)
+            ? decision.action
+            : "review";
+
+          // Do not let a malformed or stale endpoint response bypass the same
+          // confidence/basis boundary enforced by the server.
+          if (
+            requestedAction === "discard" &&
+            (discardBasis === "not_applicable" ||
+              Number(decision.confidence) < AI_DISCARD_CONFIDENCE)
+          ) {
+            requestedAction = "review";
+          }
+
+          const action = protectedCapture ? "keep" : requestedAction;
+          const next = {
+            ...record,
+            aiReview: {
+              action,
+              recommendation: protectedCapture
+                ? "keep"
+                : decision.recommendation === "discard"
+                  ? "discard"
+                  : "keep",
+              discardBasis: protectedCapture
+                ? "not_applicable"
+                : discardBasis,
+              relevance: Number(decision.relevance) || 0,
+              informationGain: Number(decision.informationGain) || 0,
+              quality: Number(decision.quality) || 0,
+              confidence: protectedCapture ? 1 : Number(decision.confidence) || 0,
+              duplicateOf:
+                typeof decision.duplicateOf === "string" ? decision.duplicateOf : null,
+              reason: protectedCapture
+                ? "Protected because this photo was requested with the capture gesture."
+                : String(decision.reason || "Kept for manual review."),
+              model: String(metadata.model || ""),
+              reviewedAt,
+            },
+          };
+
+          await backend.put(next);
+          byId.set(next.id, next);
+          updated.push(next);
+        }
+
+        return updated.sort(byNewestFirst);
+      },
+
+      async restoreAiDiscard(id) {
+        await ready();
+        const record = (await backend.getAll()).find((entry) => entry.id === id);
+
+        if (!isAiFlagged(record)) {
+          return null;
+        }
+
+        const updated = {
+          ...record,
+          // Restoring changes the cloud-visible review state, so put the record
+          // back in the idempotent sync queue until Firestore accepts it.
+          status: "local",
+          syncedAt: null,
+          aiReview: {
+            ...record.aiReview,
+            action: "keep",
+            restoredAt: new Date().toISOString(),
+          },
+        };
+        await backend.put(updated);
+        return updated;
+      },
+
+      async purgeAiDiscarded() {
+        await ready();
+        const discarded = (await backend.getAll()).filter(isAiFlagged);
+
+        await Promise.all(discarded.map((record) => backend.remove(record.id)));
+        return discarded.length;
+      },
+
       async markSynced(id) {
         await ready();
         const record = (await backend.getAll()).find((entry) => entry.id === id);
@@ -347,6 +512,7 @@
   const api = Object.freeze({
     DB_NAME,
     DB_VERSION,
+    AI_DISCARD_CONFIDENCE,
     MAX_BYTES,
     MAX_RECORDS,
     STORE_NAME,
@@ -357,7 +523,9 @@
     createMemoryBackend,
     createPhotoStore,
     formatBytes,
+    isAiFlagged,
     promisifyRequest,
+    selectAiReviewBatch,
     selectExpired,
     summarize,
   });

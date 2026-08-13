@@ -171,6 +171,51 @@ async function createLandmarker(fileset) {
   }
 }
 
+async function createFaceScanner(fileset) {
+  const options = {
+    baseOptions: { modelAssetPath: `${BASE}/models/face_landmarker.task` },
+    runningMode: "IMAGE",
+    numFaces: 2,
+    outputFaceBlendshapes: false,
+    outputFacialTransformationMatrixes: false,
+    minFaceDetectionConfidence: 0.65,
+    minFacePresenceConfidence: 0.65,
+    minTrackingConfidence: 0.65,
+  };
+  try {
+    return await FaceLandmarker.createFromOptions(fileset, {
+      ...options,
+      baseOptions: { ...options.baseOptions, delegate: "GPU" },
+    });
+  } catch {
+    return FaceLandmarker.createFromOptions(fileset, options);
+  }
+}
+
+// Enrollment has to work with a face filling the screen, when a pose model may
+// not see enough shoulders or hips to report a body. This focused adapter runs
+// only the face landmarker and returns the same face-outline shape used by the
+// recording pipeline.
+async function loadFaceScanner() {
+  if (!window.StampNotePoseMapping) {
+    throw new Error("The pose mapping is missing.");
+  }
+  const fileset = await FilesetResolver.forVisionTasks(`${BASE}/wasm`);
+  const scanner = await createFaceScanner(fileset);
+  return {
+    detect(video) {
+      if (!video?.videoWidth) return { bodies: [] };
+      const faces = (scanner.detect(video)?.faceLandmarks || [])
+        .map((face) => window.StampNotePoseMapping.toFaceOutlines(face, FACE_CONNECTIONS))
+        .filter(Boolean);
+      return { bodies: faces.map((face) => ({ face })) };
+    },
+    close() {
+      scanner.close?.();
+    },
+  };
+}
+
 // The pose model is what the capture schedule depends on, so it is awaited. The
 // detector that names vehicles is another four megabytes and nothing waits on
 // it, so it arrives when it arrives and starts labelling from then on.
@@ -201,6 +246,9 @@ async function load() {
     numFaces: MAX_PEOPLE,
     outputFaceBlendshapes: false,
     outputFacialTransformationMatrixes: false,
+    minFaceDetectionConfidence: 0.6,
+    minFacePresenceConfidence: 0.6,
+    minTrackingConfidence: 0.6,
   })
     .then((detector) => adapter.attachFaceLandmarker(detector))
     .catch(() => {
@@ -225,4 +273,4 @@ async function load() {
   return adapter;
 }
 
-window.StampNoteModel = Object.freeze({ load });
+window.StampNoteModel = Object.freeze({ load, loadFaceScanner });

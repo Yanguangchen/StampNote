@@ -1,0 +1,12 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Team-wide access requested for StampNote: any authenticated Google user
+    // may read and write every document, including photos and worker face
+    // templates. Anonymous visitors still have no Firestore access.
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

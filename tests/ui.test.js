@@ -6,6 +6,7 @@ const { test } = require("node:test");
 const projectRoot = resolve(__dirname, "..");
 const html = readFileSync(resolve(projectRoot, "index.html"), "utf8");
 const css = readFileSync(resolve(projectRoot, "styles.css"), "utf8");
+const manifest = JSON.parse(readFileSync(resolve(projectRoot, "manifest.json"), "utf8"));
 const addressService = require(resolve(projectRoot, "address-service.js"));
 const stamp = require(resolve(projectRoot, "stamp.js"));
 
@@ -46,6 +47,82 @@ test("page has the required HTML foundation", () => {
   assert.ok(existsSync(resolve(projectRoot, "styles.css")));
 });
 
+test("the installable app launches in fullscreen with complete PWA icons", () => {
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+
+  assert.match(html, /<link\s+rel=["']manifest["']\s+href=["']manifest\.json["']/i);
+  assert.match(html, /<meta\s+name=["']apple-mobile-web-app-capable["']\s+content=["']yes["']/i);
+  assert.match(
+    html,
+    /<meta\s+name=["']apple-mobile-web-app-status-bar-style["']\s+content=["']black-translucent["']/i,
+  );
+  assert.equal(manifest.id, "/");
+  assert.equal(manifest.start_url, "/");
+  assert.equal(manifest.scope, "/");
+  assert.equal(manifest.display, "fullscreen");
+  assert.deepEqual(manifest.display_override, ["fullscreen", "standalone"]);
+  assert.equal(manifest.prefer_related_applications, false);
+  assert.match(app, /matchMedia\?\.\("\(display-mode: fullscreen\)"\)/);
+  assert.deepEqual(
+    manifest.icons.map(({ sizes, type, purpose }) => ({ sizes, type, purpose })),
+    [
+      { sizes: "192x192", type: "image/png", purpose: "any maskable" },
+      { sizes: "512x512", type: "image/png", purpose: "any maskable" },
+    ],
+  );
+  for (const icon of [
+    "icons/stampnote.svg",
+    "icons/stampnote-180.png",
+    ...manifest.icons.map((entry) => entry.src.replace(/^\//, "")),
+  ]) {
+    assert.ok(existsSync(resolve(projectRoot, icon)), `Expected ${icon}`);
+  }
+});
+
+test("face enrollment visibly pauses the activity and explains how to complete it", () => {
+  assert.ok(hasAttribute(tagWithId("section", "face-enrollment"), "hidden"));
+  assert.match(html, /Attendance taking/);
+  assert.match(tagWithId("progress", "face-enrollment-progress"), /aria-label=["']Attendance taking progress["']/);
+  assert.match(html, /Move closer until your face fills the oval/);
+  assert.match(html, /Five clear views are compared on this device and erased when recording stops/);
+  assert.match(tagWithId("progress", "face-enrollment-progress"), /max=["']5["']/);
+  assert.match(tagWithId("button", "face-enrollment-skip"), /type=["']button["']/);
+  assert.match(html, /id="face-enrollment-match"[^>]*aria-live="assertive"/);
+  assert.match(html, /id="face-enrollment-worker-id"/);
+  assert.match(css, /\.face-enrollment\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*0/);
+  assert.match(css, /\.face-enrollment\[data-status="complete"\][^{]*\{[^}]*background:/);
+  assert.match(css, /\.face-enrollment-match strong\s*\{[^}]*font-size:\s*clamp/);
+  assert.match(css, /\.face-scan-frame\s*\{[^}]*border-radius:/);
+
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const controller = readFileSync(resolve(projectRoot, "auto-capture.js"), "utf8");
+  assert.match(app, /faceEnrollmentSkip\?\.addEventListener\("click"/);
+  assert.match(app, /model\s*\?\s*facialRecognition\?\.createFaceIdentity/);
+  assert.match(controller, /if \(!state\.activityStarted\)/);
+  assert.match(controller, /skipFaceEnrollment\(\)/);
+});
+
+test("Firebase initializes the supplied project and Analytics", () => {
+  const firebasePath = resolve(projectRoot, "firebase.js");
+  const firebase = readFileSync(firebasePath, "utf8");
+
+  assert.match(html, /<script\s+src=["']photo-cloud\.js["']\s+defer><\/script>/i);
+  assert.match(html, /<script\s+src=["']firebase\.js["']\s+defer><\/script>/i);
+  assert.ok(existsSync(firebasePath));
+  assert.match(firebase, /firebasejs\/12\.17\.1/);
+  assert.match(firebase, /firebase-app\.js/);
+  assert.match(firebase, /firebase-auth\.js/);
+  assert.match(firebase, /firebase-firestore\.js/);
+  assert.match(firebase, /firebase-analytics\.js/);
+  assert.match(firebase, /projectId:\s*["']stampnote-eedcd["']/);
+  assert.match(firebase, /measurementId:\s*["']G-XG9MCLSZ6G["']/);
+  assert.match(firebase, /appSdk\.initializeApp\(firebaseConfig\)/);
+  assert.match(firebase, /analyticsSdk\.getAnalytics\(app\)/);
+  assert.match(firebase, /signInWithPopup/);
+  assert.match(firebase, /setDoc/);
+  assert.match(firebase, /Bytes\.fromUint8Array/);
+});
+
 test("the live camera is the camera, so there is no second one", () => {
   // A file input that opens the phone's camera app sat beside a page already
   // holding the camera open. Choosing a photograph that already exists is a
@@ -72,8 +149,14 @@ const NAMED_CONTROLS = [
   ["button", "id", "place-toggle", "Place"],
   ["button", "id", "monitor-toggle", "Start auto capture"],
   ["button", "id", "captures-save", "Save to this device"],
+  ["button", "id", "cloud-auth", "Sign in with Google"],
+  ["a", "id", "admin-dashboard", "Open photo dashboard"],
   ["button", "id", "share-button", "Share"],
+  ["button", "id", "ai-review", "Review photos with Gemini"],
+  ["button", "id", "ai-review-bin", "Show AI review bin"],
+  ["button", "id", "ai-review-purge", "Delete AI flags permanently"],
   ["button", "id", "captures-clear", "Delete every photo"],
+  ["button", "id", "viewer-restore", "Restore this photo"],
   ["button", "id", "viewer-share", "Share this photo"],
   ["button", "id", "viewer-delete", "Delete this photo"],
   ["button", "id", "viewer-close", "Close"],
@@ -156,6 +239,21 @@ test("geolocation helper resolves coordinates and accuracy", async () => {
 
   const result = await addressService.getCurrentCoordinates(fakeGeolocation);
   assert.deepEqual(result, { latitude: 1.2834, longitude: 103.8607, accuracy: 12.5 });
+});
+
+test("geolocation and reverse lookup reject unavailable or invalid inputs", async () => {
+  await assert.rejects(addressService.getCurrentCoordinates(null), /not supported/);
+  assert.throws(() => addressService.buildReverseGeocodeUrl(-91, 103), /Latitude/);
+  assert.throws(() => addressService.buildReverseGeocodeUrl(1, 181), /Longitude/);
+  assert.throws(() => addressService.buildReverseGeocodeUrl(Number.NaN, 103), /Latitude/);
+  const originalFetch = global.fetch;
+  try {
+    global.fetch = undefined;
+    await assert.rejects(addressService.reverseGeocode(1, 103), /not available/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+  assert.equal(addressService.createCacheKey(1.234567, 103.876543), "stampnote:address:1.23457,103.87654");
 });
 
 test("denied location explains how to re-enable it, per platform", () => {
@@ -373,6 +471,25 @@ test("CSS includes keyboard focus, mobile layout, and reduced motion support", (
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
 });
 
+test("a saved hands-up photo produces an apparent shutter confirmation", () => {
+  const flash = tagWithId("div", "capture-flash");
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+
+  assert.ok(hasAttribute(flash, "aria-hidden", "true"));
+  assert.match(html, /class=["']capture-flash-confirmation["'][\s\S]*Photo taken/);
+  assert.match(css, /@keyframes\s+shutter-flash/);
+  assert.match(css, /\.capture-flash\s*\{[^}]*position:\s*fixed;[^}]*inset:\s*0/);
+  assert.match(css, /\.capture-flash\.is-visible\s*\{[^}]*animation:\s*shutter-flash/);
+  assert.match(app, /state\.lastRecord\?\.trigger === "gesture"/);
+  assert.match(app, /showGestureCaptureFlash\(\)/);
+
+  // Reduced-motion users get the confirmation pill without the bright flash.
+  assert.match(
+    css,
+    /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.capture-flash\.is-visible\s*\{[^}]*background:\s*transparent/,
+  );
+});
+
 test("stamp bar is one text line tall plus its padding", () => {
   const layout = stamp.computeStampLayout(1200);
 
@@ -433,6 +550,32 @@ test("stamped canvas adds a bar above and below the photo", () => {
   );
 });
 
+test("an overlong stamp address is shortened to the available line", () => {
+  const written = [];
+  const fakeContext = {
+    measureText: (text) => ({ width: text.length * 12 }),
+    drawImage() {},
+    fillRect() {},
+    fillText: (text) => written.push(text),
+  };
+  const fakeDocument = {
+    createElement: () => ({ getContext: () => fakeContext }),
+  };
+
+  stamp.drawStampedImage(
+    { width: 240, height: 120 },
+    {
+      address: "123 This is a deliberately very long street address",
+      date: new Date(2026, 7, 5, 14, 32),
+      document: fakeDocument,
+    },
+  );
+
+  assert.match(written[0], /…$/);
+  assert.ok(fakeContext.measureText(written[0]).width <= 240);
+  assert.equal(written[1], "05 AUG 2026 · 14:32");
+});
+
 test("the live camera is wired for autoplay on a phone", () => {
   const video = tagWithId("video", "monitor-video");
 
@@ -477,7 +620,7 @@ test("with nothing captured, the strip is away and saving is off", () => {
   assert.ok(hasAttribute(tagWithId("button", "captures-clear"), "hidden"));
 });
 
-test("the watch stores captures locally and never uploads them", () => {
+test("capture stays local and consented AI review uploads reduced batches", () => {
   const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
   const store = readFileSync(resolve(projectRoot, "photo-store.js"), "utf8");
 
@@ -485,9 +628,73 @@ test("the watch stores captures locally and never uploads them", () => {
   assert.match(app, /storage\.createPhotoStore\(\)/);
   assert.match(store, /status: "local"/);
 
-  // Nothing in the capture path posts a photo anywhere.
+  // Nothing in the capture or storage path posts a photo anywhere.
   assert.equal(/fetch\(|XMLHttpRequest|sendBeacon|WebSocket/.test(store), false);
   assert.equal(/sendBeacon|XMLHttpRequest|WebSocket/.test(app), false);
+
+  // The upload is behind named consent and downsizing, and it reaches only the
+  // server function rather than exposing a model credential. Complete groups
+  // of eight review themselves; the sparkle button remains for leftovers.
+  assert.match(app, /hasAiReviewConsent\(\)/);
+  assert.match(app, /AI_REVIEW_MAX_EDGE = 512/);
+  assert.match(app, /AI_REVIEW_BATCH_SIZE = 8/);
+  assert.match(app, /storage\.selectAiReviewBatch\(active, AI_REVIEW_BATCH_SIZE\)/);
+  assert.match(app, /reviewCapturesWithAi\(\{ automatic: true \}\)/);
+  assert.match(app, /aiReviewButton\?\.addEventListener\("click"/);
+  assert.match(app, /fetch\(AI_REVIEW_ENDPOINT/);
+  assert.match(app, /window\.location\.port === "5500"/);
+  assert.match(app, /https:\/\/stampnote-omega\.vercel\.app\/api\/triage/);
+  assert.equal(/GEMINI_API_KEY|AI_GATEWAY_API_KEY/.test(app), false);
+  assert.match(app, /cloud\.uploadReviewedPhoto\(record\)/);
+  assert.match(app, /await store\.markSynced\(record\.id\)/);
+  assert.match(app, /record\.blob && record\.aiReview/);
+  assert.match(app, /response\.status === 404/);
+  assert.match(app, /No photos were moved or deleted/);
+  assert.equal(/completed photo\(s\) were saved/.test(app), false);
+});
+
+test("cloud photos require sign-in and the admin dashboard groups them by place and date", () => {
+  const firebase = readFileSync(resolve(projectRoot, "firebase.js"), "utf8");
+  const firestoreRules = readFileSync(resolve(projectRoot, "firestore.rules"), "utf8");
+  const admin = readFileSync(resolve(projectRoot, "admin.html"), "utf8");
+  const adminApp = readFileSync(resolve(projectRoot, "admin.js"), "utf8");
+
+  assert.ok(existsSync(resolve(projectRoot, "admin.css")));
+  assert.match(admin, /id=["']photo-library["']/);
+  assert.match(admin, /Continue with Google/);
+  assert.match(adminApp, /data\.groupPhotos\(visible\)/);
+  assert.match(adminApp, /cloud\.getPhotosPage/);
+  assert.match(adminApp, /cloud\.getPhotoBlob/);
+  assert.equal(/getDownloadURL/.test(firebase), false);
+  assert.equal(existsSync(resolve(projectRoot, "storage.rules")), false);
+  assert.match(firebase, /maxEdge = 512/);
+  assert.match(firebase, /imageData:/);
+  assert.match(firestoreRules, /match \/\{document=\*\*\}/);
+  assert.match(firestoreRules, /allow read, write: if request\.auth != null/);
+  assert.equal(/allow read, write: if true/.test(firestoreRules), false);
+});
+
+test("AI review starts hidden and rejected photos can be recovered", () => {
+  assert.ok(hasAttribute(tagWithId("button", "ai-review"), "hidden"));
+  assert.ok(hasAttribute(tagWithId("button", "ai-review-bin"), "hidden"));
+  assert.ok(hasAttribute(tagWithId("button", "viewer-restore"), "hidden"));
+  const loader = tagWithId("section", "ai-review-loader");
+  assert.ok(hasAttribute(loader, "hidden"));
+  assert.ok(hasAttribute(loader, "role", "status"));
+  assert.ok(hasAttribute(loader, "aria-live", "polite"));
+  assert.match(html, /id="ai-review-loader-title">Reviewing photos/);
+  assert.match(html, /Gemini vision/);
+
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  assert.match(app, /store\.applyAiReviews\(/);
+  assert.match(app, /store\.restoreAiDiscard\(/);
+  assert.match(app, /store\.purgeAiDiscarded\(/);
+  assert.match(app, /allRecords\.filter\(storage\.isAiFlagged\)/);
+  assert.match(css, /\.capture\[data-ai-review="discard"\]/);
+  assert.match(css, /\.capture\[data-ai-review="review"\]/);
+  assert.match(css, /\.ai-review-loader\s*\{[^}]*position:\s*fixed;[^}]*inset:\s*0/);
+  assert.match(css, /@keyframes ai-core-throb/);
+  assert.match(css, /@media \(prefers-reduced-motion:\s*reduce\)/);
 });
 
 test("the schedule is driven by the pose tracker, at the two required intervals", () => {
@@ -602,6 +809,15 @@ test("the live camera is released when the watch stops", () => {
   assert.match(app, /controller\.setPaused\(true\)/);
 });
 
+test("one tracking error cannot permanently stop the sampling loop", () => {
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const controller = readFileSync(resolve(projectRoot, "auto-capture.js"), "utf8");
+
+  assert.match(controller, /Tracking restarted after a camera hiccup/);
+  assert.match(controller, /catch\s*\{[\s\S]*detector\.reset\?\.\(\);[\s\S]*tracker\.reset\(\)/);
+  assert.match(app, /finally\s*\{[\s\S]*sampleTimer = window\.setTimeout\(look/);
+});
+
 test("CSS covers the live frame, the pose overlay and the capture grid", () => {
   assert.match(css, /\.monitor\s*\{/);
   assert.match(css, /\.monitor-overlay\s*\{/);
@@ -656,6 +872,16 @@ test("the shutter is centred and saving sits in the bottom right corner", () => 
   // And the record button is between the two groups.
   assert.ok(html.indexOf('id="monitor-toggle"') > html.indexOf('<div class="toolbar-group">'));
   assert.ok(html.indexOf('id="monitor-toggle"') < html.indexOf('toolbar-group-end'));
+
+  // The stopped glyph is the familiar solid red recording circle.
+  assert.match(css, /--record:\s*#ff3b30/);
+  assert.match(css, /\.record\s*\{[^}]*color:\s*var\(--record\)/);
+  assert.match(css, /\.record\s*\{[^}]*linear-gradient/);
+  assert.match(css, /\.record\s*\{[^}]*box-shadow:/);
+  assert.match(css, /\.record::before\s*\{[^}]*inset:\s*5px/);
+  assert.match(css, /\.record:active\s*\{[^}]*translateY\(3px\)/);
+  assert.match(css, /\.record \.record-icon\s*\{[^}]*fill:\s*currentColor/);
+  assert.match(tagWithId("button", "monitor-toggle"), /aria-pressed=["']false["']/);
 });
 
 test("a capture is kept without anyone touching the device", () => {
@@ -677,9 +903,15 @@ test("a capture is kept without anyone touching the device", () => {
 test("nothing animates behind the picture", () => {
   // The old card interface panned a grid across the background forever. The
   // camera is the background now, and a loop under it is both a distraction
-  // and a phone's battery burning on a decoration.
+  // and a phone's battery burning on a decoration. Continuous animation is
+  // limited to the temporary, explicitly visible Gemini review indicator.
+  const infiniteAnimationSelectors = [...css.matchAll(
+    /([^{}]+)\{[^{}]*animation:[^;]*infinite/g,
+  )].map((match) => match[1].trim());
+
   assert.equal(/grid-pan/.test(css), false);
-  assert.equal(/animation:[^;]*infinite/.test(css), false);
+  assert.ok(infiniteAnimationSelectors.length > 0);
+  assert.ok(infiniteAnimationSelectors.every((selector) => selector.startsWith(".ai-review-")));
   assert.equal(/body::before|body::after/.test(css), false);
 });
 
@@ -713,6 +945,25 @@ test("the watch tracks a room, not just one person", () => {
   assert.match(app, /mapping\.blendBodies\(drawn\?\.bodies, target\.bodies, EASE\)/);
 
   // The count is state, so it can be shown and stored.
-  assert.match(controller, /state\.people = tracked\.people/);
-  assert.match(controller, /\$\{state\.people\} people in frame/);
+  assert.match(controller, /state\.people = identified\?\.visibleCount \?\? tracked\.people/);
+  assert.match(controller, /\$\{state\.people\} tracked workers in frame/);
+
+  // Enrolled worker IDs are painted onto both live and saved pixels while the
+  // numeric tracking ID stays internal.
+  assert.match(html, /<script\s+src=["']person-tracker\.js["']\s+defer><\/script>/i);
+  assert.match(html, /<script\s+src=["']face-identity\.js["']\s+defer><\/script>/i);
+  assert.match(app, /facialRecognition\?\.createFaceIdentity\?\.\(\{ knownIdentities/);
+  assert.match(app, /personIdentity\?\.createPersonTracker\(\{ identities/);
+  assert.match(
+    readFileSync(resolve(projectRoot, "person-tracker.js"), "utf8"),
+    /personLabel: track\.workerId \|\| "UNMATCHED WORKER"/,
+  );
+  assert.doesNotMatch(
+    readFileSync(resolve(projectRoot, "person-tracker.js"), "utf8"),
+    /workerAlias/,
+  );
+  assert.match(app, /const text = label\.toUpperCase\(\)/);
+  assert.match(app, /drawPersonMarker\(captureContext, body,/);
+  assert.match(controller, /bodies: \(state\.bodies \|\| \[\]\)/);
+  assert.equal(/personIds:\s*state\.personIds/.test(controller), false);
 });

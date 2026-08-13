@@ -3,6 +3,7 @@ const { resolve } = require("node:path");
 const { test } = require("node:test");
 
 const autoCapture = require(resolve(__dirname, "..", "auto-capture.js"));
+const people = require(resolve(__dirname, "..", "person-tracker.js"));
 const pose = require(resolve(__dirname, "..", "pose-detector.js"));
 const schedule = require(resolve(__dirname, "..", "capture-scheduler.js"));
 
@@ -20,20 +21,28 @@ function createHarness(options = {}) {
     frame: { width: 2, height: 2, data: new Uint8ClampedArray(16) },
     address: "10 Bayfront Avenue",
     captureFails: false,
+    detectionFails: 0,
     saved,
   };
 
   const detector = {
-    detect: () => ({
-      present: harness.present,
-      confidence: harness.present ? 0.9 : 0.05,
-      pose: harness.present ? "standing" : "none",
-      keypoints: harness.present ? { head: { x: 0.5, y: 0.2 } } : null,
-      box: harness.present ? { x: 0.4, y: 0.1, width: 0.2, height: 0.8 } : null,
-      vehicle: harness.vehicle
-        ? { confidence: 0.9, box: { x: 0.5, y: 0.5, width: 0.4, height: 0.2 } }
-        : null,
-    }),
+    detect: () => {
+      if (harness.detectionFails > 0) {
+        harness.detectionFails -= 1;
+        throw new Error("GPU context was lost");
+      }
+
+      return {
+        present: harness.present,
+        confidence: harness.present ? 0.9 : 0.05,
+        pose: harness.present ? "standing" : "none",
+        keypoints: harness.present ? { head: { x: 0.5, y: 0.2 } } : null,
+        box: harness.present ? { x: 0.4, y: 0.1, width: 0.2, height: 0.8 } : null,
+        vehicle: harness.vehicle
+          ? { confidence: 0.9, box: { x: 0.5, y: 0.5, width: 0.4, height: 0.2 } }
+          : null,
+      };
+    },
     reset() {},
   };
 
@@ -56,6 +65,8 @@ function createHarness(options = {}) {
       return { blob: { size: 1024, type: "image/jpeg" }, date: new Date(harness.time) };
     },
     getAddress: () => harness.address,
+    faceIdentity: options.faceIdentity,
+    enrollmentDetector: options.enrollmentDetector,
     isGesture: () => harness.gesture,
     gestureHold: options.gestureHold ?? 700,
     now: () => harness.time,
@@ -74,6 +85,87 @@ function createHarness(options = {}) {
 
   return harness;
 }
+
+function createEnrollmentIdentity(total = 5) {
+  let samples = 0;
+  return {
+    async describe(bodies) {
+      samples = Math.min(total, samples + 1);
+      return bodies;
+    },
+    enrollmentState() {
+      return {
+        required: true,
+        status: samples >= total ? "complete" : samples > 0 ? "scanning" : "no_face",
+        samples,
+        total,
+        progress: samples / total,
+      };
+    },
+    reset() {
+      samples = 0;
+    },
+  };
+}
+
+test("face enrollment pauses every shutter until five close samples are ready", async () => {
+  const harness = createHarness({ faceIdentity: createEnrollmentIdentity() });
+  harness.present = true;
+  harness.controller.start();
+
+  assert.equal(harness.controller.getState().activityStarted, false);
+  await harness.controller.tick();
+  await harness.controller.tick();
+  assert.equal(harness.saved.length, 0);
+  assert.equal(harness.controller.getState().faceEnrollment.samples, 2);
+
+  await harness.controller.tick();
+  await harness.controller.tick();
+  assert.equal(harness.saved.length, 0);
+  assert.equal(harness.controller.getState().activityStarted, false);
+
+  await harness.controller.tick();
+  assert.equal(harness.saved.length, 0, "completion begins the activity without an early photo");
+  assert.equal(harness.controller.getState().activityStarted, true);
+
+  await harness.controller.tick();
+  assert.equal(harness.saved.length, 1);
+});
+
+test("the opening scan uses the focused face detector even without a visible pose", async () => {
+  let focusedScans = 0;
+  const harness = createHarness({
+    faceIdentity: createEnrollmentIdentity(2),
+    enrollmentDetector: {
+      detect() {
+        focusedScans += 1;
+        return { bodies: [{ face: { eyeLeft: [], eyeRight: [] } }] };
+      },
+      reset() {},
+    },
+  });
+  harness.present = false;
+  harness.controller.start();
+
+  await harness.controller.tick();
+  await harness.controller.tick();
+
+  assert.equal(focusedScans, 2);
+  assert.equal(harness.controller.getState().activityStarted, true);
+});
+
+test("face enrollment can be skipped without trapping the activity", async () => {
+  const harness = createHarness({ faceIdentity: createEnrollmentIdentity() });
+  harness.controller.start();
+
+  const skipped = harness.controller.skipFaceEnrollment();
+  assert.equal(skipped.activityStarted, true);
+  assert.equal(skipped.faceEnrollment.status, "skipped");
+  assert.equal(skipped.faceEnrollment.required, false);
+
+  await harness.controller.tick();
+  assert.equal(harness.saved.length, 1);
+});
 
 test("starting the watch takes the first photo straight away", async () => {
   const harness = createHarness();
@@ -326,6 +418,28 @@ test("a failed capture is reported without spinning the schedule", async () => {
   assert.equal(harness.controller.getState().error, null);
 });
 
+test("a one-frame detector failure clears the frozen pose and tracking recovers", async () => {
+  const harness = createHarness();
+
+  harness.present = true;
+  harness.controller.start();
+  await harness.controller.tick();
+  assert.equal(harness.controller.getState().present, true);
+
+  harness.detectionFails = 1;
+  await harness.controller.tick();
+  const failed = harness.controller.getState();
+  assert.equal(failed.present, false);
+  assert.equal(failed.keypoints, null);
+  assert.match(failed.error, /restarted/i);
+
+  await harness.controller.tick();
+  const recovered = harness.controller.getState();
+  assert.equal(recovered.present, true);
+  assert.deepEqual(recovered.keypoints, { head: { x: 0.5, y: 0.2 } });
+  assert.equal(recovered.error, null);
+});
+
 test("a hidden page pauses tracking and catches up when it returns", async () => {
   const harness = createHarness();
 
@@ -385,16 +499,17 @@ test("the badge says who is in frame, at what cadence, and when the next photo l
       intervalMs: 30 * SECOND,
       waitMs: 12400,
     }),
-    "Person in frame · every 30s · next in 12s",
+    "Tracked worker in frame · every 30s · next in 12s",
   );
   assert.equal(
     autoCapture.describeCadence({
       running: true,
       present: false,
+      faceRecognitionReady: true,
       intervalMs: 120 * SECOND,
       waitMs: 0,
     }),
-    "No one in frame · every 120s · next in 0s",
+    "No one in frame · face match on-device · every 120s · next in 0s",
   );
 
   // A vehicle is named, but never where it could be read as the reason for the
@@ -442,7 +557,8 @@ test("the controller refuses to run without its parts", () => {
 // A detector that reports a crowd, the way the model adapter does.
 function createCrowdHarness(bodies = []) {
   const saved = [];
-  const harness = { time: 0, bodies, saved };
+  const captureInputs = [];
+  const harness = { time: 0, bodies, captureInputs, saved };
 
   const controller = autoCapture.createAutoCapture({
     detector: {
@@ -464,6 +580,7 @@ function createCrowdHarness(bodies = []) {
       reset() {},
     },
     tracker: pose.createPoseTracker({ enterFrames: 1, holdMs: 0 }),
+    personTracker: people.createPersonTracker(),
     scheduler: schedule.createCaptureScheduler(),
     store: {
       async save(input) {
@@ -472,10 +589,13 @@ function createCrowdHarness(bodies = []) {
       },
     },
     sampleFrame: () => ({ width: 2, height: 2, data: new Uint8ClampedArray(16) }),
-    captureImage: async () => ({
-      blob: { size: 1024, type: "image/jpeg" },
-      date: new Date(harness.time),
-    }),
+    captureImage: async (input) => {
+      captureInputs.push(input);
+      return {
+        blob: { size: 1024, type: "image/jpeg" },
+        date: new Date(harness.time),
+      };
+    },
     getAddress: () => "10 Bayfront Avenue",
     // The real test: hands above the head, read off whichever body has them.
     isGesture: (keypoints) =>
@@ -524,12 +644,21 @@ test("how many people are in frame reaches the state and the badge", async () =>
   const state = harness.controller.getState();
   assert.equal(state.people, 2);
   assert.equal(state.bodies.length, 2);
-  assert.match(autoCapture.describeCadence(state), /2 people in frame/);
+  assert.deepEqual(state.personIds, [1, 2]);
+  assert.equal(state.peopleSeen, 2);
+  assert.match(
+    autoCapture.describeCadence(state),
+    /UNMATCHED WORKER, UNMATCHED WORKER in frame/,
+  );
+  assert.match(autoCapture.describeCadence(state), /2 unique people this session/);
 
   // One person is still one person, not "1 people".
   harness.bodies = [bodyAt(0.5)];
   await harness.controller.tick();
-  assert.match(autoCapture.describeCadence(harness.controller.getState()), /Person in frame/);
+  assert.match(
+    autoCapture.describeCadence(harness.controller.getState()),
+    /UNMATCHED WORKER in frame/,
+  );
 
   harness.bodies = [];
   await harness.controller.tick();
@@ -560,6 +689,20 @@ test("a capture records how many people were in it", async () => {
   await harness.controller.tick();
 
   assert.equal(harness.saved[0].pose.people, 3);
+  assert.equal(harness.saved[0].uniquePeopleSeen, 3);
+  assert.deepEqual(
+    harness.captureInputs[0].bodies.map(({ personId, personLabel }) => ({
+      personId,
+      personLabel,
+    })),
+    [
+      { personId: 1, personLabel: "UNMATCHED WORKER" },
+      { personId: 2, personLabel: "UNMATCHED WORKER" },
+      { personId: 3, personLabel: "UNMATCHED WORKER" },
+    ],
+  );
+  assert.ok(harness.captureInputs[0].bodies.every((entry) => entry.box));
+  assert.ok(harness.captureInputs[0].bodies.every((entry) => !entry.keypoints));
 });
 
 // ---------------------------------------------------------------------------

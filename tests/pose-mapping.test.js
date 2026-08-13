@@ -235,6 +235,34 @@ test("the face is traced along the joins the model itself gives", () => {
   ]);
   assert.equal(face.eyeLeft.length, 1);
   assert.equal(face.lips.length, 1);
+  const identitySignature = mapping.faceSignatureOf(mesh);
+  assert.equal(identitySignature.length, 105);
+  assert.equal(face.identitySignature, undefined);
+
+  const transformed = mesh.map((point) => ({
+    x: point.x * 1.7 + 0.2,
+    y: point.y * 1.7 - 0.1,
+    z: point.z * 1.7,
+  }));
+  const transformedSignature = mapping.faceSignatureOf(transformed);
+  const invariantDistance = Math.sqrt(
+    identitySignature.reduce(
+      (total, value, index) => total + (value - transformedSignature[index]) ** 2,
+      0,
+    ) / identitySignature.length,
+  );
+  assert.ok(invariantDistance < 1e-10, "camera scale and position do not change identity");
+
+  const changedShape = mesh.map((point) => ({ ...point }));
+  changedShape[152].y += 0.3;
+  const changedSignature = mapping.faceSignatureOf(changedShape);
+  const changedDistance = Math.sqrt(
+    identitySignature.reduce(
+      (total, value, index) => total + (value - changedSignature[index]) ** 2,
+      0,
+    ) / identitySignature.length,
+  );
+  assert.ok(changedDistance > 0.05, "a changed facial shape produces a different signature");
 
   // A connection reaching past the end of the mesh is dropped, not drawn to
   // nowhere.
@@ -539,18 +567,30 @@ test("a face goes to the nearest head and a hand to the nearest wrist", () => {
   // A face outline sitting on the right-hand figure's head, and a hand at the
   // left-hand figure's wrist.
   const rightHead = right.keypoints.head;
-  const face = [
-    [
-      { x: rightHead.x - 0.01, y: rightHead.y },
-      { x: rightHead.x + 0.01, y: rightHead.y },
+  const faceMesh = Array.from({ length: 478 }, (unused, index) => ({
+    x: rightHead.x + ((index % 23) - 11) * 0.001,
+    y: rightHead.y + (Math.floor(index / 23) - 10) * 0.001,
+    z: ((index % 7) - 3) * 0.0005,
+  }));
+  // The two eye anchors must not coincide, and the outline keeps the centroid
+  // close to the right-hand body's head.
+  faceMesh[33].x = rightHead.x - 0.012;
+  faceMesh[263].x = rightHead.x + 0.012;
+  const face = mapping.toFaceOutlines(faceMesh, {
+    oval: [
+      { start: 10, end: 152 },
+      { start: 152, end: 234 },
+      { start: 234, end: 454 },
     ],
-  ];
+  });
   const leftWrist = left.keypoints.wristLeft;
   const hand = { points: [{ x: leftWrist.x, y: leftWrist.y }], segments: [] };
 
   const bodies = mapping.attachParts([left, right], [face], [hand]);
 
   assert.equal(bodies[1].face, face, "the face belongs to the figure it is drawn on");
+  assert.equal(bodies[1].faceSignature.length, 105);
+  assert.equal(bodies[1].face.identitySignature, undefined);
   assert.equal(bodies[0].face, null);
   assert.equal(bodies[0].hands.length, 1);
   assert.equal(bodies[1].hands.length, 0);
@@ -566,6 +606,23 @@ test("people are matched between readings by where they are, not by list order",
 
   assert.equal(matched[0], before[1], "the figure on the right matches the one on the right");
   assert.equal(matched[1], before[0]);
+});
+
+test("anonymous person IDs take priority while two people cross", () => {
+  const first = { ...mapping.toBody(standingAt(0.35)), personId: 1 };
+  const second = { ...mapping.toBody(standingAt(0.65)), personId: 2 };
+  const crossed = [
+    { ...mapping.toBody(standingAt(0.54)), personId: 1 },
+    { ...mapping.toBody(standingAt(0.46)), personId: 2 },
+  ];
+
+  const matched = mapping.matchBodies([first, second], crossed);
+  assert.equal(matched[0], first);
+  assert.equal(matched[1], second);
+  assert.deepEqual(
+    mapping.blendBodies([first, second], crossed, 0.5).map((body) => body.personId),
+    [1, 2],
+  );
 });
 
 test("a new arrival is drawn where they are, not slid in from someone else", () => {

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en" data-surface="dashboard">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f3f5f1" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="StampNote" />
+    <title>StampNote photo dashboard</title>
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="icons/stampnote.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icons/stampnote-180.png" sizes="180x180" />
+    <link rel="stylesheet" href="admin.css" />
+    <script src="observability.js" defer></script>
+    <script src="photo-cloud.js" defer></script>
+    <script src="firebase.js" defer></script>
+    <script src="admin.js" defer></script>
+  </head>
+  <body>
+    <header class="admin-header">
+      <a class="brand" href="index.html" aria-label="Back to StampNote capture">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>StampNote</span>
+      </a>
+      <div class="account-actions">
+        <span class="system-health" id="system-health" data-state="checking">
+          <span class="system-health-dot" aria-hidden="true"></span>
+          <span id="system-health-label">Checking system</span>
+        </span>
+        <span class="account-name" id="account-name"></span>
+        <button class="button button-quiet" id="sign-out" type="button" hidden>Sign out</button>
+      </div>
+    </header>
+
+    <main class="admin-main">
+      <section class="intro" aria-labelledby="dashboard-title">
+        <div>
+          <p class="eyebrow">Authenticated cloud library</p>
+          <h1 id="dashboard-title">Photos by place and day</h1>
+          <p class="intro-copy">
+            Only Gemini-reviewed batches appear here. Firestore access is limited to Google users
+            signed into this StampNote project.
+          </p>
+        </div>
+
+        <div class="toolbar" id="gallery-toolbar" hidden>
+          <label for="photo-filter">Show</label>
+          <select id="photo-filter">
+            <option value="all">All reviewed photos</option>
+            <option value="kept">Kept photos</option>
+            <option value="flagged">AI review bin</option>
+          </select>
+        </div>
+      </section>
+
+      <p class="dashboard-status" id="dashboard-status" role="status" aria-live="polite"></p>
+
+      <section class="auth-gate" id="auth-gate" aria-labelledby="auth-title">
+        <div class="auth-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false">
+            <path d="M7.2 18.5h9.7a3.9 3.9 0 0 0 .6-7.8 5.8 5.8 0 0 0-11-1.6 4.8 4.8 0 0 0 .7 9.4z" />
+          </svg>
+        </div>
+        <h2 id="auth-title">Sign in to the team workspace</h2>
+        <p>Sign in with the same Google account used on the capture screen.</p>
+        <button class="button button-primary" id="sign-in" type="button">Continue with Google</button>
+      </section>
+
+      <section class="photo-library" id="photo-library" aria-label="Cloud photos" hidden></section>
+
+      <div class="load-more-row" id="load-more-row" hidden>
+        <button class="button button-quiet" id="load-more" type="button">Load more photos</button>
+      </div>
+    </main>
+
+    <dialog class="photo-dialog" id="photo-dialog">
+      <div class="dialog-body">
+        <img id="dialog-image" alt="" />
+        <div class="dialog-copy">
+          <p class="dialog-location" id="dialog-location"></p>
+          <p class="dialog-time" id="dialog-time"></p>
+          <p class="dialog-people" id="dialog-people"></p>
+          <p class="dialog-review" id="dialog-review"></p>
+        </div>
+      </div>
+      <form method="dialog">
+        <button class="button button-quiet" type="submit">Close</button>
+      </form>
+    </dialog>
+  </body>
+</html>
