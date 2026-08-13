@@ -143,6 +143,64 @@
       return { workerId, displayName, embedding, embeddings };
     }
 
+    function normalizeAttendanceDateKey(value) {
+      const dateKey = String(value || "").trim();
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+        throw new Error("Attendance needs a valid date.");
+      }
+      return dateKey;
+    }
+
+    function localAttendanceDateKey(value = Date.now()) {
+      const date = value instanceof Date ? value : new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        throw new Error("Attendance needs a valid check-in time.");
+      }
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    function attendanceRecord(value, fallbackEventId = null) {
+      const workerId = String(value?.workerId || "").trim().toUpperCase();
+      const displayName = String(value?.displayName || value?.personLabel || "")
+        .trim()
+        .replace(/\s+/g, " ");
+      const checkedInAtMs = Number(value?.checkedInAtMs);
+      const eventId = String(value?.eventId || fallbackEventId || "").trim();
+      const dateKey = normalizeAttendanceDateKey(
+        value?.dateKey || localAttendanceDateKey(checkedInAtMs),
+      );
+      const timeZone = String(value?.timeZone || "").trim().slice(0, 80) || null;
+      const location = String(value?.location || "").trim().replace(/\s+/g, " ").slice(0, 180) || null;
+
+      if (!/^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(workerId)) {
+        throw new Error("Attendance has no valid worker ID.");
+      }
+      if (!displayName || displayName.length > 60) {
+        throw new Error("Attendance has no valid worker name.");
+      }
+      if (!Number.isFinite(checkedInAtMs) || checkedInAtMs <= 0) {
+        throw new Error("Attendance has no valid check-in time.");
+      }
+      if (!/^[A-Za-z0-9_-]{8,80}$/.test(eventId)) {
+        throw new Error("Attendance has no valid event ID.");
+      }
+
+      return {
+        eventId,
+        workerId,
+        displayName,
+        checkedInAtMs,
+        dateKey,
+        timeZone,
+        location,
+        status: "present",
+        source: "face-match",
+      };
+    }
+
   async function signIn() {
     const cloud = await ready;
 
@@ -226,6 +284,68 @@
     await cloud.firestoreSdk.deleteDoc(
       cloud.firestoreSdk.doc(cloud.db, "workers", normalized),
     );
+  }
+
+  async function saveAttendance(input) {
+    const cloud = services || (await ready);
+    const user = requireUser(cloud, "Sign in with Google before recording attendance.");
+    const fallbackEventId =
+      typeof scope.crypto?.randomUUID === "function"
+        ? scope.crypto.randomUUID().replace(/-/g, "")
+        : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`;
+    const attendance = attendanceRecord(input, fallbackEventId);
+    const reference = cloud.firestoreSdk.doc(
+      cloud.db,
+      "attendanceDays",
+      attendance.dateKey,
+      "entries",
+      attendance.eventId,
+    );
+
+    await cloud.firestoreSdk.setDoc(
+      reference,
+      {
+        ...attendance,
+        recordedBy: user.uid,
+        checkedInAt: cloud.firestoreSdk.serverTimestamp(),
+        updatedAt: cloud.firestoreSdk.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    return attendance;
+  }
+
+  async function getAttendance(options = {}) {
+    const cloud = services || (await ready);
+    requireUser(cloud, "Sign in with Google to view attendance.");
+    const dateKey = normalizeAttendanceDateKey(
+      options.dateKey || localAttendanceDateKey(),
+    );
+    const requestedSize = Math.floor(Number(options.pageSize) || 500);
+    const pageSize = Math.min(500, Math.max(1, requestedSize));
+    const entries = cloud.firestoreSdk.collection(
+      cloud.db,
+      "attendanceDays",
+      dateKey,
+      "entries",
+    );
+    const snapshot = await cloud.firestoreSdk.getDocs(
+      cloud.firestoreSdk.query(
+        entries,
+        cloud.firestoreSdk.orderBy("checkedInAtMs", "desc"),
+        cloud.firestoreSdk.limit(pageSize),
+      ),
+    );
+
+    return snapshot.docs
+      .map((entry) => {
+        try {
+          return attendanceRecord(entry.data(), entry.id);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
   }
 
   function subscribeAuth(callback) {
@@ -431,10 +551,12 @@
     return Object.freeze({
       ready,
       deleteWorkerFace,
+      getAttendance,
       signIn,
       signOut,
       subscribeAuth,
       getWorkerFaces,
+      saveAttendance,
       saveWorkerFace,
       uploadReviewedPhoto,
       deleteReviewedPhoto,

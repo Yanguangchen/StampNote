@@ -361,9 +361,14 @@ function createAppHarness(options = {}) {
   };
 
   let authCallback;
-  const cloudCalls = { deleted: [], signIn: 0, signOut: 0, uploaded: [] };
+  const cloudCalls = { attendance: [], deleted: [], signIn: 0, signOut: 0, uploaded: [] };
   const cloud = options.cloud
     ? {
+        async saveAttendance(record) {
+          cloudCalls.attendance.push(record);
+          if (options.attendanceError) throw options.attendanceError;
+          return record;
+        },
         async deleteReviewedPhoto(record) {
           cloudCalls.deleted.push(record.id);
         },
@@ -1014,6 +1019,21 @@ test("recording loads enrolled face templates into both matching layers", async 
   assert.equal(harness.elements["face-enrollment-match"].hidden, false);
   assert.equal(harness.elements["face-enrollment-worker-id"].textContent, "WORKER-7");
   assert.match(harness.elements["face-enrollment-message"].textContent, /Ari Tan is ready/i);
+
+  await settle();
+  assert.equal(harness.cloudCalls.attendance.length, 1);
+  assert.equal(harness.cloudCalls.attendance[0].workerId, "WORKER-7");
+  assert.equal(harness.cloudCalls.attendance[0].displayName, "Ari Tan");
+  assert.match(harness.cloudCalls.attendance[0].eventId, /^[A-Za-z0-9_-]{8,80}$/);
+  assert.match(harness.cloudCalls.attendance[0].dateKey, /^\d{4}-\d{2}-\d{2}$/);
+
+  harness.captureConfiguration.onUpdate({ ...harness.controllerState });
+  await settle();
+  assert.equal(
+    harness.cloudCalls.attendance.length,
+    1,
+    "one recording session creates one attendance event",
+  );
 
   const confirmationTimer = harness.timers.find((timer) => timer.delay === 1_800);
   assert.ok(confirmationTimer, "the matched identity remains prominent before fading");

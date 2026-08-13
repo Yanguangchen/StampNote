@@ -29,7 +29,8 @@ The browser sanitizer drops every field that is not on its fixed allowlist. The 
 | Firestore sync | `cloud.sync.completed` | `cloud.sync.failed` | `uploadedCount`, `queuedCount`, `failedCount`, `durationMs`, `operationTraceId` |
 | Google sign-in | `cloud.auth.state` | `cloud.auth.failed` | fixed `status`, `errorCode` |
 | Camera and tracking | `capture.monitor.started`, `tracking.recovered` | `capture.monitor.failed`, `tracking.failed` | `errorCode`, `durationMs` |
-| Dashboard | `dashboard.load.completed`, `health.checked` | `dashboard.load.failed`, `dashboard.image.failed` | `photoCount`, `durationMs`, `httpStatus`, `errorCode` |
+| Dashboard | `dashboard.load.completed`, `attendance.load.completed` | `dashboard.load.failed`, `dashboard.image.failed`, `attendance.load.failed` | `photoCount`, `workerCount`, `checkInCount`, `durationMs`, `errorCode` |
+| Attendance sync | `attendance.saved` | `attendance.save.failed` | fixed `status`, `errorCode` |
 | Browser performance | `web.vital`, `client.ready` | `client.error` | `metricName`, `metricValue`, `metricRating`, `online` |
 
 Browser operation events may carry a `traceId`. The telemetry intake writes that value to Runtime Logs as `operationTraceId`, keeping it distinct from the telemetry batch's own request trace. Gemini requests send the operation ID as `X-StampNote-Trace-Id`, so one review can be followed from `ai.review.started` to the server-side Gemini result. Every function response includes `X-Request-Id`, `X-StampNote-Trace-Id`, and `Server-Timing`.
@@ -42,11 +43,11 @@ curl -i https://stampnote-omega.vercel.app/api/health
 
 An HTTP 200 with `"status":"ok"` means the function is running and the Gemini environment variable exists. HTTP 503 with `"status":"degraded"` means the function is running but `GOOGLE_GENERATIVE_AI_API_KEY` is absent. The `deployment.release` value is Vercel's unique deployment ID (or the commit when running outside a Vercel deployment), so an incident can be tied to the exact release. This is a configuration/readiness check; it intentionally does not spend Gemini credits or access Firestore.
 
-The dashboard runs this check when it opens and shows **System online**, **System degraded**, or **System unavailable** in its header.
+The health endpoint remains available for operational checks, but the dashboard does not display deployment status in its navigation.
 
 ## Inspecting production
 
-Use the current CLI so log filtering behavior matches the platform. The installed 51.3.0 release should be upgraded to the current 58.10.0 release before operating the project:
+Use the current CLI so log filtering behavior matches the platform. The installed 51.3.0 release should be upgraded to the current 58.11.0 release before operating the project:
 
 ```sh
 npm i -g vercel@latest

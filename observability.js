@@ -12,6 +12,8 @@
     "face.match.completed",
     "face.match.failed",
     "face.match.skipped",
+    "attendance.saved",
+    "attendance.save.failed",
     "tracking.failed",
     "tracking.recovered",
     "ai.review.started",
@@ -26,6 +28,8 @@
     "dashboard.load.completed",
     "dashboard.load.failed",
     "dashboard.image.failed",
+    "attendance.load.completed",
+    "attendance.load.failed",
     "health.checked",
   ]);
   const NUMBER_FIELDS = new Set([
@@ -43,6 +47,8 @@
     "matchVotes",
     "requiredVotes",
     "sampleCount",
+    "checkInCount",
+    "workerCount",
   ]);
   const BOOLEAN_FIELDS = new Set(["automatic", "online", "persistent"]);
   const ENUM_FIELDS = Object.freeze({

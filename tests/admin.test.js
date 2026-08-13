@@ -6,6 +6,8 @@ const vm = require("node:vm");
 
 const cloudData = require("../photo-cloud.js");
 const adminPath = resolve(__dirname, "..", "admin.js");
+const adminHtml = readFileSync(resolve(__dirname, "..", "admin.html"), "utf8");
+const adminCss = readFileSync(resolve(__dirname, "..", "admin.css"), "utf8");
 
 class FakeElement {
   constructor(tagName = "div") {
@@ -98,6 +100,7 @@ function createAdminHarness(options = {}) {
     "sign-out",
     "auth-gate",
     "account-name",
+    "dashboard-workspace",
     "gallery-toolbar",
     "photo-filter",
     "photo-library",
@@ -110,8 +113,12 @@ function createAdminHarness(options = {}) {
     "dialog-time",
     "dialog-people",
     "dialog-review",
-    "system-health",
-    "system-health-label",
+    "attendance-date",
+    "attendance-refresh",
+    "attendance-status",
+    "attendance-list",
+    "present-worker-count",
+    "attendance-checkin-count",
   ];
   const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement()]));
   elements["photo-filter"].value = "all";
@@ -125,7 +132,7 @@ function createAdminHarness(options = {}) {
   const revoked = [];
   const objectUrls = [];
   const windowListeners = new Map();
-  const cloudCalls = { blobs: [], pages: [], signIn: 0, signOut: 0 };
+  const cloudCalls = { attendance: [], blobs: [], pages: [], signIn: 0, signOut: 0 };
   let authCallback;
   let pages = options.pages || [
     {
@@ -161,8 +168,35 @@ function createAdminHarness(options = {}) {
     },
   };
   const cloud = options.cloud === null
-    ? null
-    : {
+      ? null
+      : {
+        async getAttendance(attendanceOptions) {
+          cloudCalls.attendance.push(attendanceOptions);
+          if (options.attendanceError) throw options.attendanceError;
+          return options.attendance || [
+            {
+              eventId: "attendance-1",
+              workerId: "WORKER-7",
+              displayName: "Ari Tan",
+              checkedInAtMs: Date.parse("2026-08-14T01:00:00.000Z"),
+              location: "10 Marina Bay",
+            },
+            {
+              eventId: "attendance-2",
+              workerId: "WORKER-7",
+              displayName: "Ari Tan",
+              checkedInAtMs: Date.parse("2026-08-14T06:00:00.000Z"),
+              location: "10 Marina Bay",
+            },
+            {
+              eventId: "attendance-3",
+              workerId: "WORKER-9",
+              displayName: "Bo Lim",
+              checkedInAtMs: Date.parse("2026-08-14T02:00:00.000Z"),
+              location: "Orchard Road",
+            },
+          ];
+        },
         async getPhotoBlob(entry) {
           cloudCalls.blobs.push(entry.id);
           if (options.imageError) throw options.imageError;
@@ -263,18 +297,28 @@ async function settle() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+test("photos and daily attendance share one dashboard without status or access-copy clutter", () => {
+  assert.match(adminHtml, /Photos &amp; attendance/);
+  assert.match(adminHtml, /id="photo-library"/);
+  assert.match(adminHtml, /id="attendance-date"[^>]*type="date"/);
+  assert.match(adminHtml, /id="attendance-list"/);
+  assert.match(adminCss, /\.dashboard-workspace\s*\{[^}]*grid-template-columns:/);
+  assert.doesNotMatch(adminHtml, /Authenticated cloud library/);
+  assert.doesNotMatch(adminHtml, /Only Gemini-reviewed batches appear here/);
+  assert.doesNotMatch(adminHtml, /system-health|System online/);
+});
+
 test("the dashboard signs in, renders and filters photos, paginates, and opens the viewer", async () => {
   const harness = createAdminHarness();
   await settle();
 
   assert.equal(harness.configured.length, 1);
   assert.equal(harness.configured[0].surface, "dashboard");
-  assert.equal(harness.elements["system-health"].dataset.state, "ok");
-  assert.equal(harness.elements["system-health-label"].textContent, "System online");
 
   harness.auth({ uid: "user-1", email: "owner@example.com" });
   await settle();
   assert.equal(harness.elements["auth-gate"].hidden, true);
+  assert.equal(harness.elements["dashboard-workspace"].hidden, false);
   assert.equal(harness.elements["gallery-toolbar"].hidden, false);
   assert.equal(harness.elements["photo-library"].hidden, false);
   assert.equal(harness.elements["sign-out"].hidden, false);
@@ -284,7 +328,20 @@ test("the dashboard signs in, renders and filters photos, paginates, and opens t
   assert.equal(harness.cloudCalls.pages.length, 1);
   assert.equal(harness.cloudCalls.pages[0].pageSize, 48);
   assert.equal(harness.cloudCalls.pages[0].after, null);
+  assert.equal(harness.cloudCalls.attendance.length, 1);
+  assert.equal(harness.cloudCalls.attendance[0].pageSize, 500);
+  assert.match(harness.cloudCalls.attendance[0].dateKey, /^\d{4}-\d{2}-\d{2}$/);
   assert.deepEqual(harness.cloudCalls.blobs.sort(), ["flagged", "kept"]);
+
+  assert.equal(harness.elements["present-worker-count"].textContent, "2");
+  assert.equal(harness.elements["attendance-checkin-count"].textContent, "3");
+  assert.equal(
+    descendants(harness.elements["attendance-list"]).filter(
+      (entry) => entry.className === "attendance-row",
+    ).length,
+    2,
+  );
+  assert.match(harness.elements["attendance-status"].textContent, /2 present · 3 check-ins/);
 
   const library = harness.elements["photo-library"];
   const cards = descendants(library).filter((entry) => entry.className === "photo-card");
@@ -338,7 +395,9 @@ test("the dashboard signs in, renders and filters photos, paginates, and opens t
   harness.auth(null);
   await settle();
   assert.equal(harness.elements["auth-gate"].hidden, false);
+  assert.equal(harness.elements["dashboard-workspace"].hidden, true);
   assert.equal(library.children.length, 0);
+  assert.equal(harness.elements["attendance-list"].children.length, 0);
   assert.ok(harness.revoked.length >= 2);
   assert.ok(harness.events.some((entry) => entry.name === "dashboard.load.completed"));
   assert.ok(harness.events.some((entry) => entry.name === "cloud.auth.state"));
@@ -347,8 +406,8 @@ test("the dashboard signs in, renders and filters photos, paginates, and opens t
 test("dashboard controls and loading failures remain recoverable and observable", async () => {
   const permissionError = Object.assign(new Error("denied"), { code: "permission-denied" });
   const harness = createAdminHarness({
-    healthError: Object.assign(new Error("offline"), { code: "network" }),
     pageError: permissionError,
+    attendanceError: permissionError,
     imageError: permissionError,
     signInError: Object.assign(new Error("provider disabled"), {
       code: "auth/operation-not-allowed",
@@ -356,8 +415,6 @@ test("dashboard controls and loading failures remain recoverable and observable"
     signOutError: permissionError,
   });
   await settle();
-  assert.equal(harness.elements["system-health"].dataset.state, "failed");
-  assert.equal(harness.elements["system-health-label"].textContent, "System unavailable");
 
   await harness.elements["sign-in"].dispatch("click");
   assert.equal(harness.elements["sign-in"].disabled, false);
@@ -368,11 +425,13 @@ test("dashboard controls and loading failures remain recoverable and observable"
   assert.match(harness.elements["dashboard-status"].textContent, /Firebase denied access/);
   assert.equal(harness.elements["load-more"].disabled, false);
   assert.equal(harness.elements["load-more-row"].hidden, true);
+  assert.match(harness.elements["attendance-status"].textContent, /Firebase denied access/);
 
   await harness.elements["sign-out"].dispatch("click");
   await settle();
   assert.match(harness.elements["dashboard-status"].textContent, /Firebase denied access/);
   assert.ok(harness.events.some((entry) => entry.name === "dashboard.load.failed"));
+  assert.ok(harness.events.some((entry) => entry.name === "attendance.load.failed"));
   assert.ok(harness.events.some((entry) => entry.name === "cloud.auth.failed"));
 
   harness.auth(null, Object.assign(new Error("database missing"), { code: "failed-precondition" }));
@@ -386,7 +445,7 @@ test("the dashboard disables sign-in when its Firebase client is missing", async
   assert.equal(harness.elements["sign-in"].disabled, true);
   assert.equal(
     harness.elements["dashboard-status"].textContent,
-    "The Firebase photo client could not be loaded.",
+    "The Firebase client could not be loaded.",
   );
   assert.equal(harness.elements["dashboard-status"].dataset.state, "error");
   assert.ok(harness.events.some((entry) => entry.name === "client.error"));

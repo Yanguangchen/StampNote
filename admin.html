@@ -8,7 +8,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="StampNote" />
-    <title>StampNote photo dashboard</title>
+    <title>StampNote photos and attendance</title>
     <link rel="manifest" href="manifest.json" />
     <link rel="icon" href="icons/stampnote.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="icons/stampnote-180.png" sizes="180x180" />
@@ -25,10 +25,6 @@
         <span>StampNote</span>
       </a>
       <div class="account-actions">
-        <span class="system-health" id="system-health" data-state="checking">
-          <span class="system-health-dot" aria-hidden="true"></span>
-          <span id="system-health-label">Checking system</span>
-        </span>
         <span class="account-name" id="account-name"></span>
         <button class="button button-quiet" id="sign-out" type="button" hidden>Sign out</button>
       </div>
@@ -36,23 +32,7 @@
 
     <main class="admin-main">
       <section class="intro" aria-labelledby="dashboard-title">
-        <div>
-          <p class="eyebrow">Authenticated cloud library</p>
-          <h1 id="dashboard-title">Photos by place and day</h1>
-          <p class="intro-copy">
-            Only Gemini-reviewed batches appear here. Firestore access is limited to Google users
-            signed into this StampNote project.
-          </p>
-        </div>
-
-        <div class="toolbar" id="gallery-toolbar" hidden>
-          <label for="photo-filter">Show</label>
-          <select id="photo-filter">
-            <option value="all">All reviewed photos</option>
-            <option value="kept">Kept photos</option>
-            <option value="flagged">AI review bin</option>
-          </select>
-        </div>
+        <h1 id="dashboard-title">Photos &amp; attendance</h1>
       </section>
 
       <p class="dashboard-status" id="dashboard-status" role="status" aria-live="polite"></p>
@@ -68,10 +48,58 @@
         <button class="button button-primary" id="sign-in" type="button">Continue with Google</button>
       </section>
 
-      <section class="photo-library" id="photo-library" aria-label="Cloud photos" hidden></section>
+      <div class="dashboard-workspace" id="dashboard-workspace" hidden>
+        <section class="dashboard-panel photos-panel" aria-labelledby="photos-title">
+          <div class="panel-heading">
+            <div>
+              <h2 id="photos-title">Photos</h2>
+            </div>
+            <div class="toolbar" id="gallery-toolbar" hidden>
+              <label for="photo-filter">Show</label>
+              <select id="photo-filter">
+                <option value="all">All reviewed photos</option>
+                <option value="kept">Kept photos</option>
+                <option value="flagged">AI review bin</option>
+              </select>
+            </div>
+          </div>
 
-      <div class="load-more-row" id="load-more-row" hidden>
-        <button class="button button-quiet" id="load-more" type="button">Load more photos</button>
+          <section class="photo-library" id="photo-library" aria-label="Cloud photos" hidden></section>
+
+          <div class="load-more-row" id="load-more-row" hidden>
+            <button class="button button-quiet" id="load-more" type="button">Load more photos</button>
+          </div>
+        </section>
+
+        <aside class="dashboard-panel attendance-panel" id="attendance-panel" aria-labelledby="attendance-title">
+          <div class="panel-heading attendance-heading">
+            <div>
+              <h2 id="attendance-title">Attendance</h2>
+            </div>
+            <button class="button button-quiet attendance-refresh" id="attendance-refresh" type="button">
+              Refresh
+            </button>
+          </div>
+
+          <label class="date-control" for="attendance-date">
+            <span>Date</span>
+            <input id="attendance-date" type="date" />
+          </label>
+
+          <div class="attendance-summary" aria-label="Attendance summary">
+            <div>
+              <strong id="present-worker-count">0</strong>
+              <span>Present</span>
+            </div>
+            <div>
+              <strong id="attendance-checkin-count">0</strong>
+              <span>Check-ins</span>
+            </div>
+          </div>
+
+          <p class="attendance-status" id="attendance-status" role="status" aria-live="polite"></p>
+          <div class="attendance-list" id="attendance-list"></div>
+        </aside>
       </div>
     </main>
 

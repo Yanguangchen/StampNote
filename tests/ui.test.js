@@ -956,7 +956,7 @@ test("the watch tracks a room, not just one person", () => {
   assert.match(app, /personIdentity\?\.createPersonTracker\(\{ identities/);
   assert.match(
     readFileSync(resolve(projectRoot, "person-tracker.js"), "utf8"),
-    /personLabel: track\.workerId \|\| "UNMATCHED WORKER"/,
+    /personLabel: track\.workerId \|\| "TRACKING WORKER"/,
   );
   assert.doesNotMatch(
     readFileSync(resolve(projectRoot, "person-tracker.js"), "utf8"),

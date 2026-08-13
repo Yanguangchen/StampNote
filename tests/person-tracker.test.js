@@ -75,8 +75,8 @@ test("people keep anonymous IDs when detector result order changes", () => {
   assert.deepEqual(reordered.bodies.map((entry) => entry.personId), [1, 2]);
   assert.ok(reordered.bodies[0].box.x < reordered.bodies[1].box.x);
   assert.deepEqual(reordered.bodies.map((entry) => entry.personLabel), [
-    "UNMATCHED WORKER",
-    "UNMATCHED WORKER",
+    "TRACKING WORKER",
+    "TRACKING WORKER",
   ]);
   assert.equal(reordered.uniqueCount, 2);
 });
@@ -106,15 +106,15 @@ test("an enrolled face restores its stable worker ID before anonymous tracking b
   assert.equal(returned.bodies[0].workerId, "WORKER-007");
 });
 
-test("unmatched workers stay explicit while the internal track ID remains stable", () => {
+test("workers without a roster match stay explicit while the internal track ID remains stable", () => {
   const tracker = people.createPersonTracker();
   const first = tracker.update([body(0.2)], 1_100).bodies[0];
   const sameSecond = tracker.update([body(0.21)], 1_900).bodies[0];
   const nextSecond = tracker.update([body(0.22)], 2_100).bodies[0];
 
-  assert.equal(first.personLabel, "UNMATCHED WORKER");
-  assert.equal(sameSecond.personLabel, "UNMATCHED WORKER");
-  assert.equal(nextSecond.personLabel, "UNMATCHED WORKER");
+  assert.equal(first.personLabel, "TRACKING WORKER");
+  assert.equal(sameSecond.personLabel, "TRACKING WORKER");
+  assert.equal(nextSecond.personLabel, "TRACKING WORKER");
   assert.equal(first.personId, 1);
   assert.equal(nextSecond.personId, 1);
 });

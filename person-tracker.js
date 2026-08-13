@@ -871,7 +871,7 @@
           ...publicBody,
           personId: track.id,
           ...(track.workerId ? { workerId: track.workerId } : {}),
-          personLabel: track.workerId || "UNMATCHED WORKER",
+          personLabel: track.workerId || "TRACKING WORKER",
         };
       });
 

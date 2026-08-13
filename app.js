@@ -490,6 +490,66 @@
   let faceMatchConfirmationVisible = false;
   let faceMatchConfirmationShown = false;
   let faceMatchConfirmationTimer = null;
+  let attendanceEventId = null;
+  let attendanceSavedForSession = false;
+
+  function createAttendanceEventId() {
+    if (typeof window.crypto?.randomUUID === "function") {
+      return window.crypto.randomUUID().replace(/-/g, "");
+    }
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`;
+  }
+
+  function attendanceDateKey(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  function saveMatchedAttendance(enrollment) {
+    if (
+      attendanceSavedForSession ||
+      !cloud?.saveAttendance ||
+      !enrollment?.workerId ||
+      !enrollment?.personLabel
+    ) {
+      return;
+    }
+
+    attendanceSavedForSession = true;
+    attendanceEventId ||= createAttendanceEventId();
+    const checkedInAt = new Date();
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
+
+    cloud
+      .saveAttendance({
+        eventId: attendanceEventId,
+        workerId: enrollment.workerId,
+        displayName: enrollment.personLabel,
+        checkedInAtMs: checkedInAt.getTime(),
+        dateKey: attendanceDateKey(checkedInAt),
+        timeZone,
+        location: addressField.value,
+      })
+      .then(() => {
+        telemetry?.event("attendance.saved", { status: "success" });
+      })
+      .catch((error) => {
+        setMonitorStatus(
+          `${enrollment.personLabel} matched, but attendance could not sync. Start a new check-in to retry.`,
+          "error",
+        );
+        telemetry?.event(
+          "attendance.save.failed",
+          {
+            errorCode: telemetry?.safeErrorCode(error, "attendance_save_failed"),
+            status: "failed",
+          },
+          { immediate: true },
+        );
+      });
+  }
 
   function setMonitorStatus(message, state = "idle") {
     if (!monitorStatus) {
@@ -869,7 +929,7 @@
     const label =
       state.workerId ||
       state.personLabel ||
-      (Number.isInteger(state.personId) ? "UNMATCHED WORKER" : "");
+      (Number.isInteger(state.personId) ? "TRACKING WORKER" : "");
     if (!label) {
       return;
     }
@@ -1325,6 +1385,9 @@
             : "Face scan complete — auto capture is now running.",
         skipped ? "idle" : "success",
       );
+      if (!skipped) {
+        saveMatchedAttendance(enrollment);
+      }
     }
     faceEnrollmentWasActive = active;
     lastFaceEnrollmentStatus = enrollment?.status || null;
@@ -2107,6 +2170,8 @@
 
   async function startMonitor() {
     const monitorStartedAt = performance.now();
+    attendanceEventId = createAttendanceEventId();
+    attendanceSavedForSession = false;
     if (!navigator.mediaDevices?.getUserMedia) {
       setMonitorStatus("This browser cannot open a live camera — choose a photo instead.", "error");
       telemetry?.event(
@@ -2291,6 +2356,8 @@
     faceMatchConfirmationTimer = null;
     faceMatchConfirmationVisible = false;
     faceMatchConfirmationShown = false;
+    attendanceEventId = null;
+    attendanceSavedForSession = false;
     captureFlash?.classList.remove("is-visible");
     window.cancelAnimationFrame(painter);
     painter = null;

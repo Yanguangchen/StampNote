@@ -77,7 +77,9 @@ test("the local server exposes public assets and every API boundary without expo
 
     const dashboard = await fetch(`${origin}/admin.html`);
     assert.equal(dashboard.status, 200);
-    assert.match(await dashboard.text(), /Authenticated cloud library/);
+    const dashboardBody = await dashboard.text();
+    assert.match(dashboardBody, /Photos &amp; attendance/);
+    assert.match(dashboardBody, /id="attendance-list"/);
 
     const onboarding = await fetch(`${origin}/onboarding.html`);
     assert.equal(onboarding.status, 200);

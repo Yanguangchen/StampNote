@@ -8,6 +8,7 @@
   const signOutButton = document.querySelector("#sign-out");
   const authGate = document.querySelector("#auth-gate");
   const accountName = document.querySelector("#account-name");
+  const workspace = document.querySelector("#dashboard-workspace");
   const toolbar = document.querySelector("#gallery-toolbar");
   const filter = document.querySelector("#photo-filter");
   const library = document.querySelector("#photo-library");
@@ -20,8 +21,12 @@
   const dialogTime = document.querySelector("#dialog-time");
   const dialogPeople = document.querySelector("#dialog-people");
   const dialogReview = document.querySelector("#dialog-review");
-  const systemHealth = document.querySelector("#system-health");
-  const systemHealthLabel = document.querySelector("#system-health-label");
+  const attendanceDate = document.querySelector("#attendance-date");
+  const attendanceRefresh = document.querySelector("#attendance-refresh");
+  const attendanceStatus = document.querySelector("#attendance-status");
+  const attendanceList = document.querySelector("#attendance-list");
+  const presentWorkerCount = document.querySelector("#present-worker-count");
+  const attendanceCheckinCount = document.querySelector("#attendance-checkin-count");
 
   telemetry?.configure({ surface: "dashboard" });
 
@@ -30,6 +35,8 @@
   let after = null;
   let hasMore = false;
   let loading = false;
+  let loadingAttendance = false;
+  let attendance = [];
   let renderVersion = 0;
   const photoUrls = new Map();
 
@@ -49,52 +56,7 @@
       case "failed-precondition":
         return "Create the Firestore database in the Firebase project, then reload this page.";
       default:
-        return error?.message || "The cloud photo library could not be loaded.";
-    }
-  }
-
-  async function checkHealth() {
-    const startedAt = performance.now();
-    const traceId = telemetry?.createTraceId();
-    const liveServer =
-      ["127.0.0.1", "localhost"].includes(window.location.hostname) &&
-      window.location.port === "5500";
-    const endpoint = liveServer
-      ? "https://stampnote-omega.vercel.app/api/health"
-      : "/api/health";
-
-    try {
-      const response = await fetch(endpoint, {
-        headers: traceId ? { "X-StampNote-Trace-Id": traceId } : {},
-        cache: "no-store",
-      });
-      const result = await response.json().catch(() => ({}));
-      const healthState = result.status === "ok" ? "ok" : "degraded";
-
-      systemHealth.dataset.state = healthState;
-      systemHealthLabel.textContent = healthState === "ok" ? "System online" : "System degraded";
-      telemetry?.event(
-        "health.checked",
-        {
-          durationMs: performance.now() - startedAt,
-          httpStatus: response.status,
-          status: healthState,
-        },
-        { traceId },
-      );
-    } catch (error) {
-      systemHealth.dataset.state = "failed";
-      systemHealthLabel.textContent = "System unavailable";
-      telemetry?.event(
-        "health.checked",
-        {
-          durationMs: performance.now() - startedAt,
-          errorCode: telemetry.safeErrorCode(error, "health_unavailable"),
-          status: "failed",
-          online: navigator.onLine !== false,
-        },
-        { traceId, immediate: true },
-      );
+        return error?.message || "The dashboard data could not be loaded.";
     }
   }
 
@@ -140,6 +102,150 @@
       minute: "2-digit",
       second: "2-digit",
     }).format(date);
+  }
+
+  function localDateKey(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  function formatAttendanceTime(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "Unknown time";
+    return new Intl.DateTimeFormat(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(date);
+  }
+
+  function workerInitials(worker) {
+    return String(worker.displayName || worker.workerId)
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join("")
+      .toUpperCase();
+  }
+
+  function summarizeAttendance(entries) {
+    const workers = new Map();
+    entries.forEach((entry) => {
+      const saved = workers.get(entry.workerId) || {
+        workerId: entry.workerId,
+        displayName: entry.displayName,
+        firstInAtMs: entry.checkedInAtMs,
+        latestAtMs: entry.checkedInAtMs,
+        checkIns: 0,
+        location: entry.location || null,
+      };
+      saved.displayName = entry.displayName || saved.displayName;
+      saved.firstInAtMs = Math.min(saved.firstInAtMs, entry.checkedInAtMs);
+      if (entry.checkedInAtMs >= saved.latestAtMs) {
+        saved.latestAtMs = entry.checkedInAtMs;
+        saved.location = entry.location || saved.location;
+      }
+      saved.checkIns += 1;
+      workers.set(entry.workerId, saved);
+    });
+    return [...workers.values()].sort((left, right) => right.latestAtMs - left.latestAtMs);
+  }
+
+  function createAttendanceRow(worker) {
+    const row = document.createElement("article");
+    const avatar = document.createElement("span");
+    const identity = document.createElement("div");
+    const name = document.createElement("strong");
+    const workerId = document.createElement("span");
+    const timing = document.createElement("div");
+    const statusBadge = document.createElement("span");
+    const firstIn = document.createElement("span");
+    const detail = document.createElement("span");
+
+    row.className = "attendance-row";
+    avatar.className = "attendance-avatar";
+    avatar.textContent = workerInitials(worker);
+    identity.className = "attendance-identity";
+    name.textContent = worker.displayName;
+    workerId.textContent = worker.workerId;
+    timing.className = "attendance-timing";
+    statusBadge.className = "attendance-badge";
+    statusBadge.textContent = "Present";
+    firstIn.textContent = `First in ${formatAttendanceTime(worker.firstInAtMs)}`;
+    const latest =
+      worker.checkIns > 1 ? ` · Last ${formatAttendanceTime(worker.latestAtMs)}` : "";
+    const location = worker.location ? ` · ${worker.location}` : "";
+    detail.textContent = `${worker.checkIns} check-in${worker.checkIns === 1 ? "" : "s"}${latest}${location}`;
+
+    identity.append(name, workerId);
+    timing.append(statusBadge, firstIn, detail);
+    row.append(avatar, identity, timing);
+    return row;
+  }
+
+  function renderAttendance() {
+    const workers = summarizeAttendance(attendance);
+    presentWorkerCount.textContent = String(workers.length);
+    attendanceCheckinCount.textContent = String(attendance.length);
+    attendanceList.replaceChildren();
+
+    if (workers.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "empty-attendance";
+      empty.textContent = "No matched workers checked in on this date.";
+      attendanceList.append(empty);
+      return;
+    }
+
+    workers.forEach((worker) => attendanceList.append(createAttendanceRow(worker)));
+  }
+
+  async function loadAttendance() {
+    if (!signedInUser || loadingAttendance || !attendanceDate.value) return;
+    loadingAttendance = true;
+    attendanceRefresh.disabled = true;
+    attendanceStatus.textContent = "Loading attendance…";
+    attendanceStatus.dataset.state = "idle";
+    const startedAt = performance.now();
+    const traceId = telemetry?.createTraceId();
+
+    try {
+      attendance = await cloud.getAttendance({
+        dateKey: attendanceDate.value,
+        pageSize: 500,
+      });
+      renderAttendance();
+      attendanceStatus.textContent = `${summarizeAttendance(attendance).length} present · ${attendance.length} check-in${attendance.length === 1 ? "" : "s"}`;
+      telemetry?.event(
+        "attendance.load.completed",
+        {
+          durationMs: performance.now() - startedAt,
+          checkInCount: attendance.length,
+          workerCount: summarizeAttendance(attendance).length,
+          status: "success",
+        },
+        { traceId },
+      );
+    } catch (error) {
+      attendance = [];
+      renderAttendance();
+      attendanceStatus.textContent = describeError(error);
+      attendanceStatus.dataset.state = "error";
+      telemetry?.event(
+        "attendance.load.failed",
+        {
+          durationMs: performance.now() - startedAt,
+          errorCode: telemetry?.safeErrorCode(error, "attendance_load_failed"),
+          status: "failed",
+        },
+        { traceId, immediate: true },
+      );
+    } finally {
+      loadingAttendance = false;
+      attendanceRefresh.disabled = false;
+    }
   }
 
   function formatDateTime(photo) {
@@ -382,6 +488,7 @@
   function setSignedInUser(user) {
     signedInUser = user || null;
     authGate.hidden = Boolean(user);
+    workspace.hidden = !user;
     toolbar.hidden = !user;
     library.hidden = !user;
     signOutButton.hidden = !user;
@@ -392,6 +499,11 @@
       after = null;
       hasMore = false;
       library.replaceChildren();
+      attendance = [];
+      attendanceList.replaceChildren();
+      presentWorkerCount.textContent = "0";
+      attendanceCheckinCount.textContent = "0";
+      attendanceStatus.textContent = "";
       loadMoreRow.hidden = true;
       revokePhotoUrls();
       setStatus("");
@@ -429,11 +541,13 @@
   });
   loadMoreButton.addEventListener("click", () => loadPhotos());
   filter.addEventListener("change", renderPhotos);
+  attendanceDate.addEventListener("change", loadAttendance);
+  attendanceRefresh.addEventListener("click", loadAttendance);
   window.addEventListener("pagehide", revokePhotoUrls);
 
   if (!cloud || !data) {
     signInButton.disabled = true;
-    setStatus("The Firebase photo client could not be loaded.", "error");
+    setStatus("The Firebase client could not be loaded.", "error");
     telemetry?.event(
       "client.error",
       { errorCode: "firebase_client_missing" },
@@ -462,8 +576,9 @@
     if (user && changedAccount) {
       revokePhotoUrls();
       loadPhotos({ reset: true });
+      loadAttendance();
     }
   });
 
-  checkHealth();
+  attendanceDate.value = localDateKey();
 })();

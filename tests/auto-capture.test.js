@@ -648,7 +648,7 @@ test("how many people are in frame reaches the state and the badge", async () =>
   assert.equal(state.peopleSeen, 2);
   assert.match(
     autoCapture.describeCadence(state),
-    /UNMATCHED WORKER, UNMATCHED WORKER in frame/,
+    /TRACKING WORKER, TRACKING WORKER in frame/,
   );
   assert.match(autoCapture.describeCadence(state), /2 unique people this session/);
 
@@ -657,7 +657,7 @@ test("how many people are in frame reaches the state and the badge", async () =>
   await harness.controller.tick();
   assert.match(
     autoCapture.describeCadence(harness.controller.getState()),
-    /UNMATCHED WORKER in frame/,
+    /TRACKING WORKER in frame/,
   );
 
   harness.bodies = [];
@@ -696,9 +696,9 @@ test("a capture records how many people were in it", async () => {
       personLabel,
     })),
     [
-      { personId: 1, personLabel: "UNMATCHED WORKER" },
-      { personId: 2, personLabel: "UNMATCHED WORKER" },
-      { personId: 3, personLabel: "UNMATCHED WORKER" },
+      { personId: 1, personLabel: "TRACKING WORKER" },
+      { personId: 2, personLabel: "TRACKING WORKER" },
+      { personId: 3, personLabel: "TRACKING WORKER" },
     ],
   );
   assert.ok(harness.captureInputs[0].bodies.every((entry) => entry.box));

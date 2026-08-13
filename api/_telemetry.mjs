@@ -31,6 +31,8 @@ const eventNames = [
   "face.match.completed",
   "face.match.failed",
   "face.match.skipped",
+  "attendance.saved",
+  "attendance.save.failed",
   "tracking.failed",
   "tracking.recovered",
   "ai.review.started",
@@ -45,6 +47,8 @@ const eventNames = [
   "dashboard.load.completed",
   "dashboard.load.failed",
   "dashboard.image.failed",
+  "attendance.load.completed",
+  "attendance.load.failed",
   "health.checked",
 ];
 
@@ -62,6 +66,8 @@ const telemetryFieldsSchema = z
     matchVotes: z.number().int().min(0).max(20).optional(),
     requiredVotes: z.number().int().min(0).max(20).optional(),
     sampleCount: z.number().int().min(0).max(20).optional(),
+    checkInCount: z.number().int().min(0).max(10_000).optional(),
+    workerCount: z.number().int().min(0).max(10_000).optional(),
     automatic: z.boolean().optional(),
     online: z.boolean().optional(),
     persistent: z.boolean().optional(),

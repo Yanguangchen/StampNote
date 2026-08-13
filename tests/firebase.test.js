@@ -425,6 +425,85 @@ test("a flattened Firestore face gallery is rebuilt into matching templates", as
   assert.ok(worker.embeddings.every((template) => template.length === 128));
 });
 
+test("matched workers create idempotent daily attendance records that the dashboard can list", async () => {
+  const checkedInAtMs = Date.parse("2026-08-14T08:30:00.000Z");
+  const harness = createHarness({
+    documents: [
+      {
+        id: "attendance_event_123",
+        data: () => ({
+          workerId: "WORKER-7",
+          displayName: "Ari Tan",
+          checkedInAtMs,
+          dateKey: "2026-08-14",
+          timeZone: "Asia/Singapore",
+          location: "10 Marina Bay",
+        }),
+      },
+    ],
+  });
+  await harness.client.ready;
+
+  const saved = await harness.client.saveAttendance({
+    eventId: "attendance_event_123",
+    workerId: "worker-7",
+    displayName: "  Ari   Tan ",
+    checkedInAtMs,
+    dateKey: "2026-08-14",
+    timeZone: "Asia/Singapore",
+    location: "  10   Marina Bay ",
+  });
+  assert.equal(saved.workerId, "WORKER-7");
+  assert.equal(saved.displayName, "Ari Tan");
+  assert.equal(saved.location, "10 Marina Bay");
+  assert.deepEqual(harness.calls.writes.at(-1).reference.segments.slice(1), [
+    "attendanceDays",
+    "2026-08-14",
+    "entries",
+    "attendance_event_123",
+  ]);
+  assert.equal(harness.calls.writes.at(-1).value.recordedBy, "user-1");
+  assert.equal(harness.calls.writes.at(-1).value.status, "present");
+  assert.deepEqual(harness.calls.writes.at(-1).writeOptions, { merge: true });
+
+  const entries = await harness.client.getAttendance({
+    dateKey: "2026-08-14",
+    pageSize: 900,
+  });
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].eventId, "attendance_event_123");
+  assert.deepEqual(harness.calls.queries.at(-1).collection.segments.slice(1), [
+    "attendanceDays",
+    "2026-08-14",
+    "entries",
+  ]);
+  assert.deepEqual(harness.calls.queries.at(-1).clauses, [
+    { kind: "orderBy", field: "checkedInAtMs", direction: "desc" },
+    { kind: "limit", value: 500 },
+  ]);
+
+  await assert.rejects(
+    harness.client.saveAttendance({
+      eventId: "short",
+      workerId: "WORKER-7",
+      displayName: "Ari Tan",
+      checkedInAtMs,
+      dateKey: "2026-08-14",
+    }),
+    /event ID/,
+  );
+  await assert.rejects(
+    harness.client.getAttendance({ dateKey: "14-08-2026" }),
+    /valid date/,
+  );
+
+  harness.auth.currentUser = null;
+  await assert.rejects(
+    harness.client.getAttendance({ dateKey: "2026-08-14" }),
+    (error) => error.code === "auth-required",
+  );
+});
+
 test("reviewed photos are resized, encoded, and written idempotently to Firestore", async () => {
   const harness = createHarness();
   await harness.client.ready;
