@@ -21,8 +21,8 @@
   const dialogTime = document.querySelector("#dialog-time");
   const dialogPeople = document.querySelector("#dialog-people");
   const dialogReview = document.querySelector("#dialog-review");
-  const attendanceDate = document.querySelector("#attendance-date");
   const attendanceRefresh = document.querySelector("#attendance-refresh");
+  const attendanceWorkerFilter = document.querySelector("#attendance-worker-filter");
   const attendanceStatus = document.querySelector("#attendance-status");
   const attendanceList = document.querySelector("#attendance-list");
   const presentWorkerCount = document.querySelector("#present-worker-count");
@@ -54,7 +54,7 @@
       case "permission-denied":
         return "Firebase denied access. Check that the project rules are deployed and this is the capture account.";
       case "failed-precondition":
-        return "Create the Firestore database in the Firebase project, then reload this page.";
+        return "Firestore needs an index for this dashboard query. Deploy the checked-in Firestore indexes, then reload this page.";
       default:
         return error?.message || "The dashboard data could not be loaded.";
     }
@@ -104,13 +104,6 @@
     }).format(date);
   }
 
-  function localDateKey(date = new Date()) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-  }
-
   function formatAttendanceTime(value) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return "Unknown time";
@@ -153,6 +146,86 @@
     return [...workers.values()].sort((left, right) => right.latestAtMs - left.latestAtMs);
   }
 
+  function attendanceForSelectedWorker() {
+    const selectedWorkerId = attendanceWorkerFilter.value;
+    return selectedWorkerId === "all"
+      ? attendance
+      : attendance.filter((entry) => entry.workerId === selectedWorkerId);
+  }
+
+  function updateAttendanceWorkerOptions() {
+    const selectedWorkerId = attendanceWorkerFilter.value || "all";
+    const workers = summarizeAttendance(attendance).sort((left, right) =>
+      String(left.displayName || left.workerId).localeCompare(
+        String(right.displayName || right.workerId),
+      ),
+    );
+    const allWorkers = document.createElement("option");
+    allWorkers.value = "all";
+    allWorkers.textContent = "All workers";
+    const options = workers.map((worker) => {
+      const option = document.createElement("option");
+      option.value = worker.workerId;
+      option.textContent = worker.displayName
+        ? `${worker.displayName} · ${worker.workerId}`
+        : worker.workerId;
+      return option;
+    });
+
+    attendanceWorkerFilter.replaceChildren(allWorkers, ...options);
+    attendanceWorkerFilter.value = workers.some(
+      (worker) => worker.workerId === selectedWorkerId,
+    )
+      ? selectedWorkerId
+      : "all";
+    attendanceWorkerFilter.disabled = workers.length === 0;
+  }
+
+  function updateAttendanceStatus(entries) {
+    const workers = summarizeAttendance(entries);
+    const workerCount = workers.length;
+    const checkInCount = entries.length;
+    if (attendanceWorkerFilter.value === "all") {
+      attendanceStatus.textContent = `${workerCount} worker${workerCount === 1 ? "" : "s"} · ${checkInCount} recent check-in${checkInCount === 1 ? "" : "s"}`;
+      return;
+    }
+    const worker = workers[0];
+    attendanceStatus.textContent = `${worker?.displayName || attendanceWorkerFilter.value} · ${checkInCount} recent check-in${checkInCount === 1 ? "" : "s"}`;
+  }
+
+  function groupAttendance(entries) {
+    const locations = new Map();
+
+    entries.forEach((entry) => {
+      const location = String(entry.location || "").trim() || "Location not recorded";
+      const locationKey = location.toLocaleLowerCase();
+      const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(entry.dateKey || "")
+        ? entry.dateKey
+        : "Unknown date";
+      const locationGroup = locations.get(locationKey) || {
+        location,
+        dates: new Map(),
+      };
+      const dateEntries = locationGroup.dates.get(dateKey) || [];
+      dateEntries.push(entry);
+      locationGroup.dates.set(dateKey, dateEntries);
+      locations.set(locationKey, locationGroup);
+    });
+
+    return [...locations.values()]
+      .map((location) => ({
+        location: location.location,
+        dates: [...location.dates.entries()]
+          .map(([dateKey, dateEntries]) => ({
+            dateKey,
+            entries: dateEntries,
+            workers: summarizeAttendance(dateEntries),
+          }))
+          .sort((left, right) => right.dateKey.localeCompare(left.dateKey)),
+      }))
+      .sort((left, right) => left.location.localeCompare(right.location));
+  }
+
   function createAttendanceRow(worker) {
     const row = document.createElement("article");
     const avatar = document.createElement("span");
@@ -176,8 +249,7 @@
     firstIn.textContent = `First in ${formatAttendanceTime(worker.firstInAtMs)}`;
     const latest =
       worker.checkIns > 1 ? ` · Last ${formatAttendanceTime(worker.latestAtMs)}` : "";
-    const location = worker.location ? ` · ${worker.location}` : "";
-    detail.textContent = `${worker.checkIns} check-in${worker.checkIns === 1 ? "" : "s"}${latest}${location}`;
+    detail.textContent = `${worker.checkIns} check-in${worker.checkIns === 1 ? "" : "s"}${latest}`;
 
     identity.append(name, workerId);
     timing.append(statusBadge, firstIn, detail);
@@ -185,27 +257,66 @@
     return row;
   }
 
+  function createAttendanceLocationGroup(group) {
+    const section = document.createElement("section");
+    const heading = document.createElement("div");
+    const title = document.createElement("h3");
+    const count = document.createElement("span");
+    const checkIns = group.dates.reduce(
+      (total, dateGroup) => total + dateGroup.entries.length,
+      0,
+    );
+
+    section.className = "attendance-location-group";
+    heading.className = "attendance-location-heading";
+    title.textContent = group.location;
+    count.textContent = `${checkIns} check-in${checkIns === 1 ? "" : "s"}`;
+    heading.append(title, count);
+    section.append(heading);
+
+    group.dates.forEach((dateGroup) => {
+      const dateSection = document.createElement("section");
+      const dateHeading = document.createElement("h4");
+      const rows = document.createElement("div");
+
+      dateSection.className = "attendance-date-group";
+      dateHeading.className = "attendance-date-heading";
+      dateHeading.textContent = formatDate(dateGroup.dateKey);
+      rows.className = "attendance-date-rows";
+      dateGroup.workers.forEach((worker) => rows.append(createAttendanceRow(worker)));
+      dateSection.append(dateHeading, rows);
+      section.append(dateSection);
+    });
+
+    return section;
+  }
+
   function renderAttendance() {
-    const workers = summarizeAttendance(attendance);
+    const visibleAttendance = attendanceForSelectedWorker();
+    const workers = summarizeAttendance(visibleAttendance);
+    const groups = groupAttendance(visibleAttendance);
     presentWorkerCount.textContent = String(workers.length);
-    attendanceCheckinCount.textContent = String(attendance.length);
+    attendanceCheckinCount.textContent = String(visibleAttendance.length);
     attendanceList.replaceChildren();
 
     if (workers.length === 0) {
       const empty = document.createElement("p");
       empty.className = "empty-attendance";
-      empty.textContent = "No matched workers checked in on this date.";
+      empty.textContent = attendance.length
+        ? "No attendance has been recorded for this worker."
+        : "No matched worker attendance has been recorded yet.";
       attendanceList.append(empty);
       return;
     }
 
-    workers.forEach((worker) => attendanceList.append(createAttendanceRow(worker)));
+    groups.forEach((group) => attendanceList.append(createAttendanceLocationGroup(group)));
   }
 
   async function loadAttendance() {
-    if (!signedInUser || loadingAttendance || !attendanceDate.value) return;
+    if (!signedInUser || loadingAttendance) return;
     loadingAttendance = true;
     attendanceRefresh.disabled = true;
+    attendanceWorkerFilter.disabled = true;
     attendanceStatus.textContent = "Loading attendance…";
     attendanceStatus.dataset.state = "idle";
     const startedAt = performance.now();
@@ -213,11 +324,11 @@
 
     try {
       attendance = await cloud.getAttendance({
-        dateKey: attendanceDate.value,
         pageSize: 500,
       });
+      updateAttendanceWorkerOptions();
       renderAttendance();
-      attendanceStatus.textContent = `${summarizeAttendance(attendance).length} present · ${attendance.length} check-in${attendance.length === 1 ? "" : "s"}`;
+      updateAttendanceStatus(attendanceForSelectedWorker());
       telemetry?.event(
         "attendance.load.completed",
         {
@@ -230,6 +341,7 @@
       );
     } catch (error) {
       attendance = [];
+      updateAttendanceWorkerOptions();
       renderAttendance();
       attendanceStatus.textContent = describeError(error);
       attendanceStatus.dataset.state = "error";
@@ -245,6 +357,7 @@
     } finally {
       loadingAttendance = false;
       attendanceRefresh.disabled = false;
+      attendanceWorkerFilter.disabled = attendance.length === 0;
     }
   }
 
@@ -500,6 +613,7 @@
       hasMore = false;
       library.replaceChildren();
       attendance = [];
+      updateAttendanceWorkerOptions();
       attendanceList.replaceChildren();
       presentWorkerCount.textContent = "0";
       attendanceCheckinCount.textContent = "0";
@@ -541,7 +655,11 @@
   });
   loadMoreButton.addEventListener("click", () => loadPhotos());
   filter.addEventListener("change", renderPhotos);
-  attendanceDate.addEventListener("change", loadAttendance);
+  attendanceWorkerFilter.addEventListener("change", () => {
+    const visibleAttendance = attendanceForSelectedWorker();
+    renderAttendance();
+    updateAttendanceStatus(visibleAttendance);
+  });
   attendanceRefresh.addEventListener("click", loadAttendance);
   window.addEventListener("pagehide", revokePhotoUrls);
 
@@ -579,6 +697,4 @@
       loadAttendance();
     }
   });
-
-  attendanceDate.value = localDateKey();
 })();

@@ -674,6 +674,44 @@ test("cloud photos require sign-in and the admin dashboard groups them by place 
   assert.equal(/allow read, write: if true/.test(firestoreRules), false);
 });
 
+test("Realtime Database rules deny anonymous access and are registered for deployment", () => {
+  const firebaseConfig = JSON.parse(
+    readFileSync(resolve(projectRoot, "firebase.json"), "utf8"),
+  );
+  const databaseRules = JSON.parse(
+    readFileSync(resolve(projectRoot, "database.rules.json"), "utf8"),
+  );
+
+  assert.equal(firebaseConfig.database.rules, "database.rules.json");
+  assert.equal(databaseRules.rules[".read"], "auth != null");
+  assert.equal(databaseRules.rules[".write"], "auth != null");
+  assert.deepEqual(databaseRules.rules.attendanceDays.$date.entries[".indexOn"], [
+    "checkedInAtMs",
+    "workerId",
+    "location",
+  ]);
+  assert.equal(JSON.stringify(databaseRules).includes('".read":true'), false);
+  assert.equal(JSON.stringify(databaseRules).includes('".write":true'), false);
+});
+
+test("Firestore attendance collection-group index is registered for deployment", () => {
+  const firebaseConfig = JSON.parse(
+    readFileSync(resolve(projectRoot, "firebase.json"), "utf8"),
+  );
+  const firestoreIndexes = JSON.parse(
+    readFileSync(resolve(projectRoot, "firestore.indexes.json"), "utf8"),
+  );
+
+  assert.equal(firebaseConfig.firestore.indexes, "firestore.indexes.json");
+  assert.deepEqual(firestoreIndexes.fieldOverrides, [
+    {
+      collectionGroup: "entries",
+      fieldPath: "checkedInAtMs",
+      indexes: [{ order: "DESCENDING", queryScope: "COLLECTION_GROUP" }],
+    },
+  ]);
+});
+
 test("AI review starts hidden and rejected photos can be recovered", () => {
   assert.ok(hasAttribute(tagWithId("button", "ai-review"), "hidden"));
   assert.ok(hasAttribute(tagWithId("button", "ai-review-bin"), "hidden"));

@@ -81,15 +81,17 @@
             </button>
           </div>
 
-          <label class="date-control" for="attendance-date">
-            <span>Date</span>
-            <input id="attendance-date" type="date" />
-          </label>
+          <div class="attendance-filter">
+            <label for="attendance-worker-filter">Worker</label>
+            <select id="attendance-worker-filter" disabled>
+              <option value="all">All workers</option>
+            </select>
+          </div>
 
           <div class="attendance-summary" aria-label="Attendance summary">
             <div>
               <strong id="present-worker-count">0</strong>
-              <span>Present</span>
+              <span>Workers</span>
             </div>
             <div>
               <strong id="attendance-checkin-count">0</strong>

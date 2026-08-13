@@ -101,7 +101,7 @@ The fallback is rougher than the model at everything: it needs some visible skin
 
 Captures first go to IndexedDB on the device. After Gemini reviews a batch, each reviewed photo is saved directly in Cloud Firestore as a compact 512-pixel JPEG together with its searchable metadata. A failed or signed-out upload stays in the local queue and retries after Google sign-in; the same deterministic photo document ID is used on every attempt, so a retry cannot create a duplicate. Where IndexedDB is unavailable — private browsing, older WebViews — captures still work for the session and say so on screen.
 
-Photo documents remain under `users/{uid}/photos/{photoId}`, worker templates live in the team-wide `workers/{workerId}` roster, and matched check-ins live under `attendanceDays/{date}/entries/{eventId}`. One recording session writes at most one attendance event after the opening face match completes; restarting recording starts a new check-in. Firestore requires Google authentication but, by explicit project policy, any authenticated project user can read or write every document. Anonymous visitors remain blocked. No public image URL exists: the authenticated dashboard turns Firestore bytes into a temporary in-browser image URL. Open `admin.html` to browse photos and daily attendance side by side, and open `onboarding.html` to enroll, replace, or delete worker templates.
+Photo documents remain under `users/{uid}/photos/{photoId}`, worker templates live in the team-wide `workers/{workerId}` roster, and matched check-ins live under `attendanceDays/{date}/entries/{eventId}`. One recording session writes at most one attendance event after the opening face match completes; restarting recording starts a new check-in. Firestore requires Google authentication but, by explicit project policy, any authenticated project user can read or write every document. Anonymous visitors remain blocked. No public image URL exists: the authenticated dashboard turns Firestore bytes into a temporary in-browser image URL. Open `admin.html` to browse photos alongside recent attendance grouped by location and then date, and open `onboarding.html` to enroll, replace, or delete worker templates.
 
 `firebase.js` loads Firebase JavaScript SDK 12.17.1 modules directly from Google's CDN: App, Authentication, Cloud Firestore and optional Analytics. The checked-in browser configuration—including the API key and `storageBucket` name—identifies the Firebase project; it is not an authorization secret. StampNote does not load the Firebase Storage SDK or write photos to Cloud Storage. It stores compact JPEG bytes in authenticated-team Firestore documents.
 
@@ -167,16 +167,16 @@ The Firebase browser configuration is public by design and already points at `st
 1. Check the OAuth brand name and support email under `auth.providers.googleSignIn` in `firebase.json`.
 2. Add `stampnote-omega.vercel.app`, `localhost`, and `127.0.0.1` in **Authentication → Settings → Authorized domains**.
 3. Create the default **Cloud Firestore** database.
-4. Sign the Firebase CLI into an account with access to `stampnote-eedcd`, then deploy the checked-in Google provider and authenticated-team rules:
+4. If Realtime Database will be used, create its default instance in the Firebase console. Sign the Firebase CLI into an account with access to `stampnote-eedcd`, then deploy the checked-in Google provider, Firestore rules, and Realtime Database rules:
 
    ```sh
    npx firebase-tools login
-   npx firebase-tools deploy --only auth,firestore:rules --project stampnote-eedcd
+   npx firebase-tools deploy --only auth,firestore:rules,firestore:indexes,database --project stampnote-eedcd
    ```
 
 5. Open the capture page, sign in, review a photo batch, and confirm that `/admin.html` shows the compact copies for the same account.
 
-The rules allow any authenticated project user to read and write all Firestore documents; anonymous requests are denied. This includes every user's photos and all worker biometric templates, so the Google sign-in allowlist is the security boundary. Analytics initialization is best-effort: a blocker may disable it without breaking Authentication or Firestore.
+The Firestore and Realtime Database rules allow any authenticated project user to read and write project data; anonymous requests are denied. The checked-in Firestore index enables the dashboard's cross-date attendance query. Realtime Database is configured but the current application still stores photos, attendance, and worker templates in Firestore. The Google sign-in allowlist is therefore the security boundary. Analytics initialization is best-effort: a blocker may disable it without breaking Authentication or Firestore.
 
 Use the same Google account on the capture page and `/admin.html`. Each account sees only its own uploaded photos. See the [Firebase CLI reference](https://firebase.google.com/docs/cli) and [Google provider configuration guide](https://firebase.google.com/docs/auth/configure-providers-cli) for the upstream command contract.
 
@@ -227,7 +227,7 @@ See [OBSERVABILITY.md](OBSERVABILITY.md) for the event catalog, production log c
 3. The watch photographs the scene on its own — every 30 seconds with a person in frame, every 120 seconds without. Public boxes state the enrolled worker ID, or `TRACKING WORKER` until a roster match is available. Raise both hands above your head to take one there and then.
 4. The street address fills in automatically where the browser allows it; otherwise type it in, and later captures pick it up.
 5. Photos are stamped and stored on the device as they are taken. Allow Gemini review; every eight scheduled photos are then reviewed automatically and all eight compact copies sync to Firestore. Upload failures stay queued locally.
-6. Open the dashboard to browse photos by location and date, filter the recoverable AI review bin, and review the daily attendance register beside the photos.
+6. Open the dashboard to browse photos by location and date, filter the recoverable AI review bin, and review attendance grouped by location and date beside the photos.
 
 ## Project files
 
@@ -259,6 +259,7 @@ See [OBSERVABILITY.md](OBSERVABILITY.md) for the event catalog, production log c
 - `onboarding.html`, `onboarding.css`, `onboarding.js` — signed-in worker face enrollment and roster management
 - `firebase.json`, `.firebaserc` — Firebase provider/rules deployment configuration and project alias
 - `firestore.rules` — authenticated-team-wide Firebase access policy
+- `database.rules.json` — authenticated-team-wide Realtime Database access policy and attendance indexes
 - `app.js` — interface behavior, camera lifecycle, cloud queue and session caching
 - `server.js` — local static and AI-function development server
 - `vercel.json` — Vercel static output and clean-URL configuration

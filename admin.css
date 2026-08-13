@@ -240,23 +240,30 @@ h1 {
   font-size: 12px;
 }
 
-.date-control {
+.attendance-filter {
   display: grid;
-  gap: 7px;
-  margin-bottom: 14px;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.attendance-filter label {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 680;
 }
 
-.date-control input {
+.attendance-filter select {
   width: 100%;
-  min-height: 44px;
-  padding: 0 12px;
+  min-height: 42px;
+  padding: 0 34px 0 12px;
   border: 1px solid var(--line);
   border-radius: 11px;
-  background: #fff;
+  background: var(--surface);
   color: var(--ink);
+}
+
+.attendance-filter select:disabled {
+  opacity: 0.55;
 }
 
 .attendance-summary {
@@ -299,6 +306,55 @@ h1 {
 
 .attendance-list {
   display: grid;
+  gap: 22px;
+}
+
+.attendance-location-group {
+  display: grid;
+  gap: 12px;
+}
+
+.attendance-location-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.attendance-location-heading h3 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 16px;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attendance-location-heading span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.attendance-date-group {
+  display: grid;
+  gap: 5px;
+}
+
+.attendance-date-heading {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.attendance-date-rows {
+  display: grid;
 }
 
 .attendance-row {
@@ -306,7 +362,7 @@ h1 {
   grid-template-columns: 40px minmax(0, 1fr);
   gap: 7px 11px;
   padding: 14px 0;
-  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .attendance-avatar {

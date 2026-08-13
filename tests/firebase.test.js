@@ -137,6 +137,10 @@ function createHarness(options = {}) {
     collection(...segments) {
       return { kind: "collection", segments };
     },
+    collectionGroup(receivedDb, name) {
+      assert.equal(receivedDb, db);
+      return { kind: "collectionGroup", name };
+    },
     async deleteDoc(reference) {
       calls.deleted.push(reference);
     },
@@ -480,6 +484,16 @@ test("matched workers create idempotent daily attendance records that the dashbo
   assert.deepEqual(harness.calls.queries.at(-1).clauses, [
     { kind: "orderBy", field: "checkedInAtMs", direction: "desc" },
     { kind: "limit", value: 500 },
+  ]);
+
+  await harness.client.getAttendance({ pageSize: 25 });
+  assert.deepEqual(harness.calls.queries.at(-1).collection, {
+    kind: "collectionGroup",
+    name: "entries",
+  });
+  assert.deepEqual(harness.calls.queries.at(-1).clauses, [
+    { kind: "orderBy", field: "checkedInAtMs", direction: "desc" },
+    { kind: "limit", value: 25 },
   ]);
 
   await assert.rejects(

@@ -1,0 +1,13 @@
+{
+  "rules": {
+    ".read": "auth != null",
+    ".write": "auth != null",
+    "attendanceDays": {
+      "$date": {
+        "entries": {
+          ".indexOn": ["checkedInAtMs", "workerId", "location"]
+        }
+      }
+    }
+  }
+}

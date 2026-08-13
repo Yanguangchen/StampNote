@@ -113,8 +113,8 @@ function createAdminHarness(options = {}) {
     "dialog-time",
     "dialog-people",
     "dialog-review",
-    "attendance-date",
     "attendance-refresh",
+    "attendance-worker-filter",
     "attendance-status",
     "attendance-list",
     "present-worker-count",
@@ -122,6 +122,7 @@ function createAdminHarness(options = {}) {
   ];
   const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement()]));
   elements["photo-filter"].value = "all";
+  elements["attendance-worker-filter"].value = "all";
   elements["photo-library"].setConnected(true);
   elements["photo-dialog"].showModal = function showModal() {
     this.open = true;
@@ -179,6 +180,7 @@ function createAdminHarness(options = {}) {
               workerId: "WORKER-7",
               displayName: "Ari Tan",
               checkedInAtMs: Date.parse("2026-08-14T01:00:00.000Z"),
+              dateKey: "2026-08-14",
               location: "10 Marina Bay",
             },
             {
@@ -186,6 +188,7 @@ function createAdminHarness(options = {}) {
               workerId: "WORKER-7",
               displayName: "Ari Tan",
               checkedInAtMs: Date.parse("2026-08-14T06:00:00.000Z"),
+              dateKey: "2026-08-14",
               location: "10 Marina Bay",
             },
             {
@@ -193,7 +196,24 @@ function createAdminHarness(options = {}) {
               workerId: "WORKER-9",
               displayName: "Bo Lim",
               checkedInAtMs: Date.parse("2026-08-14T02:00:00.000Z"),
+              dateKey: "2026-08-14",
               location: "Orchard Road",
+            },
+            {
+              eventId: "attendance-4",
+              workerId: "WORKER-7",
+              displayName: "Ari Tan",
+              checkedInAtMs: Date.parse("2026-08-14T07:00:00.000Z"),
+              dateKey: "2026-08-14",
+              location: "Orchard Road",
+            },
+            {
+              eventId: "attendance-5",
+              workerId: "WORKER-7",
+              displayName: "Ari Tan",
+              checkedInAtMs: Date.parse("2026-08-13T01:00:00.000Z"),
+              dateKey: "2026-08-13",
+              location: "10 Marina Bay",
             },
           ];
         },
@@ -300,8 +320,8 @@ async function settle() {
 test("photos and daily attendance share one dashboard without status or access-copy clutter", () => {
   assert.match(adminHtml, /Photos &amp; attendance/);
   assert.match(adminHtml, /id="photo-library"/);
-  assert.match(adminHtml, /id="attendance-date"[^>]*type="date"/);
   assert.match(adminHtml, /id="attendance-list"/);
+  assert.match(adminHtml, /id="attendance-worker-filter"/);
   assert.match(adminCss, /\.dashboard-workspace\s*\{[^}]*grid-template-columns:/);
   assert.doesNotMatch(adminHtml, /Authenticated cloud library/);
   assert.doesNotMatch(adminHtml, /Only Gemini-reviewed batches appear here/);
@@ -330,18 +350,58 @@ test("the dashboard signs in, renders and filters photos, paginates, and opens t
   assert.equal(harness.cloudCalls.pages[0].after, null);
   assert.equal(harness.cloudCalls.attendance.length, 1);
   assert.equal(harness.cloudCalls.attendance[0].pageSize, 500);
-  assert.match(harness.cloudCalls.attendance[0].dateKey, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(harness.cloudCalls.attendance[0].dateKey, undefined);
   assert.deepEqual(harness.cloudCalls.blobs.sort(), ["flagged", "kept"]);
 
   assert.equal(harness.elements["present-worker-count"].textContent, "2");
-  assert.equal(harness.elements["attendance-checkin-count"].textContent, "3");
+  assert.equal(harness.elements["attendance-checkin-count"].textContent, "5");
+  const attendanceList = harness.elements["attendance-list"];
   assert.equal(
-    descendants(harness.elements["attendance-list"]).filter(
+    descendants(attendanceList).filter(
       (entry) => entry.className === "attendance-row",
     ).length,
-    2,
+    4,
   );
-  assert.match(harness.elements["attendance-status"].textContent, /2 present · 3 check-ins/);
+  const attendanceLocations = descendants(attendanceList).filter(
+    (entry) => entry.className === "attendance-location-heading",
+  );
+  assert.deepEqual(
+    attendanceLocations.map((entry) => entry.children[0].textContent),
+    ["10 Marina Bay", "Orchard Road"],
+  );
+  assert.equal(
+    descendants(attendanceList).filter(
+      (entry) => entry.className === "attendance-date-heading",
+    ).length,
+    3,
+  );
+  assert.match(harness.elements["attendance-status"].textContent, /2 workers · 5 recent check-ins/);
+  assert.equal(harness.elements["attendance-worker-filter"].disabled, false);
+  assert.deepEqual(
+    harness.elements["attendance-worker-filter"].children.map((entry) => entry.textContent),
+    ["All workers", "Ari Tan · WORKER-7", "Bo Lim · WORKER-9"],
+  );
+
+  harness.elements["attendance-worker-filter"].value = "WORKER-7";
+  await harness.elements["attendance-worker-filter"].dispatch("change");
+  assert.equal(harness.elements["present-worker-count"].textContent, "1");
+  assert.equal(harness.elements["attendance-checkin-count"].textContent, "4");
+  assert.equal(
+    descendants(attendanceList).filter((entry) => entry.className === "attendance-row").length,
+    3,
+  );
+  assert.match(harness.elements["attendance-status"].textContent, /Ari Tan · 4 recent check-ins/);
+
+  harness.elements["attendance-worker-filter"].value = "WORKER-9";
+  await harness.elements["attendance-worker-filter"].dispatch("change");
+  assert.equal(harness.elements["attendance-checkin-count"].textContent, "1");
+  assert.equal(
+    descendants(attendanceList).filter((entry) => entry.className === "attendance-row").length,
+    1,
+  );
+
+  harness.elements["attendance-worker-filter"].value = "all";
+  await harness.elements["attendance-worker-filter"].dispatch("change");
 
   const library = harness.elements["photo-library"];
   const cards = descendants(library).filter((entry) => entry.className === "photo-card");
@@ -398,6 +458,8 @@ test("the dashboard signs in, renders and filters photos, paginates, and opens t
   assert.equal(harness.elements["dashboard-workspace"].hidden, true);
   assert.equal(library.children.length, 0);
   assert.equal(harness.elements["attendance-list"].children.length, 0);
+  assert.equal(harness.elements["attendance-worker-filter"].value, "all");
+  assert.equal(harness.elements["attendance-worker-filter"].disabled, true);
   assert.ok(harness.revoked.length >= 2);
   assert.ok(harness.events.some((entry) => entry.name === "dashboard.load.completed"));
   assert.ok(harness.events.some((entry) => entry.name === "cloud.auth.state"));
@@ -434,8 +496,8 @@ test("dashboard controls and loading failures remain recoverable and observable"
   assert.ok(harness.events.some((entry) => entry.name === "attendance.load.failed"));
   assert.ok(harness.events.some((entry) => entry.name === "cloud.auth.failed"));
 
-  harness.auth(null, Object.assign(new Error("database missing"), { code: "failed-precondition" }));
-  assert.match(harness.elements["dashboard-status"].textContent, /Create the Firestore database/);
+  harness.auth(null, Object.assign(new Error("index missing"), { code: "failed-precondition" }));
+  assert.match(harness.elements["dashboard-status"].textContent, /needs an index/);
 });
 
 test("the dashboard disables sign-in when its Firebase client is missing", async () => {

@@ -318,17 +318,16 @@
   async function getAttendance(options = {}) {
     const cloud = services || (await ready);
     requireUser(cloud, "Sign in with Google to view attendance.");
-    const dateKey = normalizeAttendanceDateKey(
-      options.dateKey || localAttendanceDateKey(),
-    );
     const requestedSize = Math.floor(Number(options.pageSize) || 500);
     const pageSize = Math.min(500, Math.max(1, requestedSize));
-    const entries = cloud.firestoreSdk.collection(
-      cloud.db,
-      "attendanceDays",
-      dateKey,
-      "entries",
-    );
+    const entries = options.dateKey
+      ? cloud.firestoreSdk.collection(
+          cloud.db,
+          "attendanceDays",
+          normalizeAttendanceDateKey(options.dateKey),
+          "entries",
+        )
+      : cloud.firestoreSdk.collectionGroup(cloud.db, "entries");
     const snapshot = await cloud.firestoreSdk.getDocs(
       cloud.firestoreSdk.query(
         entries,
