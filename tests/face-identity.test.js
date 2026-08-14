@@ -111,8 +111,8 @@ test("the embedding model is lazy, throttled and returns only a numeric descript
     required: true,
     status: "scanning",
     samples: 1,
-    total: 5,
-    progress: 1 / 5,
+    total: 2,
+    progress: 1 / 2,
     workerId: null,
     personLabel: null,
   });
@@ -122,12 +122,9 @@ test("the embedding model is lazy, throttled and returns only a numeric descript
   assert.equal(calls.compute, 1);
 
   await recognizer.describe(bodies, source, 2_000);
-  await recognizer.describe(bodies, source, 3_000);
-  await recognizer.describe(bodies, source, 4_000);
-  await recognizer.describe(bodies, source, 5_000);
   assert.equal(recognizer.enrollmentState().status, "complete");
-  assert.equal(recognizer.enrollmentState().samples, 5);
-  assert.equal(calls.compute, 5);
+  assert.equal(recognizer.enrollmentState().samples, 2);
+  assert.equal(calls.compute, 2);
   assert.ok(harness.contexts[0].calls.some(([name]) => name === "clearRect"));
 });
 
@@ -253,23 +250,20 @@ test("the opening scan requires repeat agreement with a stored worker face", asy
 
   await recognizer.describe(bodies, source, 1_000);
   await recognizer.describe(bodies, source, 2_000);
-  await recognizer.describe(bodies, source, 3_000);
-  await recognizer.describe(bodies, source, 4_000);
-  await recognizer.describe(bodies, source, 5_000);
 
   const state = recognizer.enrollmentState();
   assert.equal(state.status, "complete");
   assert.equal(state.workerId, "WORKER-7");
   assert.equal(state.personLabel, "Ari Tan");
   assert.equal(state.candidateWorkerId, "WORKER-7");
-  assert.equal(state.matchVotes, 5);
-  assert.equal(state.requiredVotes, 4);
+  assert.equal(state.matchVotes, 2);
+  assert.equal(state.requiredVotes, 2);
   assert.ok(state.matchDistance < 0.001);
 });
 
-test("an unsuccessful opening scan explains the closest local match", async () => {
+test("an unsuccessful opening scan keeps retrying until two later views match", async () => {
   const harness = canvasHarness();
-  const live = [1, ...Array.from({ length: 127 }, () => 0)];
+  let live = [1, ...Array.from({ length: 127 }, () => 0)];
   const enrolled = [0, 1, ...Array.from({ length: 126 }, () => 0)];
   const recognizer = identity.createFaceIdentity({
     document: harness.document,
@@ -291,17 +285,24 @@ test("an unsuccessful opening scan explains the closest local match", async () =
   const bodies = [{ face: faceAt() }];
   const source = { videoWidth: 640, videoHeight: 480 };
 
-  for (let sample = 0; sample < 5; sample += 1) {
+  for (let sample = 0; sample < 2; sample += 1) {
     await recognizer.describe(bodies, source, 1_000 + sample * 1_000);
   }
 
   const state = recognizer.enrollmentState();
-  assert.equal(state.status, "not_recognized");
+  assert.equal(state.status, "retrying");
   assert.equal(state.candidateWorkerId, "WORKER-7");
   assert.equal(state.matchReason, "too_far");
   assert.equal(state.matchThreshold, 0.2);
   assert.ok(Math.abs(state.matchDistance - Math.sqrt(2)) < 0.000001);
   assert.equal("embedding" in state, false, "raw biometric vectors never enter UI state");
+
+  live = enrolled;
+  await recognizer.describe(bodies, source, 3_000);
+  assert.equal(recognizer.enrollmentState().status, "retrying");
+  await recognizer.describe(bodies, source, 4_000);
+  assert.equal(recognizer.enrollmentState().status, "complete");
+  assert.equal(recognizer.enrollmentState().workerId, "WORKER-7");
 });
 
 test("repeat agreement resolves two workers that are ambiguous in one frame", async () => {
@@ -332,13 +333,13 @@ test("repeat agreement resolves two workers that are ambiguous in one frame", as
   const bodies = [{ face: faceAt() }];
   const source = { videoWidth: 640, videoHeight: 480 };
 
-  for (let sample = 0; sample < 5; sample += 1) {
+  for (let sample = 0; sample < 2; sample += 1) {
     await recognizer.describe(bodies, source, 1_000 + sample * 1_000);
   }
 
   const state = recognizer.enrollmentState();
   assert.equal(state.status, "complete");
   assert.equal(state.workerId, "WORKER-7");
-  assert.equal(state.matchVotes, 5);
+  assert.equal(state.matchVotes, 2);
   assert.equal(state.matchReason, "ambiguous");
 });

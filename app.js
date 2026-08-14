@@ -39,8 +39,6 @@
   const faceEnrollmentMessage = document.querySelector("#face-enrollment-message");
   const faceEnrollmentMatch = document.querySelector("#face-enrollment-match");
   const faceEnrollmentWorkerId = document.querySelector("#face-enrollment-worker-id");
-  const faceEnrollmentProgress = document.querySelector("#face-enrollment-progress");
-  const faceEnrollmentCount = document.querySelector("#face-enrollment-count");
   const faceEnrollmentSkip = document.querySelector("#face-enrollment-skip");
   const capturesList = document.querySelector("#captures");
   const capturesSummary = document.querySelector("#captures-summary");
@@ -486,12 +484,13 @@
   let cloudSyncRequested = false;
   let lastTrackingErrorCode = null;
   let faceEnrollmentWasActive = false;
-  let lastFaceEnrollmentStatus = null;
   let faceMatchConfirmationVisible = false;
   let faceMatchConfirmationShown = false;
   let faceMatchConfirmationTimer = null;
-  let attendanceEventId = null;
-  let attendanceSavedForSession = false;
+  const attendanceEntriesForSession = new Map();
+  const attendanceMatchVotesForSession = new Map();
+  const enrolledWorkerNamesForSession = new Map();
+  let attendanceSessionVersion = 0;
 
   function createAttendanceEventId() {
     if (typeof window.crypto?.randomUUID === "function") {
@@ -508,36 +507,53 @@
   }
 
   function saveMatchedAttendance(enrollment) {
+    const workerId = String(enrollment?.workerId || "").trim().toUpperCase();
+    const personLabel = String(enrollment?.personLabel || workerId).trim();
+    if (!cloud?.saveAttendance || !workerId || !personLabel) {
+      return;
+    }
+
+    const now = Date.now();
+    const previous = attendanceEntriesForSession.get(workerId);
     if (
-      attendanceSavedForSession ||
-      !cloud?.saveAttendance ||
-      !enrollment?.workerId ||
-      !enrollment?.personLabel
+      previous?.status === "pending" ||
+      previous?.status === "saved" ||
+      (previous?.retryAt || 0) > now
     ) {
       return;
     }
 
-    attendanceSavedForSession = true;
-    attendanceEventId ||= createAttendanceEventId();
+    const eventId = previous?.eventId || createAttendanceEventId();
+    const sessionVersion = attendanceSessionVersion;
+    attendanceEntriesForSession.set(workerId, { eventId, status: "pending", retryAt: 0 });
     const checkedInAt = new Date();
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
 
     cloud
       .saveAttendance({
-        eventId: attendanceEventId,
-        workerId: enrollment.workerId,
-        displayName: enrollment.personLabel,
+        eventId,
+        workerId,
+        displayName: personLabel,
         checkedInAtMs: checkedInAt.getTime(),
         dateKey: attendanceDateKey(checkedInAt),
         timeZone,
         location: addressField.value,
       })
       .then(() => {
+        if (sessionVersion !== attendanceSessionVersion) return;
+        attendanceEntriesForSession.set(workerId, { eventId, status: "saved", retryAt: 0 });
+        setMonitorStatus(`${personLabel} attendance recorded.`, "success");
         telemetry?.event("attendance.saved", { status: "success" });
       })
       .catch((error) => {
+        if (sessionVersion !== attendanceSessionVersion) return;
+        attendanceEntriesForSession.set(workerId, {
+          eventId,
+          status: "retrying",
+          retryAt: Date.now() + 10_000,
+        });
         setMonitorStatus(
-          `${enrollment.personLabel} matched, but attendance could not sync. Start a new check-in to retry.`,
+          `${personLabel} matched, but attendance could not sync yet. It will retry while they remain in view.`,
           "error",
         );
         telemetry?.event(
@@ -549,6 +565,27 @@
           { immediate: true },
         );
       });
+  }
+
+  function saveVisibleAttendance(bodies = []) {
+    const seenWorkers = new Set();
+    (bodies || []).forEach((body) => {
+      const workerId = String(body?.workerId || "").trim().toUpperCase();
+      if (!workerId || !body?.faceMatched || seenWorkers.has(workerId)) return;
+      seenWorkers.add(workerId);
+
+      const entry = attendanceEntriesForSession.get(workerId);
+      if (entry?.status === "pending" || entry?.status === "saved") return;
+
+      const votes = (attendanceMatchVotesForSession.get(workerId) || 0) + 1;
+      attendanceMatchVotesForSession.set(workerId, votes);
+      if (votes < 2) return;
+
+      saveMatchedAttendance({
+        workerId,
+        personLabel: enrolledWorkerNamesForSession.get(workerId) || workerId,
+      });
+    });
   }
 
   function setMonitorStatus(message, state = "idle") {
@@ -1247,7 +1284,7 @@
     );
     const total = Math.max(
       1,
-      Number(enrollment?.total) || Number(facialRecognition?.DEFAULTS?.enrollmentSamples) || 5,
+      Number(enrollment?.total) || Number(facialRecognition?.DEFAULTS?.enrollmentSamples) || 2,
     );
     const samples = Math.max(0, Math.min(total, Number(enrollment?.samples) || 0));
     const completedNow = Boolean(
@@ -1278,12 +1315,13 @@
       one_person: "Keep one person in frame for this first scan.",
       hold_still: "Hold still for a moment so the next view stays sharp.",
       face_changed: "Keep the same face in view and hold still.",
-      scanning: "Great — stay close while five clear views are compared.",
+      scanning: "Great — stay close while attendance is verified.",
+      retrying: "No match yet — keep your face in the oval. Scanning continues automatically.",
       not_recognized:
-        "This face does not match an enrolled worker. Move closer or open worker onboarding.",
+        "No match yet — keep your face in the oval. Scanning continues automatically.",
       unavailable: "Face scan could not start. You can continue without face matching.",
     };
-    let instruction = instructions[enrollment?.status] || instructions.no_face;
+    const instruction = instructions[enrollment?.status] || instructions.no_face;
     const matchDistance = Number(enrollment?.matchDistance);
     const telemetryMatchDistance =
       enrollment?.matchDistance !== null &&
@@ -1291,26 +1329,6 @@
       Number.isFinite(matchDistance)
         ? matchDistance
         : Number.NaN;
-    const matchThreshold = Number(enrollment?.matchThreshold);
-    const candidateWorkerId = String(enrollment?.candidateWorkerId || "").trim();
-    if (
-      enrollment?.status === "not_recognized" &&
-      candidateWorkerId &&
-      Number.isFinite(matchDistance) &&
-      Number.isFinite(matchThreshold)
-    ) {
-      instruction =
-        enrollment.matchReason === "ambiguous"
-          ? `The scan is too similar to more than one enrollment. Re-enroll ${candidateWorkerId} with seven clear views.`
-          : `Closest worker: ${candidateWorkerId} · match distance ${matchDistance.toFixed(2)} (needs ${matchThreshold.toFixed(2)} or less). Re-enroll this worker if the ID is correct.`;
-    } else if (
-      enrollment?.status === "scanning" &&
-      candidateWorkerId &&
-      Number(enrollment?.matchVotes) > 0
-    ) {
-      instruction = `${instructions.scanning} ${candidateWorkerId}: ${enrollment.matchVotes} of ${enrollment.requiredVotes} matching views.`;
-    }
-
     if (faceEnrollmentKicker) {
       faceEnrollmentKicker.textContent = confirming ? "Attendance confirmed" : "Worker check-in";
     }
@@ -1332,35 +1350,8 @@
     if (faceEnrollmentWorkerId) {
       faceEnrollmentWorkerId.textContent = confirming ? enrollment?.workerId || "" : "";
     }
-    if (faceEnrollmentProgress) {
-      faceEnrollmentProgress.max = total;
-      faceEnrollmentProgress.value = samples;
-    }
-    if (faceEnrollmentCount) {
-      faceEnrollmentCount.textContent = `${samples} of ${total}`;
-    }
-
     faceEnrollment.dataset.status = confirming ? "complete" : enrollment?.status || "no_face";
     faceEnrollment.hidden = !(active || confirming);
-
-    if (
-      active &&
-      enrollment?.status === "not_recognized" &&
-      lastFaceEnrollmentStatus !== "not_recognized"
-    ) {
-      telemetry?.event(
-        "face.match.failed",
-        {
-          errorCode: enrollment.matchReason || "insufficient_consensus",
-          matchDistance: telemetryMatchDistance,
-          matchVotes: Number(enrollment.matchVotes) || 0,
-          requiredVotes: Number(enrollment.requiredVotes) || 0,
-          sampleCount: samples,
-          status: "failed",
-        },
-        { immediate: true },
-      );
-    }
 
     if (faceEnrollmentWasActive && !active && state.running) {
       enrollmentFaceScanner?.close?.();
@@ -1390,7 +1381,6 @@
       }
     }
     faceEnrollmentWasActive = active;
-    lastFaceEnrollmentStatus = enrollment?.status || null;
   }
 
   function renderState(state) {
@@ -2129,6 +2119,7 @@
     try {
       const before = activeController.getState().captures;
       const state = await activeController.tick();
+      saveVisibleAttendance(state.bodies);
 
       if (state.captures !== before) {
         telemetry?.event("capture.saved", {
@@ -2170,8 +2161,10 @@
 
   async function startMonitor() {
     const monitorStartedAt = performance.now();
-    attendanceEventId = createAttendanceEventId();
-    attendanceSavedForSession = false;
+    attendanceSessionVersion += 1;
+    attendanceEntriesForSession.clear();
+    attendanceMatchVotesForSession.clear();
+    enrolledWorkerNamesForSession.clear();
     if (!navigator.mediaDevices?.getUserMedia) {
       setMonitorStatus("This browser cannot open a live camera — choose a photo instead.", "error");
       telemetry?.event(
@@ -2204,6 +2197,11 @@
         return;
       }
     }
+    enrolledWorkers.forEach((worker) => {
+      const workerId = String(worker?.workerId || "").trim().toUpperCase();
+      const displayName = String(worker?.displayName || workerId).trim();
+      if (workerId) enrolledWorkerNamesForSession.set(workerId, displayName || workerId);
+    });
 
     setMonitorStatus("Starting the camera…");
 
@@ -2356,8 +2354,10 @@
     faceMatchConfirmationTimer = null;
     faceMatchConfirmationVisible = false;
     faceMatchConfirmationShown = false;
-    attendanceEventId = null;
-    attendanceSavedForSession = false;
+    attendanceSessionVersion += 1;
+    attendanceEntriesForSession.clear();
+    attendanceMatchVotesForSession.clear();
+    enrolledWorkerNamesForSession.clear();
     captureFlash?.classList.remove("is-visible");
     window.cancelAnimationFrame(painter);
     painter = null;
@@ -2397,7 +2397,6 @@
       faceEnrollment.hidden = true;
     }
     faceEnrollmentWasActive = false;
-    lastFaceEnrollmentStatus = null;
     setToggleLabel(false);
     setMonitorStatus("Auto capture stopped. Your photos are still stored on this device.");
   }

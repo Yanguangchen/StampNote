@@ -1,3 +1,5 @@
+process.env.TZ = "UTC";
+
 const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const { resolve } = require("node:path");
@@ -119,6 +121,10 @@ function createAdminHarness(options = {}) {
     "attendance-list",
     "present-worker-count",
     "attendance-checkin-count",
+    "location-options",
+    "date-options",
+    "session-options",
+    "scope-breadcrumb",
   ];
   const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement()]));
   elements["photo-filter"].value = "all";
@@ -322,7 +328,12 @@ test("photos and daily attendance share one dashboard without status or access-c
   assert.match(adminHtml, /id="photo-library"/);
   assert.match(adminHtml, /id="attendance-list"/);
   assert.match(adminHtml, /id="attendance-worker-filter"/);
+  assert.match(adminHtml, /id="location-options"/);
+  assert.match(adminHtml, /id="date-options"/);
+  assert.match(adminHtml, /id="session-options"/);
+  assert.match(adminHtml, /id="scope-breadcrumb"/);
   assert.match(adminCss, /\.dashboard-workspace\s*\{[^}]*grid-template-columns:/);
+  assert.match(adminCss, /\.scope-rail\s*\{/);
   assert.doesNotMatch(adminHtml, /Authenticated cloud library/);
   assert.doesNotMatch(adminHtml, /Only Gemini-reviewed batches appear here/);
   assert.doesNotMatch(adminHtml, /system-health|System online/);
@@ -353,44 +364,54 @@ test("the dashboard signs in, renders and filters photos, paginates, and opens t
   assert.equal(harness.cloudCalls.attendance[0].dateKey, undefined);
   assert.deepEqual(harness.cloudCalls.blobs.sort(), ["flagged", "kept"]);
 
-  assert.equal(harness.elements["present-worker-count"].textContent, "2");
-  assert.equal(harness.elements["attendance-checkin-count"].textContent, "5");
+  // The dashboard opens on one location, one date and the whole of that day.
   const attendanceList = harness.elements["attendance-list"];
+  const locationOptions = harness.elements["location-options"];
+  const dateOptions = harness.elements["date-options"];
+  const sessionOptions = harness.elements["session-options"];
+  const optionTitles = (container) =>
+    container.children.map((option) => option.children[0].textContent);
+
+  assert.deepEqual(optionTitles(locationOptions), ["Orchard Road", "10 Marina Bay"]);
+  assert.equal(locationOptions.children[1].dataset.selected, "true");
+  assert.equal(dateOptions.children.length, 2);
+  assert.equal(dateOptions.children[1].dataset.selected, "true");
+  assert.deepEqual(optionTitles(sessionOptions), [
+    "Whole day",
+    "Morning · 1:00 AM – 11:00 AM",
+    "Afternoon · 12:34 PM",
+  ]);
+  assert.equal(sessionOptions.children[0].dataset.selected, "true");
+  assert.match(harness.elements["scope-breadcrumb"].textContent, /^10 Marina Bay · /);
+  assert.match(harness.elements["scope-breadcrumb"].textContent, /Whole day$/);
+
+  assert.equal(harness.elements["present-worker-count"].textContent, "1");
+  assert.equal(harness.elements["attendance-checkin-count"].textContent, "1");
   assert.equal(
-    descendants(attendanceList).filter(
-      (entry) => entry.className === "attendance-row",
-    ).length,
-    4,
+    descendants(attendanceList).filter((entry) => entry.className === "attendance-row").length,
+    1,
   );
-  const attendanceLocations = descendants(attendanceList).filter(
-    (entry) => entry.className === "attendance-location-heading",
+  assert.match(
+    harness.elements["attendance-status"].textContent,
+    /1 worker · 1 check-in in this session/,
   );
   assert.deepEqual(
-    attendanceLocations.map((entry) => entry.children[0].textContent),
-    ["10 Marina Bay", "Orchard Road"],
+    harness.elements["attendance-worker-filter"].children.map((entry) => entry.textContent),
+    ["All workers", "Ari Tan · WORKER-7"],
   );
-  assert.equal(
-    descendants(attendanceList).filter(
-      (entry) => entry.className === "attendance-date-heading",
-    ).length,
-    3,
-  );
-  assert.match(harness.elements["attendance-status"].textContent, /2 workers · 5 recent check-ins/);
-  assert.equal(harness.elements["attendance-worker-filter"].disabled, false);
+
+  // Choosing another site swaps both the roster and the photographs below it.
+  await locationOptions.children[0].dispatch("click");
+  assert.match(harness.elements["scope-breadcrumb"].textContent, /^Orchard Road · /);
+  assert.equal(harness.elements["present-worker-count"].textContent, "2");
+  assert.equal(harness.elements["attendance-checkin-count"].textContent, "2");
+  assert.equal(dateOptions.children.length, 1);
+  assert.deepEqual(optionTitles(sessionOptions), ["Whole day", "Morning · 2:00 AM – 7:00 AM"]);
+  assert.equal(harness.elements["dashboard-status"].textContent, "0 of 2 loaded photos");
   assert.deepEqual(
     harness.elements["attendance-worker-filter"].children.map((entry) => entry.textContent),
     ["All workers", "Ari Tan · WORKER-7", "Bo Lim · WORKER-9"],
   );
-
-  harness.elements["attendance-worker-filter"].value = "WORKER-7";
-  await harness.elements["attendance-worker-filter"].dispatch("change");
-  assert.equal(harness.elements["present-worker-count"].textContent, "1");
-  assert.equal(harness.elements["attendance-checkin-count"].textContent, "4");
-  assert.equal(
-    descendants(attendanceList).filter((entry) => entry.className === "attendance-row").length,
-    3,
-  );
-  assert.match(harness.elements["attendance-status"].textContent, /Ari Tan · 4 recent check-ins/);
 
   harness.elements["attendance-worker-filter"].value = "WORKER-9";
   await harness.elements["attendance-worker-filter"].dispatch("change");
@@ -399,9 +420,24 @@ test("the dashboard signs in, renders and filters photos, paginates, and opens t
     descendants(attendanceList).filter((entry) => entry.className === "attendance-row").length,
     1,
   );
+  assert.match(harness.elements["attendance-status"].textContent, /Bo Lim · 1 check-in/);
 
   harness.elements["attendance-worker-filter"].value = "all";
   await harness.elements["attendance-worker-filter"].dispatch("change");
+
+  // Back to the site that holds the photographs, then down to one time session.
+  await locationOptions.children[1].dispatch("click");
+  await dateOptions.children[1].dispatch("click");
+  await sessionOptions.children[2].dispatch("click");
+  assert.match(harness.elements["scope-breadcrumb"].textContent, /Afternoon session$/);
+  assert.equal(harness.elements["attendance-checkin-count"].textContent, "0");
+  assert.match(
+    attendanceList.children[0].textContent,
+    /No worker checked in during this session/,
+  );
+  assert.equal(harness.elements["dashboard-status"].textContent, "1 of 2 loaded photos");
+
+  await sessionOptions.children[0].dispatch("click");
 
   const library = harness.elements["photo-library"];
   const cards = descendants(library).filter((entry) => entry.className === "photo-card");
@@ -447,7 +483,7 @@ test("the dashboard signs in, renders and filters photos, paginates, and opens t
   ]);
   await harness.elements["load-more"].dispatch("click");
   await settle();
-  assert.equal(harness.elements["dashboard-status"].textContent, "3 of 3 loaded photos");
+  assert.equal(harness.elements["dashboard-status"].textContent, "2 of 3 loaded photos");
   assert.equal(harness.elements["load-more-row"].hidden, true);
   assert.equal(harness.cloudCalls.pages[1].pageSize, 48);
   assert.equal(harness.cloudCalls.pages[1].after.id, "cursor-1");

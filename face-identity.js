@@ -9,7 +9,7 @@
     minimumEyePixels: 12,
     modelPath: "./vendor/face-api/model",
     sampleMs: 1_000,
-    enrollmentSamples: 5,
+    enrollmentSamples: 2,
     enrollmentMinimumEyePixels: 52,
     enrollmentMinimumEyeRatio: 0.055,
     enrollmentMaximumRoll: 0.16,
@@ -17,12 +17,12 @@
     enrollmentMaximumScaleShift: 0.28,
     enrollmentMaximumRollShift: 0.14,
     enrollmentConsistencyThreshold: 0.72,
-    // Unit normalization makes front/rear-camera distances comparable. Five
-    // samples and four agreeing votes permit a modest cross-camera tolerance
-    // without allowing one loose descriptor to name a worker.
+    // Unit normalization makes front/rear-camera distances comparable. Two
+    // samples must both agree, keeping the check quick without allowing one
+    // loose descriptor to name a worker.
     knownIdentityThreshold: 0.68,
     knownIdentityMargin: 0.05,
-    knownIdentityVotes: 4,
+    knownIdentityVotes: 2,
   });
 
   function featureCenter(face, feature) {
@@ -173,9 +173,9 @@
     ) {
       // One frame can be close to two workers, especially when every worker
       // has several enrollment views. Keep its nearest candidate so the
-      // five-frame consensus can resolve the ambiguity. A single ambiguous
+      // two-frame check can resolve the ambiguity. A single ambiguous
       // descriptor is never enough to identify anyone: the same worker must
-      // still win at least four independent samples.
+      // still win both independent samples.
       return {
         match: { ...nearest.identity, distance: nearest.distance, ambiguous: true },
         nearest,
@@ -407,7 +407,7 @@
                 } else {
                   enrollmentStatus =
                     enrollmentMatches.length >= settings.enrollmentSamples
-                      ? "not_recognized"
+                      ? "retrying"
                       : "scanning";
                 }
               } else {

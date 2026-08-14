@@ -95,6 +95,7 @@ test("an enrolled face restores its stable worker ID before anonymous tracking b
     1_000,
   );
   assert.equal(matched.bodies[0].workerId, "WORKER-007");
+  assert.equal(matched.bodies[0].faceMatched, true);
   assert.equal(matched.bodies[0].personLabel, "WORKER-007");
   assert.equal(matched.uniqueCount, 1);
 
@@ -104,6 +105,7 @@ test("an enrolled face restores its stable worker ID before anonymous tracking b
     5_000,
   );
   assert.equal(returned.bodies[0].workerId, "WORKER-007");
+  assert.equal(returned.bodies[0].faceMatched, true);
 });
 
 test("workers without a roster match stay explicit while the internal track ID remains stable", () => {

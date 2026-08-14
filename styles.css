@@ -112,6 +112,15 @@ button {
   }
 }
 
+@keyframes face-enrollment-progress {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
+
 @keyframes face-match-card {
   from {
     opacity: 0;
@@ -620,34 +629,25 @@ button {
 .face-enrollment-progress-row {
   display: flex;
   align-items: center;
-  gap: 10px;
   width: min(100%, 280px);
 }
 
-.face-enrollment-progress-row progress {
+.face-enrollment-progress {
   width: 100%;
   height: 7px;
   overflow: hidden;
-  border: 0;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.2);
-  accent-color: var(--accent);
-}
-
-.face-enrollment-progress-row progress::-webkit-progress-bar {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.2);
 }
 
-.face-enrollment-progress-row progress::-webkit-progress-value {
+.face-enrollment-progress span {
+  display: block;
+  width: 42%;
+  height: 100%;
   border-radius: 999px;
-  background: var(--accent);
-}
-
-.face-enrollment-count {
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 12px;
-  white-space: nowrap;
+  background: linear-gradient(90deg, rgba(70, 211, 159, 0.4), var(--accent));
+  box-shadow: 0 0 12px rgba(70, 211, 159, 0.6);
+  animation: face-enrollment-progress 1.1s ease-in-out infinite;
 }
 
 .face-enrollment-match {

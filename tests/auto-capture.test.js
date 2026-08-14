@@ -86,7 +86,7 @@ function createHarness(options = {}) {
   return harness;
 }
 
-function createEnrollmentIdentity(total = 5) {
+function createEnrollmentIdentity(total = 2) {
   let samples = 0;
   return {
     async describe(bodies) {
@@ -108,21 +108,15 @@ function createEnrollmentIdentity(total = 5) {
   };
 }
 
-test("face enrollment pauses every shutter until five close samples are ready", async () => {
+test("face enrollment pauses every shutter until two close samples are ready", async () => {
   const harness = createHarness({ faceIdentity: createEnrollmentIdentity() });
   harness.present = true;
   harness.controller.start();
 
   assert.equal(harness.controller.getState().activityStarted, false);
   await harness.controller.tick();
-  await harness.controller.tick();
   assert.equal(harness.saved.length, 0);
-  assert.equal(harness.controller.getState().faceEnrollment.samples, 2);
-
-  await harness.controller.tick();
-  await harness.controller.tick();
-  assert.equal(harness.saved.length, 0);
-  assert.equal(harness.controller.getState().activityStarted, false);
+  assert.equal(harness.controller.getState().faceEnrollment.samples, 1);
 
   await harness.controller.tick();
   assert.equal(harness.saved.length, 0, "completion begins the activity without an early photo");
@@ -491,6 +485,22 @@ test("every update is published so the interface can follow along", async () => 
 test("the badge says who is in frame, at what cadence, and when the next photo lands", () => {
   assert.equal(autoCapture.describeCadence({ running: false }), "Auto capture is off.");
   assert.match(autoCapture.describeCadence({ running: true, paused: true }), /Paused/);
+  assert.equal(
+    autoCapture.describeCadence({
+      running: true,
+      activityStarted: false,
+      faceEnrollment: { required: true, status: "retrying", samples: 2, total: 2 },
+    }),
+    "No match yet — scanning continues automatically",
+  );
+  assert.doesNotMatch(
+    autoCapture.describeCadence({
+      running: true,
+      activityStarted: false,
+      faceEnrollment: { required: true, status: "scanning", samples: 1, total: 2 },
+    }),
+    /\d+\s+of\s+\d+/i,
+  );
 
   assert.equal(
     autoCapture.describeCadence({

@@ -871,6 +871,7 @@
           ...publicBody,
           personId: track.id,
           ...(track.workerId ? { workerId: track.workerId } : {}),
+          ...(track.workerId && faceEmbedding ? { faceMatched: true } : {}),
           personLabel: track.workerId || "TRACKING WORKER",
         };
       });

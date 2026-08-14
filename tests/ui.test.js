@@ -82,10 +82,14 @@ test("the installable app launches in fullscreen with complete PWA icons", () =>
 test("face enrollment visibly pauses the activity and explains how to complete it", () => {
   assert.ok(hasAttribute(tagWithId("section", "face-enrollment"), "hidden"));
   assert.match(html, /Attendance taking/);
-  assert.match(tagWithId("progress", "face-enrollment-progress"), /aria-label=["']Attendance taking progress["']/);
+  assert.match(tagWithId("div", "face-enrollment-progress"), /role=["']progressbar["']/);
+  assert.match(tagWithId("div", "face-enrollment-progress"), /aria-label=["']Attendance taking progress["']/);
   assert.match(html, /Move closer until your face fills the oval/);
-  assert.match(html, /Five clear views are compared on this device and erased when recording stops/);
-  assert.match(tagWithId("progress", "face-enrollment-progress"), /max=["']5["']/);
+  assert.match(html, /Face matching stays on this device and clears when recording stops/);
+  assert.doesNotMatch(html, /\d+ clear views/i);
+  assert.doesNotMatch(html, /face-enrollment-count/);
+  assert.doesNotMatch(tagWithId("div", "face-enrollment-progress"), /aria-valuenow|max=["']/);
+  assert.match(css, /\.face-enrollment-progress span\s*\{[^}]*animation:\s*face-enrollment-progress/);
   assert.match(tagWithId("button", "face-enrollment-skip"), /type=["']button["']/);
   assert.match(html, /id="face-enrollment-match"[^>]*aria-live="assertive"/);
   assert.match(html, /id="face-enrollment-worker-id"/);
@@ -662,7 +666,8 @@ test("cloud photos require sign-in and the admin dashboard groups them by place 
   assert.ok(existsSync(resolve(projectRoot, "admin.css")));
   assert.match(admin, /id=["']photo-library["']/);
   assert.match(admin, /Continue with Google/);
-  assert.match(adminApp, /data\.groupPhotos\(visible\)/);
+  assert.match(adminApp, /function buildScope\(\)/);
+  assert.match(adminApp, /function scopedPhotos\(view\)/);
   assert.match(adminApp, /cloud\.getPhotosPage/);
   assert.match(adminApp, /cloud\.getPhotoBlob/);
   assert.equal(/getDownloadURL/.test(firebase), false);
@@ -942,14 +947,20 @@ test("nothing animates behind the picture", () => {
   // The old card interface panned a grid across the background forever. The
   // camera is the background now, and a loop under it is both a distraction
   // and a phone's battery burning on a decoration. Continuous animation is
-  // limited to the temporary, explicitly visible Gemini review indicator.
+  // limited to temporary, explicitly visible task indicators.
   const infiniteAnimationSelectors = [...css.matchAll(
     /([^{}]+)\{[^{}]*animation:[^;]*infinite/g,
   )].map((match) => match[1].trim());
 
   assert.equal(/grid-pan/.test(css), false);
   assert.ok(infiniteAnimationSelectors.length > 0);
-  assert.ok(infiniteAnimationSelectors.every((selector) => selector.startsWith(".ai-review-")));
+  assert.ok(
+    infiniteAnimationSelectors.every(
+      (selector) =>
+        selector.startsWith(".ai-review-") ||
+        selector.startsWith(".face-enrollment-progress"),
+    ),
+  );
   assert.equal(/body::before|body::after/.test(css), false);
 });
 

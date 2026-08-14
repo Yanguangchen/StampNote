@@ -49,59 +49,89 @@
       </section>
 
       <div class="dashboard-workspace" id="dashboard-workspace" hidden>
-        <section class="dashboard-panel photos-panel" aria-labelledby="photos-title">
-          <div class="panel-heading">
-            <div>
-              <h2 id="photos-title">Photos</h2>
-            </div>
-            <div class="toolbar" id="gallery-toolbar" hidden>
-              <label for="photo-filter">Show</label>
-              <select id="photo-filter">
-                <option value="all">All reviewed photos</option>
-                <option value="kept">Kept photos</option>
-                <option value="flagged">AI review bin</option>
-              </select>
-            </div>
-          </div>
-
-          <section class="photo-library" id="photo-library" aria-label="Cloud photos" hidden></section>
-
-          <div class="load-more-row" id="load-more-row" hidden>
-            <button class="button button-quiet" id="load-more" type="button">Load more photos</button>
-          </div>
-        </section>
-
-        <aside class="dashboard-panel attendance-panel" id="attendance-panel" aria-labelledby="attendance-title">
-          <div class="panel-heading attendance-heading">
-            <div>
-              <h2 id="attendance-title">Attendance</h2>
-            </div>
+        <nav class="scope-rail" aria-label="Choose a location, date and time session">
+          <div class="scope-rail-heading">
+            <h2>Sessions</h2>
             <button class="button button-quiet attendance-refresh" id="attendance-refresh" type="button">
               Refresh
             </button>
           </div>
 
-          <div class="attendance-filter">
-            <label for="attendance-worker-filter">Worker</label>
-            <select id="attendance-worker-filter" disabled>
-              <option value="all">All workers</option>
-            </select>
-          </div>
+          <section class="scope-step" aria-labelledby="location-step-title">
+            <h3 class="scope-step-title" id="location-step-title">
+              <span class="scope-step-number" aria-hidden="true">1</span> Location
+            </h3>
+            <div class="scope-options" id="location-options"></div>
+          </section>
 
-          <div class="attendance-summary" aria-label="Attendance summary">
-            <div>
-              <strong id="present-worker-count">0</strong>
-              <span>Workers</span>
-            </div>
-            <div>
-              <strong id="attendance-checkin-count">0</strong>
-              <span>Check-ins</span>
-            </div>
-          </div>
+          <section class="scope-step" aria-labelledby="date-step-title">
+            <h3 class="scope-step-title" id="date-step-title">
+              <span class="scope-step-number" aria-hidden="true">2</span> Date
+            </h3>
+            <div class="scope-options" id="date-options"></div>
+          </section>
 
-          <p class="attendance-status" id="attendance-status" role="status" aria-live="polite"></p>
-          <div class="attendance-list" id="attendance-list"></div>
-        </aside>
+          <section class="scope-step" aria-labelledby="session-step-title">
+            <h3 class="scope-step-title" id="session-step-title">
+              <span class="scope-step-number" aria-hidden="true">3</span> Time session
+            </h3>
+            <div class="scope-options" id="session-options"></div>
+          </section>
+        </nav>
+
+        <div class="dashboard-detail">
+          <p class="scope-breadcrumb" id="scope-breadcrumb" role="status" aria-live="polite"></p>
+
+          <section class="dashboard-panel attendance-panel" id="attendance-panel" aria-labelledby="attendance-title">
+            <div class="panel-heading attendance-heading">
+              <div>
+                <h2 id="attendance-title">Attendance</h2>
+              </div>
+              <div class="attendance-filter">
+                <label for="attendance-worker-filter">Worker</label>
+                <select id="attendance-worker-filter" disabled>
+                  <option value="all">All workers</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="attendance-summary" aria-label="Attendance summary">
+              <div>
+                <strong id="present-worker-count">0</strong>
+                <span>Workers</span>
+              </div>
+              <div>
+                <strong id="attendance-checkin-count">0</strong>
+                <span>Check-ins</span>
+              </div>
+            </div>
+
+            <p class="attendance-status" id="attendance-status" role="status" aria-live="polite"></p>
+            <div class="attendance-list" id="attendance-list"></div>
+          </section>
+
+          <section class="dashboard-panel photos-panel" aria-labelledby="photos-title">
+            <div class="panel-heading">
+              <div>
+                <h2 id="photos-title">Photos</h2>
+              </div>
+              <div class="toolbar" id="gallery-toolbar" hidden>
+                <label for="photo-filter">Show</label>
+                <select id="photo-filter">
+                  <option value="all">All reviewed photos</option>
+                  <option value="kept">Kept photos</option>
+                  <option value="flagged">AI review bin</option>
+                </select>
+              </div>
+            </div>
+
+            <section class="photo-library" id="photo-library" aria-label="Cloud photos" hidden></section>
+
+            <div class="load-more-row" id="load-more-row" hidden>
+              <button class="button button-quiet" id="load-more" type="button">Load more photos</button>
+            </div>
+          </section>
+        </div>
       </div>
     </main>
 

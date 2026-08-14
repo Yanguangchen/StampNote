@@ -45,7 +45,7 @@
         <canvas class="monitor-overlay" id="pose-overlay" aria-hidden="true"></canvas>
       </div>
 
-      <!-- Attendance taking waits here until the first person has supplied five
+      <!-- Attendance taking waits here until the first person has supplied two
            clear on-device face samples. The scan can be bypassed, so an older
            device or a covered face never prevents the activity from starting. -->
       <section
@@ -76,16 +76,17 @@
             <strong id="face-enrollment-worker-id"></strong>
           </div>
           <div class="face-enrollment-progress-row">
-            <progress
+            <div
+              class="face-enrollment-progress"
               id="face-enrollment-progress"
-              value="0"
-              max="5"
+              role="progressbar"
               aria-label="Attendance taking progress"
-            ></progress>
-            <span class="face-enrollment-count" id="face-enrollment-count">0 of 5</span>
+            >
+              <span aria-hidden="true"></span>
+            </div>
           </div>
           <p class="face-enrollment-privacy" id="face-enrollment-privacy">
-            Five clear views are compared on this device and erased when recording stops.
+            Face matching stays on this device and clears when recording stops.
           </p>
           <button class="face-enrollment-skip" id="face-enrollment-skip" type="button">
             Continue without worker ID

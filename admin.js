@@ -23,6 +23,10 @@
   const dialogReview = document.querySelector("#dialog-review");
   const attendanceRefresh = document.querySelector("#attendance-refresh");
   const attendanceWorkerFilter = document.querySelector("#attendance-worker-filter");
+  const locationOptions = document.querySelector("#location-options");
+  const dateOptions = document.querySelector("#date-options");
+  const sessionOptions = document.querySelector("#session-options");
+  const scopeBreadcrumb = document.querySelector("#scope-breadcrumb");
   const attendanceStatus = document.querySelector("#attendance-status");
   const attendanceList = document.querySelector("#attendance-list");
   const presentWorkerCount = document.querySelector("#present-worker-count");
@@ -36,9 +40,19 @@
   let hasMore = false;
   let loading = false;
   let loadingAttendance = false;
+  let photoLoadFailed = false;
   let attendance = [];
   let renderVersion = 0;
   const photoUrls = new Map();
+
+  // A day is read as three working sessions so a location's morning crew is
+  // never mixed with the people who arrived after lunch.
+  const SESSIONS = [
+    { id: "morning", label: "Morning", fromHour: 0, toHour: 12 },
+    { id: "afternoon", label: "Afternoon", fromHour: 12, toHour: 17 },
+    { id: "evening", label: "Evening", fromHour: 17, toHour: 24 },
+  ];
+  const selection = { locationKey: null, dateKey: null, sessionId: "all" };
 
   function setStatus(message, state = "idle") {
     status.textContent = message;
@@ -146,16 +160,152 @@
     return [...workers.values()].sort((left, right) => right.latestAtMs - left.latestAtMs);
   }
 
-  function attendanceForSelectedWorker() {
-    const selectedWorkerId = attendanceWorkerFilter.value;
-    return selectedWorkerId === "all"
-      ? attendance
-      : attendance.filter((entry) => entry.workerId === selectedWorkerId);
+  function photoTimeMs(photo) {
+    return Number(photo?.capturedAtMs) || Date.parse(photo?.capturedAt) || 0;
   }
 
-  function updateAttendanceWorkerOptions() {
+  function sessionDefinitionFor(value) {
+    const date = new Date(value);
+    const hour = Number.isNaN(date.getTime()) ? 0 : date.getHours();
+    return (
+      SESSIONS.find(
+        (session) => hour >= session.fromHour && hour < session.toHour,
+      ) || SESSIONS[0]
+    );
+  }
+
+  function countWorkers(entries) {
+    return new Set(entries.map((entry) => entry.workerId)).size;
+  }
+
+  function plural(count, noun) {
+    return `${count} ${noun}${count === 1 ? "" : "s"}`;
+  }
+
+  // Check-ins and photographs share one location → date → session tree so the
+  // dashboard only ever shows one site's work at a time.
+  function buildScope() {
+    const locations = new Map();
+
+    function locationNode(rawLocation, atMs) {
+      const location = data.normalizeLocation(rawLocation);
+      const locationKey = data.createLocationKey(location);
+      if (!locations.has(locationKey)) {
+        locations.set(locationKey, { location, locationKey, latestAtMs: 0, dates: new Map() });
+      }
+      const node = locations.get(locationKey);
+      node.latestAtMs = Math.max(node.latestAtMs, atMs || 0);
+      return node;
+    }
+
+    function dateNode(location, rawDateKey, atMs) {
+      const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(rawDateKey || "")
+        ? rawDateKey
+        : "unknown-date";
+      if (!location.dates.has(dateKey)) {
+        location.dates.set(dateKey, {
+          dateKey,
+          latestAtMs: 0,
+          entries: [],
+          photos: [],
+          sessions: new Map(),
+        });
+      }
+      const node = location.dates.get(dateKey);
+      node.latestAtMs = Math.max(node.latestAtMs, atMs || 0);
+      return node;
+    }
+
+    function sessionNode(dateGroup, atMs) {
+      const definition = sessionDefinitionFor(atMs);
+      if (!dateGroup.sessions.has(definition.id)) {
+        dateGroup.sessions.set(definition.id, { ...definition, entries: [], photos: [] });
+      }
+      return dateGroup.sessions.get(definition.id);
+    }
+
+    attendance.forEach((entry) => {
+      const location = locationNode(entry.location, entry.checkedInAtMs);
+      const dateGroup = dateNode(location, entry.dateKey, entry.checkedInAtMs);
+      dateGroup.entries.push(entry);
+      sessionNode(dateGroup, entry.checkedInAtMs).entries.push(entry);
+    });
+
+    photos.forEach((photo) => {
+      const atMs = photoTimeMs(photo);
+      const location = locationNode(photo.location, atMs);
+      const dateGroup = dateNode(location, photo.dateKey, atMs);
+      dateGroup.photos.push(photo);
+      sessionNode(dateGroup, atMs).photos.push(photo);
+    });
+
+    return [...locations.values()]
+      .sort(
+        (left, right) =>
+          right.latestAtMs - left.latestAtMs ||
+          left.location.localeCompare(right.location),
+      )
+      .map((location) => {
+        const dates = [...location.dates.values()]
+          .sort((left, right) => right.dateKey.localeCompare(left.dateKey))
+          .map((dateGroup) => ({
+            ...dateGroup,
+            sessions: SESSIONS.map((definition) => dateGroup.sessions.get(definition.id))
+              .filter(Boolean)
+              .map((session) => ({
+                ...session,
+                entries: [...session.entries].sort(
+                  (left, right) => left.checkedInAtMs - right.checkedInAtMs,
+                ),
+              })),
+          }));
+
+        return {
+          ...location,
+          dates,
+          entries: dates.flatMap((dateGroup) => dateGroup.entries),
+          photos: dates.flatMap((dateGroup) => dateGroup.photos),
+        };
+      });
+  }
+
+  function resolveSelection(scope) {
+    const location =
+      scope.find((entry) => entry.locationKey === selection.locationKey) || scope[0] || null;
+    const dateGroup = location
+      ? location.dates.find((entry) => entry.dateKey === selection.dateKey) ||
+        location.dates[0] ||
+        null
+      : null;
+    const session = dateGroup
+      ? dateGroup.sessions.find((entry) => entry.id === selection.sessionId) || null
+      : null;
+
+    selection.locationKey = location?.locationKey || null;
+    selection.dateKey = dateGroup?.dateKey || null;
+    selection.sessionId = session?.id || "all";
+
+    return { location, dateGroup, session };
+  }
+
+  function scopedEntries(view) {
+    return view.session?.entries || view.dateGroup?.entries || [];
+  }
+
+  function scopedPhotos(view) {
+    return view.session?.photos || view.dateGroup?.photos || [];
+  }
+
+  function attendanceForSelectedWorker(entries) {
+    const selectedWorkerId = attendanceWorkerFilter.value;
+    return selectedWorkerId === "all"
+      ? entries
+      : entries.filter((entry) => entry.workerId === selectedWorkerId);
+  }
+
+  function updateAttendanceWorkerOptions(entries) {
     const selectedWorkerId = attendanceWorkerFilter.value || "all";
-    const workers = summarizeAttendance(attendance).sort((left, right) =>
+    const workers = summarizeAttendance(entries).sort((left, right) =>
       String(left.displayName || left.workerId).localeCompare(
         String(right.displayName || right.workerId),
       ),
@@ -186,44 +336,11 @@
     const workerCount = workers.length;
     const checkInCount = entries.length;
     if (attendanceWorkerFilter.value === "all") {
-      attendanceStatus.textContent = `${workerCount} worker${workerCount === 1 ? "" : "s"} · ${checkInCount} recent check-in${checkInCount === 1 ? "" : "s"}`;
+      attendanceStatus.textContent = `${plural(workerCount, "worker")} · ${plural(checkInCount, "check-in")} in this session`;
       return;
     }
     const worker = workers[0];
-    attendanceStatus.textContent = `${worker?.displayName || attendanceWorkerFilter.value} · ${checkInCount} recent check-in${checkInCount === 1 ? "" : "s"}`;
-  }
-
-  function groupAttendance(entries) {
-    const locations = new Map();
-
-    entries.forEach((entry) => {
-      const location = String(entry.location || "").trim() || "Location not recorded";
-      const locationKey = location.toLocaleLowerCase();
-      const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(entry.dateKey || "")
-        ? entry.dateKey
-        : "Unknown date";
-      const locationGroup = locations.get(locationKey) || {
-        location,
-        dates: new Map(),
-      };
-      const dateEntries = locationGroup.dates.get(dateKey) || [];
-      dateEntries.push(entry);
-      locationGroup.dates.set(dateKey, dateEntries);
-      locations.set(locationKey, locationGroup);
-    });
-
-    return [...locations.values()]
-      .map((location) => ({
-        location: location.location,
-        dates: [...location.dates.entries()]
-          .map(([dateKey, dateEntries]) => ({
-            dateKey,
-            entries: dateEntries,
-            workers: summarizeAttendance(dateEntries),
-          }))
-          .sort((left, right) => right.dateKey.localeCompare(left.dateKey)),
-      }))
-      .sort((left, right) => left.location.localeCompare(right.location));
+    attendanceStatus.textContent = `${worker?.displayName || attendanceWorkerFilter.value} · ${plural(checkInCount, "check-in")} in this session`;
   }
 
   function createAttendanceRow(worker) {
@@ -257,59 +374,158 @@
     return row;
   }
 
-  function createAttendanceLocationGroup(group) {
-    const section = document.createElement("section");
-    const heading = document.createElement("div");
-    const title = document.createElement("h3");
-    const count = document.createElement("span");
-    const checkIns = group.dates.reduce(
-      (total, dateGroup) => total + dateGroup.entries.length,
-      0,
-    );
+  function createScopeOption({ title, detail, selected, onSelect }) {
+    const option = document.createElement("button");
+    const name = document.createElement("strong");
+    const meta = document.createElement("span");
 
-    section.className = "attendance-location-group";
-    heading.className = "attendance-location-heading";
-    title.textContent = group.location;
-    count.textContent = `${checkIns} check-in${checkIns === 1 ? "" : "s"}`;
-    heading.append(title, count);
-    section.append(heading);
-
-    group.dates.forEach((dateGroup) => {
-      const dateSection = document.createElement("section");
-      const dateHeading = document.createElement("h4");
-      const rows = document.createElement("div");
-
-      dateSection.className = "attendance-date-group";
-      dateHeading.className = "attendance-date-heading";
-      dateHeading.textContent = formatDate(dateGroup.dateKey);
-      rows.className = "attendance-date-rows";
-      dateGroup.workers.forEach((worker) => rows.append(createAttendanceRow(worker)));
-      dateSection.append(dateHeading, rows);
-      section.append(dateSection);
-    });
-
-    return section;
+    option.type = "button";
+    option.className = "scope-option";
+    option.dataset.selected = String(Boolean(selected));
+    option.setAttribute("aria-pressed", String(Boolean(selected)));
+    name.textContent = title;
+    meta.textContent = detail;
+    option.append(name, meta);
+    option.addEventListener("click", onSelect);
+    return option;
   }
 
-  function renderAttendance() {
-    const visibleAttendance = attendanceForSelectedWorker();
+  function createScopeEmpty(message) {
+    const empty = document.createElement("p");
+    empty.className = "scope-empty";
+    empty.textContent = message;
+    return empty;
+  }
+
+  function sessionRange(session) {
+    const times = [...session.entries.map((entry) => entry.checkedInAtMs), ...session.photos.map(photoTimeMs)]
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .sort((left, right) => left - right);
+    if (times.length === 0) {
+      return "";
+    }
+    const first = formatAttendanceTime(times[0]);
+    const last = formatAttendanceTime(times[times.length - 1]);
+    return first === last ? first : `${first} – ${last}`;
+  }
+
+  function renderScopeRail(scope, view) {
+    locationOptions.replaceChildren();
+    dateOptions.replaceChildren();
+    sessionOptions.replaceChildren();
+
+    if (scope.length === 0) {
+      locationOptions.append(createScopeEmpty("No sites have reported yet."));
+      dateOptions.append(createScopeEmpty("Pick a location first."));
+      sessionOptions.append(createScopeEmpty("Pick a date first."));
+      return;
+    }
+
+    scope.forEach((location) => {
+      locationOptions.append(
+        createScopeOption({
+          title: location.location,
+          detail: `${plural(location.dates.length, "day")} · ${plural(location.entries.length, "check-in")} · ${plural(location.photos.length, "photo")}`,
+          selected: location.locationKey === view.location?.locationKey,
+          onSelect: () => {
+            selection.locationKey = location.locationKey;
+            selection.dateKey = null;
+            selection.sessionId = "all";
+            renderDashboard();
+          },
+        }),
+      );
+    });
+
+    (view.location?.dates || []).forEach((dateGroup) => {
+      dateOptions.append(
+        createScopeOption({
+          title: formatDate(dateGroup.dateKey),
+          detail: `${plural(dateGroup.entries.length, "check-in")} · ${plural(countWorkers(dateGroup.entries), "worker")} · ${plural(dateGroup.photos.length, "photo")}`,
+          selected: dateGroup.dateKey === view.dateGroup?.dateKey,
+          onSelect: () => {
+            selection.dateKey = dateGroup.dateKey;
+            selection.sessionId = "all";
+            renderDashboard();
+          },
+        }),
+      );
+    });
+
+    if (!view.dateGroup) {
+      dateOptions.append(createScopeEmpty("Pick a location first."));
+      sessionOptions.append(createScopeEmpty("Pick a date first."));
+      return;
+    }
+
+    sessionOptions.append(
+      createScopeOption({
+        title: "Whole day",
+        detail: `${plural(view.dateGroup.entries.length, "check-in")} · ${plural(view.dateGroup.photos.length, "photo")}`,
+        selected: !view.session,
+        onSelect: () => {
+          selection.sessionId = "all";
+          renderDashboard();
+        },
+      }),
+    );
+
+    view.dateGroup.sessions.forEach((session) => {
+      const range = sessionRange(session);
+      sessionOptions.append(
+        createScopeOption({
+          title: range ? `${session.label} · ${range}` : session.label,
+          detail: `${plural(session.entries.length, "check-in")} · ${plural(session.photos.length, "photo")}`,
+          selected: session.id === view.session?.id,
+          onSelect: () => {
+            selection.sessionId = session.id;
+            renderDashboard();
+          },
+        }),
+      );
+    });
+  }
+
+  function renderBreadcrumb(view) {
+    if (!view.location) {
+      scopeBreadcrumb.textContent = "No location has reported attendance or photos yet.";
+      return;
+    }
+    const parts = [view.location.location, formatDate(view.dateGroup?.dateKey)];
+    parts.push(view.session ? `${view.session.label} session` : "Whole day");
+    scopeBreadcrumb.textContent = parts.join(" · ");
+  }
+
+  function renderAttendance(view) {
+    const entries = scopedEntries(view);
+    updateAttendanceWorkerOptions(entries);
+    const visibleAttendance = attendanceForSelectedWorker(entries);
     const workers = summarizeAttendance(visibleAttendance);
-    const groups = groupAttendance(visibleAttendance);
     presentWorkerCount.textContent = String(workers.length);
     attendanceCheckinCount.textContent = String(visibleAttendance.length);
     attendanceList.replaceChildren();
+    updateAttendanceStatus(visibleAttendance);
 
     if (workers.length === 0) {
       const empty = document.createElement("p");
       empty.className = "empty-attendance";
       empty.textContent = attendance.length
-        ? "No attendance has been recorded for this worker."
+        ? "No worker checked in during this session."
         : "No matched worker attendance has been recorded yet.";
       attendanceList.append(empty);
       return;
     }
 
-    groups.forEach((group) => attendanceList.append(createAttendanceLocationGroup(group)));
+    workers.forEach((worker) => attendanceList.append(createAttendanceRow(worker)));
+  }
+
+  function renderDashboard() {
+    const scope = buildScope();
+    const view = resolveSelection(scope);
+    renderScopeRail(scope, view);
+    renderBreadcrumb(view);
+    renderAttendance(view);
+    renderPhotos(view);
   }
 
   async function loadAttendance() {
@@ -326,9 +542,7 @@
       attendance = await cloud.getAttendance({
         pageSize: 500,
       });
-      updateAttendanceWorkerOptions();
-      renderAttendance();
-      updateAttendanceStatus(attendanceForSelectedWorker());
+      renderDashboard();
       telemetry?.event(
         "attendance.load.completed",
         {
@@ -341,8 +555,7 @@
       );
     } catch (error) {
       attendance = [];
-      updateAttendanceWorkerOptions();
-      renderAttendance();
+      renderDashboard();
       attendanceStatus.textContent = describeError(error);
       attendanceStatus.dataset.state = "error";
       telemetry?.event(
@@ -357,7 +570,6 @@
     } finally {
       loadingAttendance = false;
       attendanceRefresh.disabled = false;
-      attendanceWorkerFilter.disabled = attendance.length === 0;
     }
   }
 
@@ -480,71 +692,47 @@
     return card;
   }
 
-  function renderPhotos() {
+  function renderPhotos(view) {
     renderVersion += 1;
     const version = renderVersion;
     const mode = filter.value;
-    const visible = photos.filter((photo) => {
-      if (mode === "flagged") {
-        return data.isFlagged(photo);
-      }
-      if (mode === "kept") {
-        return !data.isFlagged(photo);
-      }
-      return true;
-    });
-    const groups = data.groupPhotos(visible);
+    const visible = scopedPhotos(view)
+      .filter((photo) => {
+        if (mode === "flagged") {
+          return data.isFlagged(photo);
+        }
+        if (mode === "kept") {
+          return !data.isFlagged(photo);
+        }
+        return true;
+      })
+      .sort((left, right) => photoTimeMs(right) - photoTimeMs(left));
 
     library.replaceChildren();
 
-    if (groups.length === 0) {
+    if (visible.length === 0) {
       const empty = document.createElement("p");
       empty.className = "empty-library";
       empty.textContent =
         photos.length === 0
           ? "No reviewed photos have reached Firebase yet. A complete Gemini batch contains eight photos."
-          : "No photos match this filter.";
+          : "No photos match this filter in the selected session.";
       library.append(empty);
+    } else {
+      const grid = document.createElement("div");
+      grid.className = "photo-grid";
+      visible.forEach((photo) => grid.append(createPhotoCard(photo, version)));
+      library.append(grid);
     }
 
-    groups.forEach((location) => {
-      const section = document.createElement("section");
-      const heading = document.createElement("div");
-      const title = document.createElement("h2");
-      const count = document.createElement("span");
-
-      section.className = "location-group";
-      heading.className = "location-heading";
-      title.textContent = location.location;
-      const locationCount = location.dates.reduce(
-        (total, dateGroup) => total + dateGroup.photos.length,
-        0,
+    // A failed page keeps its own error on the status line rather than being
+    // overwritten by a photo tally the dashboard could not load.
+    if (!photoLoadFailed) {
+      setStatus(
+        `${visible.length} of ${photos.length} loaded photo${photos.length === 1 ? "" : "s"}`,
       );
-      count.textContent = `${locationCount} photo${locationCount === 1 ? "" : "s"}`;
-      heading.append(title, count);
-      section.append(heading);
-
-      location.dates.forEach((dateGroup) => {
-        const dateSection = document.createElement("section");
-        const dateHeading = document.createElement("h3");
-        const grid = document.createElement("div");
-
-        dateSection.className = "date-group";
-        dateHeading.className = "date-heading";
-        dateHeading.textContent = formatDate(dateGroup.dateKey);
-        grid.className = "photo-grid";
-        dateGroup.photos.forEach((photo) => grid.append(createPhotoCard(photo, version)));
-        dateSection.append(dateHeading, grid);
-        section.append(dateSection);
-      });
-
-      library.append(section);
-    });
-
-    setStatus(
-      `${visible.length} of ${photos.length} loaded photo${photos.length === 1 ? "" : "s"}`,
-    );
-    loadMoreRow.hidden = !hasMore;
+    }
+    loadMoreRow.hidden = photoLoadFailed || !hasMore;
   }
 
   async function loadPhotos({ reset = false } = {}) {
@@ -567,9 +755,10 @@
       const page = await cloud.getPhotosPage({ pageSize: 48, after: reset ? null : after });
       const entries = reset ? page.photos : [...photos, ...page.photos];
       photos = [...new Map(entries.map((photo) => [photo.id, photo])).values()];
+      photoLoadFailed = false;
       after = page.after;
       hasMore = page.hasMore;
-      renderPhotos();
+      renderDashboard();
       telemetry?.event(
         "dashboard.load.completed",
         {
@@ -580,6 +769,7 @@
         { traceId },
       );
     } catch (error) {
+      photoLoadFailed = true;
       setStatus(describeError(error), "error");
       loadMoreRow.hidden = true;
       telemetry?.event(
@@ -611,10 +801,19 @@
       photos = [];
       after = null;
       hasMore = false;
-      library.replaceChildren();
       attendance = [];
-      updateAttendanceWorkerOptions();
+      photoLoadFailed = false;
+      selection.locationKey = null;
+      selection.dateKey = null;
+      selection.sessionId = "all";
+      attendanceWorkerFilter.value = "all";
+      updateAttendanceWorkerOptions([]);
+      library.replaceChildren();
+      locationOptions.replaceChildren();
+      dateOptions.replaceChildren();
+      sessionOptions.replaceChildren();
       attendanceList.replaceChildren();
+      scopeBreadcrumb.textContent = "";
       presentWorkerCount.textContent = "0";
       attendanceCheckinCount.textContent = "0";
       attendanceStatus.textContent = "";
@@ -654,12 +853,8 @@
     });
   });
   loadMoreButton.addEventListener("click", () => loadPhotos());
-  filter.addEventListener("change", renderPhotos);
-  attendanceWorkerFilter.addEventListener("change", () => {
-    const visibleAttendance = attendanceForSelectedWorker();
-    renderAttendance();
-    updateAttendanceStatus(visibleAttendance);
-  });
+  filter.addEventListener("change", renderDashboard);
+  attendanceWorkerFilter.addEventListener("change", renderDashboard);
   attendanceRefresh.addEventListener("click", loadAttendance);
   window.addEventListener("pagehide", revokePhotoUrls);
 

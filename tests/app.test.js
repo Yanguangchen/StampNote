@@ -173,8 +173,6 @@ function createAppHarness(options = {}) {
     "face-enrollment-message",
     "face-enrollment-match",
     "face-enrollment-worker-id",
-    "face-enrollment-progress",
-    "face-enrollment-count",
     "face-enrollment-skip",
     "captures",
     "captures-summary",
@@ -400,7 +398,7 @@ function createAppHarness(options = {}) {
     activityStarted: !options.faceEnrollment,
     captures: 0,
     faceEnrollment: options.faceEnrollment
-      ? { required: true, status: "move_closer", samples: 0, total: 5, progress: 0 }
+      ? { required: true, status: "move_closer", samples: 0, total: 2, progress: 0 }
       : null,
     lastRecord: null,
     running: false,
@@ -944,32 +942,24 @@ test("the live camera prompts for attendance taking before the activity starts",
     "Attendance taking",
   );
   assert.match(harness.elements["face-enrollment-message"].textContent, /Move closer/i);
-  assert.equal(harness.elements["face-enrollment-progress"].value, 0);
-  assert.equal(harness.elements["face-enrollment-count"].textContent, "0 of 5");
   assert.equal(harness.cameraConstraints.video.width.ideal, 1920);
   assert.equal(harness.cameraConstraints.video.height.ideal, 1080);
   assert.match(harness.elements["monitor-status"].textContent, /before auto capture begins/i);
 
   harness.controllerState.faceEnrollment = {
     required: true,
-    status: "not_recognized",
-    samples: 5,
-    total: 5,
+    status: "retrying",
+    samples: 2,
+    total: 2,
     matchDistance: 0.71,
-    matchVotes: 3,
-    requiredVotes: 4,
+    matchVotes: 1,
+    requiredVotes: 2,
     matchReason: "insufficient_consensus",
   };
   harness.captureConfiguration.onUpdate({ ...harness.controllerState });
-  const failedMatch = harness.events.find((event) => event.name === "face.match.failed");
-  assert.deepEqual(JSON.parse(JSON.stringify(failedMatch.fields)), {
-    errorCode: "insufficient_consensus",
-    matchDistance: 0.71,
-    matchVotes: 3,
-    requiredVotes: 4,
-    sampleCount: 5,
-    status: "failed",
-  });
+  assert.equal(harness.controllerState.activityStarted, false);
+  assert.match(harness.elements["face-enrollment-message"].textContent, /scanning continues/i);
+  assert.equal(harness.events.some((event) => event.name === "face.match.failed"), false);
 
   await harness.elements["face-enrollment-skip"].dispatch("click");
   assert.equal(harness.controllerState.activityStarted, true);
@@ -978,9 +968,12 @@ test("the live camera prompts for attendance taking before the activity starts",
   assert.ok(harness.events.some((event) => event.name === "face.match.skipped"));
 });
 
-test("recording loads enrolled face templates into both matching layers", async () => {
+test("recording loads enrolled faces and records each matched worker once", async () => {
   const embedding = Array.from({ length: 128 }, (unused, index) => index / 1000);
-  const workers = [{ workerId: "WORKER-7", displayName: "Ari Tan", embedding }];
+  const workers = [
+    { workerId: "WORKER-7", displayName: "Ari Tan", embedding },
+    { workerId: "WORKER-9", displayName: "Bo Lim", embedding },
+  ];
   const harness = createAppHarness({
     camera: true,
     cloud: true,
@@ -999,17 +992,17 @@ test("recording loads enrolled face templates into both matching layers", async 
   harness.controllerState.faceEnrollment = {
     required: true,
     status: "complete",
-    samples: 5,
-    total: 5,
+    samples: 2,
+    total: 2,
     workerId: "WORKER-7",
     personLabel: "Ari Tan",
     matchDistance: 0.38,
-    matchVotes: 5,
-    requiredVotes: 4,
+    matchVotes: 2,
+    requiredVotes: 2,
   };
   harness.captureConfiguration.onUpdate({ ...harness.controllerState });
   const completed = harness.events.find((event) => event.name === "face.match.completed");
-  assert.equal(completed.fields.matchVotes, 5);
+  assert.equal(completed.fields.matchVotes, 2);
   assert.equal(completed.fields.matchDistance, 0.38);
   assert.equal(Object.hasOwn(completed.fields, "workerId"), false);
   assert.equal(harness.elements["face-enrollment"].hidden, false);
@@ -1032,8 +1025,33 @@ test("recording loads enrolled face templates into both matching layers", async 
   assert.equal(
     harness.cloudCalls.attendance.length,
     1,
-    "one recording session creates one attendance event",
+    "the opening worker is recorded once",
   );
+
+  harness.controllerState.bodies = [
+    {
+      workerId: "WORKER-9",
+      personLabel: "WORKER-9",
+      faceMatched: true,
+    },
+  ];
+  await harness.timers.findLast((timer) => timer.delay === 250).callback();
+  await settle();
+  assert.equal(harness.cloudCalls.attendance.length, 1, "one later face view is not enough");
+
+  await harness.timers.findLast((timer) => timer.delay === 250).callback();
+  await settle();
+  assert.equal(harness.cloudCalls.attendance.length, 2);
+  assert.equal(harness.cloudCalls.attendance[1].workerId, "WORKER-9");
+  assert.equal(harness.cloudCalls.attendance[1].displayName, "Bo Lim");
+  assert.notEqual(
+    harness.cloudCalls.attendance[1].eventId,
+    harness.cloudCalls.attendance[0].eventId,
+  );
+
+  await harness.timers.findLast((timer) => timer.delay === 250).callback();
+  await settle();
+  assert.equal(harness.cloudCalls.attendance.length, 2, "a worker is recorded once per session");
 
   const confirmationTimer = harness.timers.find((timer) => timer.delay === 1_800);
   assert.ok(confirmationTimer, "the matched identity remains prominent before fading");

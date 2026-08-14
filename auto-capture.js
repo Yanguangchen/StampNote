@@ -473,10 +473,9 @@
         one_person: "One person at a time for the first scan",
         hold_still: "Hold still so the next face view stays sharp",
         face_changed: "Keep the same face in the guide",
-        scanning: `Face scan ${state.faceEnrollment.samples || 0} of ${
-          state.faceEnrollment.total || 5
-        } — hold still`,
-        not_recognized: "Worker not recognized — move closer or enroll first",
+        scanning: "Checking attendance — hold still",
+        retrying: "No match yet — scanning continues automatically",
+        not_recognized: "No match yet — scanning continues automatically",
         unavailable: "Face scan unavailable — continue without it",
       };
       return prompts[state.faceEnrollment.status] || "Move closer for attendance taking";
