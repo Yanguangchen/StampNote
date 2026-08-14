@@ -20,6 +20,7 @@ function createHarness(options = {}) {
     gesture: false,
     frame: { width: 2, height: 2, data: new Uint8ClampedArray(16) },
     address: "10 Bayfront Avenue",
+    gpsLocation: { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 12.5 },
     captureFails: false,
     detectionFails: 0,
     saved,
@@ -65,6 +66,7 @@ function createHarness(options = {}) {
       return { blob: { size: 1024, type: "image/jpeg" }, date: new Date(harness.time) };
     },
     getAddress: () => harness.address,
+    getGpsLocation: () => harness.gpsLocation,
     faceIdentity: options.faceIdentity,
     enrollmentDetector: options.enrollmentDetector,
     isGesture: () => harness.gesture,
@@ -352,7 +354,7 @@ test("the cadence switches the moment someone walks in or out", async () => {
   assert.equal(harness.saved.length, 5);
 });
 
-test("each stored capture carries its address, pose and cadence", async () => {
+test("each stored capture carries its automatic GPS fix, address, pose and cadence", async () => {
   const harness = createHarness();
 
   harness.present = true;
@@ -361,6 +363,11 @@ test("each stored capture carries its address, pose and cadence", async () => {
 
   const [capture] = harness.saved;
   assert.equal(capture.address, "10 Bayfront Avenue");
+  assert.deepEqual(capture.gpsLocation, {
+    latitude: 1.2868,
+    longitude: 103.8545,
+    accuracyMeters: 12.5,
+  });
   assert.equal(capture.intervalMs, 30 * SECOND);
   assert.equal(capture.pose.present, true);
   assert.equal(capture.pose.pose, "standing");

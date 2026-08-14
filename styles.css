@@ -34,6 +34,9 @@ body {
   overflow: hidden;
   background: var(--shell);
   color: #fff;
+  transition:
+    background-color 420ms ease,
+    color 420ms ease;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
@@ -191,15 +194,31 @@ button {
   }
 }
 
-@keyframes ai-signal-wave {
+@keyframes camera-throbber-clockwise {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes camera-throbber-counterclockwise {
+  to {
+    transform: rotate(-1turn);
+  }
+}
+
+@keyframes camera-core-pulse {
   0%,
   100% {
-    opacity: 0.35;
-    transform: scaleY(0.35);
+    transform: scale(0.94);
+    box-shadow:
+      0 0 0 0 rgba(70, 211, 159, 0.3),
+      0 0 30px rgba(70, 211, 159, 0.35);
   }
   50% {
-    opacity: 1;
-    transform: scaleY(1);
+    transform: scale(1.04);
+    box-shadow:
+      0 0 0 22px rgba(70, 211, 159, 0),
+      0 0 58px rgba(70, 211, 159, 0.7);
   }
 }
 
@@ -424,36 +443,156 @@ button {
   line-height: 1.55;
 }
 
-.ai-review-signal {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  height: 18px;
-}
-
-.ai-review-signal i {
-  width: 3px;
-  height: 15px;
+/* A measured bar, because the batch sizes are known before the first request:
+   the wait says how much is left rather than merely that something is running. */
+.ai-review-progress {
+  position: relative;
+  width: min(280px, 72vw);
+  height: 6px;
+  overflow: hidden;
   border-radius: 999px;
-  background: linear-gradient(#65e8ff, #c36bff);
-  transform-origin: center;
-  animation: ai-signal-wave 900ms ease-in-out infinite;
+  background: rgba(255, 255, 255, 0.14);
 }
 
-.ai-review-signal i:nth-child(2) {
-  animation-delay: 90ms;
+.ai-review-progress span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #65e8ff, #c36bff);
+  transition: width 420ms ease-out;
 }
 
-.ai-review-signal i:nth-child(3) {
-  animation-delay: 180ms;
+.ai-review-progress[data-state="waiting"]::after {
+  /* Before the first batch reports in there is nothing honest to measure, so
+     the bar sweeps instead of sitting empty. */
+  position: absolute;
+  inset: 0;
+  width: 38%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgba(197, 233, 255, 0.75), transparent);
+  animation: ai-progress-sweep 1200ms ease-in-out infinite;
+  content: "";
 }
 
-.ai-review-signal i:nth-child(4) {
-  animation-delay: 270ms;
+@keyframes ai-progress-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
 }
 
-.ai-review-signal i:nth-child(5) {
-  animation-delay: 360ms;
+/* ---------------------------------------------------------------------------
+   The default screen
+   --------------------------------------------------------------------------- */
+
+/* The opening screen is a sheet of white with colour spilled across it. The
+   dark shell belongs to the picture; an empty screen has no picture to protect,
+   so it gets the lighter, friendlier face of the app. */
+body[data-stage="idle"] {
+  background: #f6f7f6;
+  color: #16211d;
+}
+
+/* Nothing is recording yet, so the empty stage is a slow drift of colour rather
+   than a black rectangle. It sits behind everything on the stage and is painted
+   only while the screen is idle. */
+/* Photographs already in the queue are not the opening screen's business, so
+   the strip stays out of the way until the camera has been started. */
+body[data-recorded="false"] .filmstrip {
+  display: none;
+}
+
+/* The stage's own black is dropped while idle so the drift below shows through
+   the whole screen, bar included, as one field rather than a lit rectangle. */
+body[data-stage="idle"] .stage {
+  background: transparent;
+}
+
+body[data-stage="idle"]::before {
+  position: fixed;
+  inset: -25%;
+  z-index: 0;
+  background:
+    radial-gradient(26% 26% at 26% 26%, rgba(64, 220, 160, 0.72), transparent 68%),
+    radial-gradient(23% 23% at 74% 28%, rgba(96, 206, 255, 0.68), transparent 68%),
+    radial-gradient(25% 25% at 68% 72%, rgba(190, 132, 255, 0.62), transparent 68%),
+    radial-gradient(21% 21% at 24% 74%, rgba(255, 176, 122, 0.6), transparent 68%),
+    radial-gradient(18% 18% at 50% 50%, rgba(255, 226, 168, 0.3), transparent 72%);
+  filter: blur(58px);
+  content: "";
+  pointer-events: none;
+  animation: stage-drift 19s ease-in-out infinite alternate;
+}
+
+@keyframes stage-drift {
+  from {
+    transform: translate3d(-4%, -3%, 0) scale(1);
+    filter: blur(58px) hue-rotate(0deg);
+  }
+  to {
+    transform: translate3d(5%, 4%, 0) scale(1.14);
+    filter: blur(68px) hue-rotate(26deg);
+  }
+}
+
+/* --- The tools, in a ring around the shutter ------------------------------ */
+
+.toolbar {
+  --orbit-radius: clamp(104px, 21vmin, 148px);
+  --orbit-duration: 34s;
+}
+
+/* Idle, the bar itself is nothing: no strip, no line, just the ring and the
+   shutter on the gradient. */
+body[data-stage="idle"] .toolbar {
+  border-top-color: transparent;
+  background: transparent;
+}
+
+body[data-stage="idle"] .toolbar .tool {
+  /* Read against white and colour rather than the bar's flat dark. */
+  color: rgba(17, 28, 24, 0.78);
+  filter: drop-shadow(0 1px 2px rgba(255, 255, 255, 0.7));
+  position: fixed;
+  top: 50dvh;
+  left: 50%;
+  z-index: 5;
+  margin: -22px 0 0 -24px;
+  /* Where this tool sits when nothing is moving — the same seat the animation
+     starts it from, so a stopped ring is still a ring. */
+  transform:
+    rotate(calc(var(--i, 0) / var(--n, 1) * 360deg))
+    translateY(calc(var(--orbit-radius) * -1))
+    rotate(calc(var(--i, 0) / var(--n, 1) * -360deg));
+  animation: tool-orbit var(--orbit-duration) linear infinite;
+  /* A negative delay drops each tool into its own seat on a shared circuit. */
+  animation-delay: calc(var(--i, 0) / var(--n, 1) * var(--orbit-duration) * -1);
+}
+
+/* Reached for: the ring holds still so the tool under the pointer can be hit,
+   and keyboard focus stops it for the same reason. */
+body[data-stage="idle"] .toolbar[data-orbit-paused="true"] .tool,
+body[data-stage="idle"] .toolbar:focus-within .tool {
+  animation-play-state: paused;
+}
+
+body[data-stage="idle"] .toolbar[data-orbit-paused="true"] .tool:hover,
+body[data-stage="idle"] .toolbar .tool:focus-visible {
+  background: rgba(255, 255, 255, 0.72);
+  color: #0f1a16;
+}
+
+/* The counter-rotation keeps every glyph upright while its seat goes round. */
+@keyframes tool-orbit {
+  from {
+    transform: rotate(0deg) translateY(calc(var(--orbit-radius) * -1)) rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg) translateY(calc(var(--orbit-radius) * -1)) rotate(-360deg);
+  }
 }
 
 /* The camera fills whatever shape the screen is — portrait, landscape, a
@@ -477,6 +616,115 @@ button {
   width: 100%;
   height: 100%;
   pointer-events: none;
+}
+
+/* Camera permission and model startup can take several seconds on a first run.
+   This deliberately owns the stage while that work happens so it cannot be
+   mistaken for an unresponsive record button. */
+.camera-loader {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: grid;
+  place-items: center;
+  padding: calc(env(safe-area-inset-top, 0px) + 22px) 22px 22px;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(70, 211, 159, 0.2), transparent 44%),
+    rgba(5, 12, 9, 0.94);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  animation: fade-in 160ms ease-out both;
+}
+
+.camera-loader[hidden] {
+  display: none;
+}
+
+.camera-loader-card {
+  display: grid;
+  justify-items: center;
+  width: min(100%, 430px);
+  text-align: center;
+}
+
+.camera-throbber {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: clamp(164px, 46vmin, 214px);
+  aspect-ratio: 1;
+  margin-bottom: clamp(24px, 5vmin, 34px);
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(70, 211, 159, 0.14), transparent 68%);
+}
+
+.camera-throbber-ring {
+  position: absolute;
+  border-radius: 50%;
+}
+
+.camera-throbber-ring-outer {
+  inset: 4px;
+  border: 5px solid rgba(70, 211, 159, 0.18);
+  border-top-color: #75f1c3;
+  border-right-color: rgba(117, 241, 195, 0.68);
+  box-shadow: 0 0 28px rgba(70, 211, 159, 0.22);
+  animation: camera-throbber-clockwise 1.15s linear infinite;
+}
+
+.camera-throbber-ring-inner {
+  inset: 25px;
+  border: 3px dashed rgba(196, 255, 232, 0.54);
+  border-left-color: #fff;
+  animation: camera-throbber-counterclockwise 2.2s linear infinite;
+}
+
+.camera-throbber-core {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: clamp(72px, 20vmin, 92px);
+  aspect-ratio: 1;
+  border: 1px solid rgba(181, 255, 226, 0.72);
+  border-radius: 28px;
+  background: linear-gradient(145deg, #2ecf93, #166b4c);
+  animation: camera-core-pulse 1.45s ease-in-out infinite;
+}
+
+.camera-throbber-core svg {
+  width: 48%;
+  fill: none;
+  stroke: #fff;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  filter: drop-shadow(0 0 8px rgba(255, 255, 255, 0.42));
+}
+
+.camera-loader-kicker {
+  margin: 0 0 9px;
+  color: #75f1c3;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.camera-loader h2 {
+  margin: 0;
+  font-size: clamp(30px, 8vw, 44px);
+  letter-spacing: -0.045em;
+}
+
+.camera-loader p:last-child {
+  min-height: 46px;
+  margin: 12px 0 0;
+  max-width: 34ch;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: clamp(13px, 3.5vw, 15px);
+  line-height: 1.55;
 }
 
 /* A short enrollment screen lives over the actual camera rather than before
@@ -701,33 +949,6 @@ button {
   background: rgba(8, 14, 12, 0.92);
 }
 
-.stage-empty {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 24px;
-  text-align: center;
-}
-
-.stage-title {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.stage-hint {
-  margin: 0;
-  max-width: 30ch;
-  color: var(--dim);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
 /* ---------------------------------------------------------------------------
    The address, across the top of the picture
    --------------------------------------------------------------------------- */
@@ -773,8 +994,12 @@ button {
   text-transform: none;
 }
 
-.place textarea:focus,
-.place textarea:hover {
+.place textarea[readonly] {
+  cursor: default;
+}
+
+.place textarea:not([readonly]):focus,
+.place textarea:not([readonly]):hover {
   border-color: var(--glass-line);
   background: rgba(8, 14, 12, 0.55);
   outline: none;
@@ -830,13 +1055,29 @@ button {
   color: var(--danger);
 }
 
+/* The status and the people badge stack as one pair of pills at the foot of
+   the picture instead of a chip and a loose line of text. */
 .stage-status {
   position: absolute;
   right: var(--gutter);
-  bottom: 34px;
+  bottom: 40px;
   left: var(--gutter);
   z-index: 2;
   text-align: center;
+}
+
+.stage-status:not(:empty) {
+  width: fit-content;
+  max-width: calc(100% - (var(--gutter) * 2));
+  margin: 0 auto;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: rgba(8, 14, 12, 0.72);
+}
+
+.stage-status[data-state="error"] {
+  background: rgba(90, 30, 18, 0.78);
+  color: #ffd7c9;
 }
 
 .diagnostics {
@@ -972,6 +1213,13 @@ button {
   gap: 2px;
 }
 
+.reel-actions-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 5px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
 #captures-summary {
   min-width: 0;
   overflow: hidden;
@@ -1036,7 +1284,9 @@ button {
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 4px;
-  padding: 6px var(--gutter) calc(env(safe-area-inset-bottom, 0px) + 6px);
+  /* The shutter is lifted and drop-shadowed, so it needs more room above it
+     than the flat tools either side to avoid crowding the strip. */
+  padding: 14px var(--gutter) calc(env(safe-area-inset-bottom, 0px) + 6px);
   min-height: var(--bar);
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(10, 16, 14, 0.96);
@@ -1086,6 +1336,13 @@ button {
   opacity: 0.35;
 }
 
+/* Deleting is not the same kind of act as sharing, and should not look it. */
+.tool-danger:hover:not(:disabled),
+.tool-danger:focus-visible {
+  background: rgba(255, 143, 107, 0.14);
+  color: var(--danger);
+}
+
 /* The two beneath the strip, which sit next to a line of text rather than in
    the bar. */
 .tool-small {
@@ -1100,130 +1357,141 @@ button {
   height: 17px;
 }
 
-/* A proper camera shutter: a machined outer ring, a recessed well and a raised
-   red plunger. Its depth collapses under a finger instead of merely shrinking. */
+/* A camera shutter, drawn with three parts and no more: a metal ring, the well
+   it sits in, and the red plunger. It sinks under a finger rather than shrinking. */
 .record {
+  --record-size: 78px;
   position: relative;
   isolation: isolate;
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  width: 62px;
-  height: 62px;
+  width: var(--record-size);
+  height: var(--record-size);
+  /* Idle: waiting in the middle of an empty screen. */
+  translate: 0 calc(
+    (50dvh - (var(--record-size) / 2) - 6px - env(safe-area-inset-bottom, 0px)) * -1
+  );
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.58);
+  border: 1px solid rgba(255, 255, 255, 0.32);
   border-radius: 50%;
   appearance: none;
-  background:
-    radial-gradient(circle at 32% 24%, rgba(255, 255, 255, 0.82) 0 3%, transparent 15%),
-    linear-gradient(145deg, #7d8782 0%, #3c4541 31%, #151c19 67%, #050807 100%);
+  background: linear-gradient(160deg, #6c7671 0%, #2c3531 46%, #101714 100%);
   color: var(--record);
   box-shadow:
-    0 5px 0 #030504,
-    0 9px 15px rgba(0, 0, 0, 0.52),
-    inset 0 1px 1px rgba(255, 255, 255, 0.68),
-    inset 0 -2px 3px rgba(0, 0, 0, 0.72);
+    0 4px 0 #040706,
+    0 8px 14px rgba(0, 0, 0, 0.5);
   cursor: pointer;
+  /* Resting height above its base: the 4px hard shadow below is the gap the
+     press closes. */
   transform: translateY(-2px);
   -webkit-tap-highlight-color: transparent;
+  /* Leaving a state is the pop back out, so it overshoots slightly on the way. */
   transition:
-    transform 90ms ease-out,
-    box-shadow 90ms ease-out,
+    translate 520ms cubic-bezier(0.22, 0.78, 0.28, 1),
+    transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 220ms ease-out,
     color 180ms ease-in-out;
 }
 
+body[data-stage="idle"] .record {
+  border-color: rgba(18, 30, 26, 0.22);
+  box-shadow:
+    0 4px 0 rgba(12, 20, 17, 0.82),
+    0 10px 22px rgba(24, 40, 34, 0.28);
+}
+
+/* Pressed: the camera is opening or already watching, so the shutter takes its
+   place in the bar and gives the picture the whole screen. A review claims the
+   middle of the screen too, so the idle shutter steps aside for it. */
+.record[data-loading="true"],
+.record[data-running="true"],
+.ai-review-loader:not([hidden]) ~ .toolbar .record {
+  translate: 0 0;
+}
+
+.record:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+/* The well the plunger sits in. */
 .record::before {
   position: absolute;
-  inset: 5px;
+  inset: 6px;
   z-index: 0;
-  border: 1px solid rgba(0, 0, 0, 0.9);
   border-radius: inherit;
-  background:
-    radial-gradient(circle at 50% 62%, #303934 0%, #18201c 56%, #080c0a 100%);
-  box-shadow:
-    inset 0 4px 6px rgba(0, 0, 0, 0.9),
-    inset 0 -1px 1px rgba(255, 255, 255, 0.18),
-    0 1px 0 rgba(255, 255, 255, 0.2);
+  background: #141b18;
+  box-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.85);
   content: "";
   pointer-events: none;
+  transition: box-shadow 220ms ease-out;
 }
 
-.record::after {
-  position: absolute;
-  top: 9px;
-  left: 17px;
-  z-index: 1;
-  width: 27px;
-  height: 9px;
-  border-radius: 50%;
-  background: linear-gradient(rgba(255, 255, 255, 0.22), transparent);
-  content: "";
-  filter: blur(0.5px);
-  pointer-events: none;
-}
-
+/* Hovered: the button stands a little further proud of the bar, so taking the
+   pointer away is a visible drop back to rest. */
 @media (hover: hover) {
   .record:hover {
-    transform: translateY(-3px);
+    transform: translateY(-4px);
     box-shadow:
-      0 6px 0 #030504,
-      0 11px 18px rgba(0, 0, 0, 0.56),
-      inset 0 1px 1px rgba(255, 255, 255, 0.72),
-      inset 0 -2px 3px rgba(0, 0, 0, 0.72);
+      0 6px 0 #040706,
+      0 11px 17px rgba(0, 0, 0, 0.54);
   }
 }
 
+/* Pressed: the travel closes completely — the button meets its base, the hard
+   shadow under it disappears and the well deepens. Going in is quick and
+   linear; coming back out uses the springier curve above. */
 .record:active {
-  transform: translateY(3px);
+  transform: translateY(4px);
   box-shadow:
-    0 0 0 #030504,
-    0 3px 6px rgba(0, 0, 0, 0.44),
-    inset 0 2px 4px rgba(0, 0, 0, 0.72);
+    0 0 0 #040706,
+    0 2px 4px rgba(0, 0, 0, 0.42);
+  transition:
+    transform 70ms ease-in,
+    box-shadow 70ms ease-in;
 }
 
 .record:active::before {
-  box-shadow:
-    inset 0 6px 8px rgba(0, 0, 0, 0.92),
-    inset 0 -1px 1px rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 5px 8px rgba(0, 0, 0, 0.92);
 }
 
 .record .record-icon {
   position: relative;
   z-index: 2;
-  width: 40px;
-  height: 40px;
+  width: calc(var(--record-size) * 0.56);
+  height: calc(var(--record-size) * 0.56);
   fill: currentColor;
   stroke: none;
-  filter:
-    drop-shadow(0 3px 0 #9d110a)
-    drop-shadow(0 5px 5px rgba(0, 0, 0, 0.68));
+  filter: drop-shadow(0 2px 0 #9d110a);
   transition:
-    transform 90ms ease-out,
-    filter 90ms ease-out;
+    transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    filter 220ms ease-out;
 }
 
+/* The plunger goes flush with the well: it loses the shoulder it was standing
+   on rather than merely moving down. */
 .record:active .record-icon {
-  transform: translateY(2px) scale(0.94);
-  filter:
-    drop-shadow(0 1px 0 #8d100a)
-    drop-shadow(0 2px 2px rgba(0, 0, 0, 0.58));
+  transform: scale(0.96);
+  filter: drop-shadow(0 0 0 #8d100a);
+  transition:
+    transform 70ms ease-in,
+    filter 70ms ease-in;
 }
 
+/* Watching: the plunger lights up, without a second ring of glow around it. */
 .record[data-running="true"] {
   color: #ff5a51;
-  border-color: rgba(255, 173, 168, 0.72);
+  border-color: rgba(255, 173, 168, 0.5);
   box-shadow:
-    0 5px 0 #030504,
-    0 9px 15px rgba(0, 0, 0, 0.52),
-    0 0 0 2px rgba(255, 59, 48, 0.18),
-    0 0 18px rgba(255, 59, 48, 0.3),
-    inset 0 1px 1px rgba(255, 255, 255, 0.68),
-    inset 0 -2px 3px rgba(0, 0, 0, 0.72);
+    0 4px 0 #040706,
+    0 8px 14px rgba(0, 0, 0, 0.5),
+    0 0 16px rgba(255, 59, 48, 0.26);
 }
 
 .record[data-running="true"]::before {
-  background: radial-gradient(circle at 50% 58%, #3d1a17 0%, #21110f 58%, #090706 100%);
+  background: #24110f;
 }
 
 .icon {
@@ -1362,34 +1630,17 @@ button {
   }
 
   .toolbar {
+    padding-top: 8px;
     padding-right: calc(env(safe-area-inset-right, 0px) + var(--gutter));
     padding-left: calc(env(safe-area-inset-left, 0px) + var(--gutter));
   }
 
   .record {
-    width: 44px;
-    height: 44px;
-    box-shadow:
-      0 4px 0 #030504,
-      0 7px 10px rgba(0, 0, 0, 0.5),
-      inset 0 1px 1px rgba(255, 255, 255, 0.64),
-      inset 0 -2px 3px rgba(0, 0, 0, 0.72);
+    --record-size: 56px;
   }
 
   .record::before {
-    inset: 4px;
-  }
-
-  .record::after {
-    top: 6px;
-    left: 12px;
-    width: 19px;
-    height: 7px;
-  }
-
-  .record .record-icon {
-    width: 29px;
-    height: 29px;
+    inset: 5px;
   }
 
   .place {
@@ -1513,21 +1764,7 @@ button {
     width: 58px;
     height: 58px;
   }
-}
 
-/* Wide screens: the picture would otherwise stretch to a letterbox, so the
-   whole thing is held to a phone-ish column in the middle. */
-@media (min-width: 900px) and (orientation: landscape) {
-  body {
-    align-items: center;
-  }
-
-  .stage,
-  .filmstrip,
-  .toolbar {
-    width: min(980px, 100%);
-    margin-inline: auto;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

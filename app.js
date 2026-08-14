@@ -33,6 +33,8 @@
   const captureFlash = document.querySelector("#capture-flash");
   const poseOverlay = document.querySelector("#pose-overlay");
   const poseBadge = document.querySelector("#pose-badge");
+  const cameraLoader = document.querySelector("#camera-loader");
+  const cameraLoaderDetail = document.querySelector("#camera-loader-detail");
   const faceEnrollment = document.querySelector("#face-enrollment");
   const faceEnrollmentKicker = document.querySelector("#face-enrollment-kicker");
   const faceEnrollmentTitle = document.querySelector("#face-enrollment-title");
@@ -50,11 +52,11 @@
   const aiReviewLoader = document.querySelector("#ai-review-loader");
   const aiReviewLoaderTitle = document.querySelector("#ai-review-loader-title");
   const aiReviewLoaderDetail = document.querySelector("#ai-review-loader-detail");
+  const aiReviewProgress = document.querySelector("#ai-review-progress");
+  const aiReviewProgressFill = document.querySelector("#ai-review-progress-fill");
   const cloudAuth = document.querySelector("#cloud-auth");
   const adminDashboard = document.querySelector("#admin-dashboard");
-  const stageEmpty = document.querySelector("#stage-empty");
   const filmstrip = document.querySelector("#filmstrip");
-  const placeToggle = document.querySelector("#place-toggle");
   const viewer = document.querySelector("#viewer");
   const viewerImage = document.querySelector("#viewer-image");
   const viewerAiReview = document.querySelector("#viewer-ai-review");
@@ -71,6 +73,7 @@
 
   // One entry per chosen photo: the loaded image, its capture time, its canvas.
   const photos = [];
+  let automaticGpsLocation = null;
 
   // Long enough that typing an address does not save a file per keystroke.
   const AUTO_SAVE_DELAY = 1500;
@@ -237,9 +240,15 @@
     }
 
     setStatus("Locating…");
+    automaticGpsLocation = null;
 
     try {
       const coordinates = await service.getCurrentCoordinates(navigator.geolocation);
+      automaticGpsLocation = {
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude,
+        accuracyMeters: coordinates.accuracy,
+      };
       const cacheKey = service.createCacheKey(coordinates.latitude, coordinates.longitude);
       let address = readCache(cacheKey);
 
@@ -274,6 +283,8 @@
   // capture fires this from its own start tap before awaiting the camera.
   async function autoLocate() {
     const context = environment();
+    automaticGpsLocation = null;
+    addressField.value = "";
 
     if (context.isSecureContext === false) {
       setStatus(userMessage(null), "error");
@@ -287,12 +298,13 @@
       context.embedded;
 
     if (blocked) {
-      setStatus("Type the street address above.");
+      automaticGpsLocation = null;
+      setStatus("Location address unavailable.");
       showDiagnostics({ code: 1 });
       return;
     }
 
-    requestLocation({ focusField: false });
+    return requestLocation({ focusField: false });
   }
 
   async function addPhotos(files) {
@@ -367,8 +379,6 @@
       addPhotos(galleryInput.files);
     }
   });
-
-  addressField.addEventListener("input", render);
 
   // Only offer the button where the browser can actually share files.
   if (shareButton && typeof navigator.canShare === "function") {
@@ -462,6 +472,7 @@
 
   let stream = null;
   let controller = null;
+  let monitorStarting = false;
   let sampleTimer = null;
   let wakeLock = null;
   let faceDetector = null;
@@ -479,6 +490,8 @@
   let automaticAiReviewEnabled = readCache(AI_REVIEW_CONSENT_KEY) === "yes";
   let showingAiDiscarded = false;
   let captureFlashTimer = null;
+  let captureAudioContext = null;
+  let captureShutterBuffer = null;
   let signedInUser = null;
   let cloudSyncPromise = null;
   let cloudSyncRequested = false;
@@ -595,6 +608,24 @@
 
     monitorStatus.textContent = message;
     monitorStatus.dataset.state = state;
+  }
+
+  function setCameraLoader(active, detail = "Preparing the secure camera connection…") {
+    if (cameraLoader) {
+      cameraLoader.hidden = !active;
+      cameraLoader.setAttribute("aria-busy", String(Boolean(active)));
+    }
+    if (active && cameraLoaderDetail) {
+      cameraLoaderDetail.textContent = detail;
+    }
+    if (monitorToggle) {
+      monitorToggle.disabled = Boolean(active);
+      monitorToggle.dataset.loading = String(Boolean(active));
+    }
+  }
+
+  function setCameraLoaderDetail(detail) {
+    if (cameraLoaderDetail) cameraLoaderDetail.textContent = detail;
   }
 
   function describeCloudError(error) {
@@ -808,6 +839,127 @@
     }, 700);
   }
 
+  function getCaptureAudioContext() {
+    if (captureAudioContext?.state === "closed") {
+      captureAudioContext = null;
+      captureShutterBuffer = null;
+    }
+    if (captureAudioContext) {
+      return captureAudioContext;
+    }
+
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (typeof AudioContext !== "function") {
+      return null;
+    }
+
+    try {
+      captureAudioContext = new AudioContext();
+    } catch {
+      captureAudioContext = null;
+    }
+    return captureAudioContext;
+  }
+
+  // Mobile browsers allow later automatic sounds only after audio has been
+  // unlocked during a direct tap. The silent oscillator does that without
+  // making the start-camera control itself sound like a capture.
+  function primeCaptureAudio() {
+    const context = getCaptureAudioContext();
+    if (!context) {
+      return;
+    }
+
+    context.resume?.().catch?.(() => {});
+    try {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      const now = context.currentTime;
+      gain.gain.setValueAtTime(0, now);
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.onended = () => {
+        oscillator.disconnect();
+        gain.disconnect();
+      };
+      oscillator.start(now);
+      oscillator.stop(now + 0.01);
+    } catch {
+      // Audio feedback is progressive enhancement; capture must always proceed.
+    }
+  }
+
+  function getCaptureShutterBuffer(context) {
+    if (captureShutterBuffer) {
+      return captureShutterBuffer;
+    }
+
+    const sampleRate = Math.max(8000, Number(context.sampleRate) || 44100);
+    const duration = 0.16;
+    const buffer = context.createBuffer(1, Math.ceil(sampleRate * duration), sampleRate);
+    const samples = buffer.getChannelData(0);
+    let noiseSeed = 0x5a17c9e3;
+
+    for (let index = 0; index < samples.length; index += 1) {
+      const time = index / sampleRate;
+      const closeTime = time - 0.052;
+      const recoilTime = time - 0.105;
+      const opening = time < 0.034 ? Math.exp(-time * 125) : 0;
+      const closing = closeTime >= 0 && closeTime < 0.085 ? Math.exp(-closeTime * 48) : 0;
+      const recoil = recoilTime >= 0 ? Math.exp(-recoilTime * 70) : 0;
+
+      // A fixed noise sequence makes each capture sound like the same camera.
+      noiseSeed = (noiseSeed * 1664525 + 1013904223) >>> 0;
+      const noise = (noiseSeed / 0xffffffff) * 2 - 1;
+      const metal = Math.sin(2 * Math.PI * (1180 - time * 1800) * time);
+      const body = closeTime > 0 ? Math.sin(2 * Math.PI * 185 * closeTime) : 0;
+      const value =
+        noise * (opening * 0.72 + closing * 0.58 + recoil * 0.18) +
+        metal * (opening * 0.25 + closing * 0.2) +
+        body * closing * 0.22;
+      samples[index] = Math.max(-1, Math.min(1, value * 0.78));
+    }
+
+    captureShutterBuffer = buffer;
+    return captureShutterBuffer;
+  }
+
+  function playCaptureSound() {
+    const context = getCaptureAudioContext();
+    if (!context) {
+      return;
+    }
+
+    const play = () => {
+      try {
+        const now = context.currentTime;
+        const source = context.createBufferSource();
+        const gain = context.createGain();
+        source.buffer = getCaptureShutterBuffer(context);
+        gain.gain.setValueAtTime(0.24, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+        source.connect(gain);
+        gain.connect(context.destination);
+        source.onended = () => {
+          source.disconnect();
+          gain.disconnect();
+        };
+        source.start(now);
+      } catch {
+        // A device without a usable Web Audio graph still keeps the photo.
+      }
+    };
+
+    if (context.state === "suspended" && typeof context.resume === "function") {
+      const resumed = context.resume();
+      if (resumed?.then) {
+        resumed.then(play).catch(() => {});
+        return;
+      }
+    }
+    play();
+  }
+
   function isRunning() {
     return Boolean(controller?.getState().running);
   }
@@ -916,6 +1068,7 @@
 
     try {
       setMonitorStatus("Loading the pose model — a few megabytes, the first time only…");
+      setCameraLoaderDetail("Camera connected. Loading private on-device tracking…");
       return { detector: await window.StampNoteModel.load(), model: true };
     } catch (error) {
       setMonitorStatus(
@@ -1027,35 +1180,69 @@
     });
   }
 
-  // A labelled box, deliberately unlike the rig: a vehicle is something the
-  // watch has recognised and set aside, not something it is waiting on.
+  // Corner brackets rather than a full box, deliberately unlike the rig: a
+  // vehicle is something the watch has recognised and set aside, not something
+  // it is waiting on. Brackets mark the same extent with a quarter of the ink,
+  // and they do not read as a second body outline over a busy site.
   function drawVehicle(context, box, frame, width) {
     const left = frame.left + box.x * frame.width;
     const top = frame.top + box.y * frame.height;
     const boxWidth = box.width * frame.width;
     const boxHeight = box.height * frame.height;
+    const right = left + boxWidth;
+    const bottom = top + boxHeight;
 
-    const stroke = boneWidth(width);
+    // Lighter than a bone, so the marker sits behind the person in front of it.
+    const stroke = Math.max(1.5, boneWidth(width) * 0.8);
+    const arm = Math.max(8, Math.min(boxWidth, boxHeight) * 0.22);
 
     context.save();
     context.strokeStyle = VEHICLE_COLOR;
     context.lineWidth = stroke;
-    context.strokeRect(left, top, boxWidth, boxHeight);
+    context.lineCap = "round";
+    context.lineJoin = "round";
+
+    context.beginPath();
+    [
+      [left, top, 1, 1],
+      [right, top, -1, 1],
+      [left, bottom, 1, -1],
+      [right, bottom, -1, -1],
+    ].forEach(([x, y, dx, dy]) => {
+      context.moveTo(x + dx * arm, y);
+      context.lineTo(x, y);
+      context.lineTo(x, y + dy * arm);
+    });
+    context.stroke();
 
     const label = "VEHICLE";
-    const fontSize = Math.max(10, Math.round(width / 42));
+    const fontSize = Math.max(10, Math.round(width / 48));
     context.font = `600 ${fontSize}px ui-monospace, SFMono-Regular, monospace`;
-    const textWidth = context.measureText(label).width;
-    const chipWidth = textWidth + fontSize;
-    const chipHeight = Math.round(fontSize * 1.5);
-    // Inside the box when there is no room for it above.
-    const chipTop = top < chipHeight + 2 ? top + 2 : top - chipHeight - 2;
+    const padding = Math.round(fontSize * 0.6);
+    const chipWidth = context.measureText(label).width + padding * 2;
+    const chipHeight = Math.round(fontSize * 1.6);
+    const gap = Math.round(stroke) + 3;
+
+    // Kept inside the picture: a marker at the edge of frame must not push its
+    // own label off the screen.
+    const chipLeft = Math.min(
+      Math.max(left, frame.left),
+      frame.left + frame.width - chipWidth,
+    );
+    const chipTop = top - chipHeight - gap < frame.top ? top + gap : top - chipHeight - gap;
+
+    context.fillStyle = "rgba(10, 14, 8, 0.72)";
+    if (typeof context.roundRect === "function") {
+      context.beginPath();
+      context.roundRect(chipLeft, chipTop, chipWidth, chipHeight, chipHeight / 2);
+      context.fill();
+    } else {
+      context.fillRect(chipLeft, chipTop, chipWidth, chipHeight);
+    }
 
     context.fillStyle = VEHICLE_COLOR;
-    context.fillRect(left, chipTop, chipWidth, chipHeight);
-    context.fillStyle = "#1b1405";
     context.textBaseline = "middle";
-    context.fillText(label, left + fontSize / 2, chipTop + chipHeight / 2 + 0.5);
+    context.fillText(label, chipLeft + padding, chipTop + chipHeight / 2 + 0.5);
     context.restore();
   }
 
@@ -1522,26 +1709,16 @@
       (record) =>
         record.blob && record.trigger !== "gesture" && !record.aiReview,
     ).length;
-    const cloudQueued = allRecords.filter(
-      (record) => record.status === "local" && record.aiReview,
-    ).length;
-
     if (capturesSummary) {
-      const kept = usage.active === 1 ? "1 photo" : `${usage.active} photos`;
-      const where = store.isPersistent() ? "on this device" : "in this tab only";
-
       if (showingAiDiscarded) {
         const flagged = usage.discarded === 1 ? "1 AI flag" : `${usage.discarded} AI flags`;
         const uncertain = usage.needsReview > 0 ? ` · ${usage.needsReview} uncertain` : "";
         capturesSummary.textContent = `${flagged}${uncertain} · tap one to restore or delete`;
       } else {
-        const flagged = usage.discarded > 0 ? ` · ${usage.discarded} in AI review bin` : "";
-        const queued = cloudQueued > 0 ? ` · ${cloudQueued} waiting for cloud` : "";
-
-        capturesSummary.textContent =
-          usage.count > 0
-            ? `${kept} kept ${where} · ${storage.formatBytes(usage.bytes)}${flagged}${queued}`
-            : "";
+        // The strip already shows how many photographs there are and where they
+        // live, so the line beneath it carries the one thing the tiles cannot:
+        // what they are costing.
+        capturesSummary.textContent = usage.count > 0 ? storage.formatBytes(usage.bytes) : "";
       }
     }
 
@@ -1575,7 +1752,14 @@
   // ---------------------------------------------------------------------------
   // Optional semantic review with Gemini
 
-  function setAiReviewLoader(active, detail = "Preparing this batch for AI review…") {
+  // `done` and `total` drive a real bar: the review runs in batches whose sizes
+  // are known before the first request, so the wait does not need to be a guess.
+  function setAiReviewLoader(
+    active,
+    detail = "Preparing this batch for AI review…",
+    done = 0,
+    total = 0,
+  ) {
     if (!aiReviewLoader) {
       return;
     }
@@ -1583,10 +1767,20 @@
     aiReviewLoader.hidden = !active;
     aiReviewLoader.setAttribute("aria-busy", String(active));
     if (aiReviewLoaderTitle) {
-      aiReviewLoaderTitle.textContent = active ? "Gemini is reviewing" : "Reviewing photos";
+      aiReviewLoaderTitle.textContent = active ? "AI is reviewing" : "Reviewing photos";
     }
     if (active && aiReviewLoaderDetail) {
       aiReviewLoaderDetail.textContent = detail;
+    }
+
+    const percent = total > 0 ? Math.round((Math.min(done, total) / total) * 100) : 0;
+    if (aiReviewProgressFill) {
+      aiReviewProgressFill.style.width = `${percent}%`;
+    }
+    if (aiReviewProgress) {
+      aiReviewProgress.setAttribute("aria-valuenow", String(percent));
+      // Before the first batch reports in, the bar has nothing honest to show.
+      aiReviewProgress.dataset.state = total > 0 ? "measured" : "waiting";
     }
   }
 
@@ -1712,15 +1906,15 @@
           response.status === 404
             ? "AI review is missing from this deployment. Redeploy StampNote with its API function."
             : response.status === 429
-              ? "Gemini has reached its current request quota. Try again later or check Google AI Studio billing."
-              : `Gemini review failed (HTTP ${response.status}).`;
+              ? "The AI review service has reached its request quota. Try again later or check Google AI Studio billing."
+              : `AI review failed (HTTP ${response.status}).`;
         throw Object.assign(new Error(result.error || fallback), {
           code: `http_${response.status}`,
           httpStatus: response.status,
         });
       }
       if (!Array.isArray(result.decisions)) {
-        throw Object.assign(new Error("Gemini returned an incomplete review."), {
+        throw Object.assign(new Error("The AI review came back incomplete."), {
           code: "incomplete_response",
         });
       }
@@ -1814,6 +2008,8 @@
         automatic
           ? `Preparing ${eligible.length} photos for AI review…`
           : `Preparing ${eligible.length} photo${eligible.length === 1 ? "" : "s"} for AI review…`,
+        0,
+        eligible.length,
       );
       await renderCaptures();
 
@@ -1825,11 +2021,13 @@
           automatic
             ? `Analyzing this batch of ${batch.length} photos for useful details…`
             : `Analyzing photos ${start + 1}–${batchEnd} of ${eligible.length}…`,
+          start,
+          eligible.length,
         );
         setMonitorStatus(
           automatic
-            ? `Gemini is automatically reviewing ${batch.length} photos…`
-            : `Gemini is reviewing ${start + 1}–${batchEnd} of ${eligible.length}…`,
+            ? `AI is automatically reviewing ${batch.length} photos…`
+            : `AI is reviewing ${start + 1}–${batchEnd} of ${eligible.length}…`,
         );
 
         const copies = await Promise.allSettled(batch.map(createAiReviewImage));
@@ -1862,6 +2060,15 @@
           (decision) =>
             decision.recommendation === "discard" && decision.action === "review",
         ).length;
+
+        // The bar advances as each batch lands rather than only when the whole
+        // run finishes, so a long review still visibly moves.
+        setAiReviewLoader(
+          true,
+          `Reviewed ${batchEnd} of ${eligible.length} photos…`,
+          batchEnd,
+          eligible.length,
+        );
       }
 
       completedAutomaticBatch =
@@ -1882,7 +2089,7 @@
       setMonitorStatus(
         flagged > 0
           ? `${flagged} flagged photo(s) moved to the AI review bin${reviewNote}; ${keptVisible} kept visible.${copyWarning}${cloudNote}`
-          : `Gemini kept all ${reviewed} reviewed photo(s)${reviewNote}.${copyWarning}${cloudNote}`,
+          : `AI kept all ${reviewed} reviewed photo(s)${reviewNote}.${copyWarning}${cloudNote}`,
         "success",
       );
       return true;
@@ -1906,7 +2113,7 @@
           ? `${reviewed} completed review(s) remain saved.`
           : "No photos were moved or deleted.";
       setMonitorStatus(
-        `${error?.message || "Gemini review failed."} ${progress}`,
+        `${error?.message || "AI review failed."} ${progress}`,
         "error",
       );
       return false;
@@ -2127,6 +2334,7 @@
           photoCount: state.captures,
           persistent: store.isPersistent(),
         });
+        playCaptureSound();
         renderCaptures();
         if (state.lastRecord?.trigger === "gesture") {
           showGestureCaptureFlash();
@@ -2160,6 +2368,10 @@
   }
 
   async function startMonitor() {
+    if (monitorStarting || isRunning()) return;
+    monitorStarting = true;
+    setCameraLoader(true);
+    try {
     const monitorStartedAt = performance.now();
     attendanceSessionVersion += 1;
     attendanceEntriesForSession.clear();
@@ -2178,6 +2390,7 @@
     let enrolledWorkers = [];
     if (cloud?.getWorkerFaces && facialRecognition) {
       setMonitorStatus("Loading enrolled worker IDs…");
+      setCameraLoaderDetail("Loading enrolled worker IDs for attendance…");
       try {
         enrolledWorkers = await cloud.getWorkerFaces();
       } catch (error) {
@@ -2204,6 +2417,7 @@
     });
 
     setMonitorStatus("Starting the camera…");
+    setCameraLoaderDetail("Waiting for camera permission and a secure video stream…");
 
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -2235,6 +2449,8 @@
     } catch {
       // Some browsers resolve the frame without play() ever settling.
     }
+
+    setCameraLoaderDetail("Camera connected. Preparing on-device vision…");
 
     let detectorSetup;
     try {
@@ -2280,6 +2496,7 @@
       ? facialRecognition?.createFaceIdentity?.({ knownIdentities: enrolledWorkers })
       : null;
     if (faceIdentity && window.StampNoteModel?.loadFaceScanner) {
+      setCameraLoaderDetail("Finishing private worker recognition…");
       try {
         enrollmentFaceScanner = await window.StampNoteModel.loadFaceScanner();
       } catch {
@@ -2305,6 +2522,7 @@
       sampleFrame: detector.wantsVideo ? sampleVideo : sampleFrame,
       captureImage,
       getAddress: () => addressField.value,
+      getGpsLocation: () => automaticGpsLocation,
       getFaces: () => faceHint,
       isGesture: (keypoints) => Boolean(window.StampNotePoseMapping?.isCaptureGesture(keypoints)),
       triage,
@@ -2321,9 +2539,6 @@
 
     if (monitorFrame) {
       monitorFrame.hidden = false;
-    }
-    if (stageEmpty) {
-      stageEmpty.hidden = true;
     }
     setToggleLabel(true);
     setMonitorStatus(
@@ -2343,6 +2558,10 @@
     requestWakeLock();
     renderCaptures();
     reviewCapturesWithAi({ automatic: true });
+    } finally {
+      monitorStarting = false;
+      setCameraLoader(false);
+    }
   }
 
   function stopMonitor() {
@@ -2386,9 +2605,6 @@
     }
     if (monitorFrame) {
       monitorFrame.hidden = true;
-    }
-    if (stageEmpty) {
-      stageEmpty.hidden = false;
     }
     if (poseBadge) {
       poseBadge.textContent = "";
@@ -2576,20 +2792,23 @@
     setMonitorStatus("");
   }
 
-  monitorToggle.addEventListener("click", () => {
+  monitorToggle.addEventListener("click", async () => {
+    if (monitorStarting) return;
     if (isRunning()) {
       stopMonitor();
       return;
     }
 
-    // iOS only honours a location request made during a tap, so it is started
-    // here, before the camera prompt takes the gesture away.
-    addressPanel.hidden = false;
-    if (!addressField.value.trim()) {
-      autoLocate();
-    }
+    primeCaptureAudio();
 
-    startMonitor();
+    // iOS only honours a location request made during a tap. Resolve a fresh
+    // fix before recording so even the first automatic capture carries the GPS
+    // point and accuracy that the dashboard will compare against.
+    addressPanel.hidden = false;
+    setCameraLoader(true, "Confirming automatic GPS location…");
+    await autoLocate();
+
+    await startMonitor();
   });
 
   faceEnrollmentSkip?.addEventListener("click", () => {
@@ -2620,17 +2839,6 @@
     }
   });
 
-  // The address is part of the picture rather than a panel of its own, so this
-  // reveals that strip and puts the cursor in it.
-  placeToggle?.addEventListener("click", () => {
-    addressPanel.hidden = false;
-    addressField.focus();
-
-    if (!addressField.value.trim()) {
-      autoLocate();
-    }
-  });
-
   // A hidden tab has its camera suspended and its timers throttled, so tracking
   // pauses rather than scoring stale frames, and picks the schedule back up on
   // return.
@@ -2655,6 +2863,9 @@
     if (isRunning()) {
       stopMonitor();
     }
+    captureAudioContext?.close?.().catch?.(() => {});
+    captureAudioContext = null;
+    captureShutterBuffer = null;
   });
 
   setToggleLabel(false);

@@ -7,6 +7,7 @@ const { SDK_BASE, createFirebaseClient, firebaseConfig } = require("../firebase.
 function createHarness(options = {}) {
   const calls = {
     analytics: [],
+    batches: [],
     canvas: [],
     deleted: [],
     documents: [],
@@ -28,6 +29,7 @@ function createHarness(options = {}) {
   let popupError = null;
   let imageFailure = false;
   let encodeFailure = false;
+  const queryResults = options.queryResults ? [...options.queryResults] : null;
 
   class FakeProvider {
     setCustomParameters(parameters) {
@@ -55,6 +57,8 @@ function createHarness(options = {}) {
   const scope = {
     Blob,
     Image: FakeImage,
+    atob: (value) => Buffer.from(value, "base64").toString("binary"),
+    btoa: (value) => Buffer.from(value, "binary").toString("base64"),
     StampNoteCloudData: options.cloudData === undefined ? cloudData : options.cloudData,
     URL: {
       createObjectURL(blob) {
@@ -155,7 +159,7 @@ function createHarness(options = {}) {
     },
     async getDocs(query) {
       calls.queries.push(query);
-      const docs = options.documents || [
+      const docs = queryResults?.length ? queryResults.shift() : options.documents || [
         { id: "firestore-1", data: () => ({ id: "photo-1", capturedAtMs: 2 }) },
         { id: "firestore-2", data: () => ({ id: "photo-2", capturedAtMs: 1 }) },
       ];
@@ -178,6 +182,22 @@ function createHarness(options = {}) {
     },
     startAfter(value) {
       return { kind: "startAfter", value };
+    },
+    where(field, operator, value) {
+      return { kind: "where", field, operator, value };
+    },
+    writeBatch(receivedDb) {
+      assert.equal(receivedDb, db);
+      const batch = { committed: false, deletes: [] };
+      calls.batches.push(batch);
+      return {
+        delete(reference) {
+          batch.deletes.push(reference);
+        },
+        async commit() {
+          batch.committed = true;
+        },
+      };
     },
   };
   const analyticsSdk = {
@@ -226,6 +246,7 @@ function reviewedPhoto(overrides = {}) {
     capturedAt: "2026-08-13T12:00:00.000Z",
     capturedAtMs: Date.parse("2026-08-13T12:00:00.000Z"),
     blob: new Blob(["full-size-image"], { type: "image/jpeg" }),
+    gpsLocation: { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 12.5 },
     uniquePeopleSeen: 5,
     aiReview: { action: "keep", recommendation: "keep", confidence: 0.95 },
     ...overrides,
@@ -362,6 +383,8 @@ test("worker face templates are validated, team-scoped, listed, replaced, and de
       const viewMagnitude = Math.sqrt(view.reduce((total, value) => total + value ** 2, 0));
       return view.map((value) => value / viewMagnitude);
     }),
+    // No portrait was supplied with this enrollment.
+    profilePhoto: null,
   });
   const write = harness.calls.writes[0];
   assert.deepEqual(write.reference.segments.slice(1), ["workers", "WORKER-7"]);
@@ -400,6 +423,68 @@ test("worker face templates are validated, team-scoped, listed, replaced, and de
   await assert.rejects(
     harness.client.getWorkerFaces(),
     (error) => error.code === "auth-required",
+  );
+});
+
+test("an enrollment portrait is stored as bounded bytes and read back as an image", async () => {
+  const harness = createHarness();
+  const embedding = Array.from({ length: 128 }, (unused, index) => (index % 7) + 1);
+  // A one-pixel JPEG is enough to prove the round trip.
+  const portrait =
+    "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
+
+  const saved = await harness.client.saveWorkerFace({
+    workerId: "worker-9",
+    displayName: "Bo Lim",
+    embedding,
+    profilePhoto: portrait,
+  });
+  assert.equal(saved.profilePhoto, portrait);
+
+  const write = harness.calls.writes[0];
+  assert.equal(write.value.profilePhotoContentType, "image/jpeg");
+  assert.ok(write.value.profilePhotoBytes > 0);
+  assert.ok(Array.isArray(write.value.profilePhotoData.bytes));
+
+  // Reading a worker turns those bytes back into something an <img> can show,
+  // and a worker enrolled before portraits existed simply has none.
+  const reader = createHarness({
+    documents: [
+      {
+        id: "WORKER-9",
+        data: () => ({
+          workerId: "WORKER-9",
+          displayName: "Bo Lim",
+          embedding,
+          profilePhotoData: write.value.profilePhotoData,
+          profilePhotoContentType: "image/jpeg",
+        }),
+      },
+      { id: "WORKER-8", data: () => ({ workerId: "WORKER-8", displayName: "Ari Tan", embedding }) },
+    ],
+  });
+  const [older, worker] = await reader.client.getWorkerFaces();
+  assert.equal(worker.profilePhoto, portrait);
+  assert.equal(older.profilePhoto, null);
+
+  // Anything that is not a small image is refused rather than stored.
+  await assert.rejects(
+    harness.client.saveWorkerFace({
+      workerId: "WORKER-9",
+      displayName: "Bo Lim",
+      embedding,
+      profilePhoto: "https://example.com/photo.jpg",
+    }),
+    /JPEG or PNG data URL/,
+  );
+  await assert.rejects(
+    harness.client.saveWorkerFace({
+      workerId: "WORKER-9",
+      displayName: "Bo Lim",
+      embedding,
+      profilePhoto: `data:image/jpeg;base64,${"A".repeat(200000)}`,
+    }),
+    /too large/,
   );
 });
 
@@ -518,6 +603,154 @@ test("matched workers create idempotent daily attendance records that the dashbo
   );
 });
 
+test("dashboard sessions load names and Truck locations and rename in Firestore", async () => {
+  const location = "10 Marina Bay";
+  const locationKey = cloudData.createLocationKey(location);
+  const key = cloudData.createSessionKey({
+    locationKey,
+    dateKey: "2026-08-14",
+    sessionId: "afternoon",
+  });
+  const morningKey = cloudData.createSessionKey({
+    locationKey,
+    dateKey: "2026-08-14",
+    sessionId: "morning",
+  });
+  const harness = createHarness({
+    queryResults: [
+      [
+        {
+          id: key,
+          data: () => ({
+            location,
+            locationKey,
+            dateKey: "2026-08-14",
+            sessionId: "afternoon",
+            label: "PM site walk",
+            truckLocation: { x: 103.8555, y: 1.2868 },
+          }),
+        },
+        {
+          id: morningKey,
+          data: () => ({
+            location,
+            locationKey,
+            dateKey: "2026-08-14",
+            sessionId: "morning",
+            truckLocation: { x: 103.8545, y: 1.2867 },
+          }),
+        },
+        { id: "invalid", data: () => ({ label: "Broken" }) },
+      ],
+    ],
+  });
+  await harness.client.ready;
+
+  const sessions = await harness.client.getDashboardSessions();
+  assert.deepEqual(sessions, [
+    {
+      key,
+      location,
+      locationKey,
+      dateKey: "2026-08-14",
+      sessionId: "afternoon",
+      label: "PM site walk",
+      truckLocation: { x: 103.8555, y: 1.2868 },
+    },
+    {
+      key: morningKey,
+      location,
+      locationKey,
+      dateKey: "2026-08-14",
+      sessionId: "morning",
+      label: "",
+      truckLocation: { x: 103.8545, y: 1.2867 },
+    },
+  ]);
+
+  const renamed = await harness.client.renameSession({
+    location,
+    dateKey: "2026-08-14",
+    sessionId: "afternoon",
+    label: "  Delivery   window ",
+  });
+  assert.equal(renamed.label, "Delivery window");
+  assert.deepEqual(harness.calls.writes.at(-1).reference.segments.slice(1), [
+    "dashboardSessions",
+    key,
+  ]);
+  assert.equal(harness.calls.writes.at(-1).value.renamedBy, "user-1");
+  assert.deepEqual(harness.calls.writes.at(-1).writeOptions, { merge: true });
+  await assert.rejects(
+    harness.client.renameSession({
+      location,
+      dateKey: "2026-08-14",
+      sessionId: "afternoon",
+      label: "   ",
+    }),
+    /between 1 and 60/,
+  );
+});
+
+test("deleting a dashboard session removes every matching check-in, photo, and custom name", async () => {
+  const location = "10 Marina Bay";
+  const locationKey = cloudData.createLocationKey(location);
+  const afternoon = new Date(2026, 7, 14, 13, 0).getTime();
+  const morning = new Date(2026, 7, 14, 9, 0).getTime();
+  const harness = createHarness({
+    queryResults: [
+      [
+        { id: "attendance-afternoon", data: () => ({ location, checkedInAtMs: afternoon }) },
+        { id: "attendance-morning", data: () => ({ location, checkedInAtMs: morning }) },
+        {
+          id: "attendance-other-site",
+          data: () => ({ location: "Orchard Road", checkedInAtMs: afternoon }),
+        },
+      ],
+      [
+        {
+          id: "photo-afternoon-doc",
+          data: () => ({ id: "photo-afternoon", location, capturedAtMs: afternoon }),
+        },
+        {
+          id: "photo-morning-doc",
+          data: () => ({ id: "photo-morning", location, capturedAtMs: morning }),
+        },
+      ],
+    ],
+  });
+  await harness.client.ready;
+
+  const deleted = await harness.client.deleteSession({
+    location,
+    locationKey,
+    dateKey: "2026-08-14",
+    sessionId: "afternoon",
+  });
+  assert.deepEqual(deleted, {
+    attendanceDeleted: 1,
+    attendanceEventIds: ["attendance-afternoon"],
+    photoDeleted: 1,
+    photoIds: ["photo-afternoon"],
+  });
+  assert.deepEqual(harness.calls.queries[1].clauses, [
+    { kind: "where", field: "dateKey", operator: "==", value: "2026-08-14" },
+  ]);
+  assert.equal(harness.calls.batches.length, 1);
+  assert.equal(harness.calls.batches[0].committed, true);
+  assert.deepEqual(
+    harness.calls.batches[0].deletes.map((reference) => reference.segments.slice(1)),
+    [
+      ["attendanceDays", "2026-08-14", "entries", "attendance-afternoon"],
+      ["users", "user-1", "photos", "photo-afternoon-doc"],
+      [
+        "dashboardSessions",
+        cloudData.createSessionKey({ locationKey, dateKey: "2026-08-14", sessionId: "afternoon" }),
+      ],
+    ],
+  );
+});
+
 test("reviewed photos are resized, encoded, and written idempotently to Firestore", async () => {
   const harness = createHarness();
   await harness.client.ready;
@@ -540,7 +773,61 @@ test("reviewed photos are resized, encoded, and written idempotently to Firestor
   assert.equal(harness.calls.writes[0].value.imageWidth, 512);
   assert.equal(harness.calls.writes[0].value.imageHeight, 256);
   assert.equal(harness.calls.writes[0].value.uniquePeopleSeen, 5);
+  assert.deepEqual(harness.calls.writes[0].value.gpsLocation, {
+    latitude: 1.2868,
+    longitude: 103.8545,
+    accuracyMeters: 12.5,
+  });
+  assert.equal(Object.hasOwn(harness.calls.writes[0].value, "vehicleCoordinates"), false);
+  assert.equal(Object.hasOwn(harness.calls.writes[0].value, "truckLocation"), false);
   assert.deepEqual(harness.calls.writes[0].writeOptions, { merge: true });
+});
+
+test("Truck location coordinates are stored once on the dashboard session", async () => {
+  const harness = createHarness();
+  await harness.client.ready;
+  const location = "10 Marina Bay";
+  const locationKey = cloudData.createLocationKey(location);
+  const session = {
+    location,
+    locationKey,
+    dateKey: "2026-08-14",
+    sessionId: "afternoon",
+  };
+  const key = cloudData.createSessionKey(session);
+
+  const saved = await harness.client.updateSessionTruckLocation(
+    session,
+    { x: "103.8555", y: 1.2868 },
+  );
+
+  assert.equal(saved.key, key);
+  assert.deepEqual(saved.truckLocation, { x: 103.8555, y: 1.2868 });
+  const write = harness.calls.writes.at(-1);
+  assert.deepEqual(write.reference.segments.slice(1), ["dashboardSessions", key]);
+  assert.deepEqual(write.value.truckLocation, { x: 103.8555, y: 1.2868 });
+  assert.equal(write.value.truckLocationUpdatedBy, "user-1");
+  assert.equal(write.value.location, location);
+  assert.equal(write.value.locationKey, locationKey);
+  assert.equal(write.value.dateKey, "2026-08-14");
+  assert.equal(write.value.sessionId, "afternoon");
+  assert.deepEqual(write.writeOptions, { merge: true });
+
+  await assert.rejects(
+    harness.client.updateSessionTruckLocation(session, { x: "invalid", y: 2 }),
+    /longitude/,
+  );
+  await assert.rejects(
+    harness.client.updateSessionTruckLocation(session, { x: 103.8555, y: null }),
+    /both truck location coordinates/i,
+  );
+
+  const cleared = await harness.client.updateSessionTruckLocation(session, {
+    x: null,
+    y: null,
+  });
+  assert.deepEqual(cleared.truckLocation, { x: null, y: null });
+  assert.deepEqual(harness.calls.writes.at(-1).value.truckLocation, { x: null, y: null });
 });
 
 test("photo upload fails safely before writing incomplete or unencodable records", async () => {

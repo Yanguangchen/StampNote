@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f3f5f1" />
+    <meta name="theme-color" content="#f3f5f1" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d1512" media="(prefers-color-scheme: dark)" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -12,11 +13,22 @@
     <link rel="manifest" href="manifest.json" />
     <link rel="icon" href="icons/stampnote.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="icons/stampnote-180.png" sizes="180x180" />
-    <link rel="stylesheet" href="admin.css" />
+    <link rel="stylesheet" href="admin.css?v=20260815-2" />
+    <!-- Applied before the first paint so a saved dark theme never flashes white. -->
+    <script>
+      try {
+        const saved = localStorage.getItem("stampnote-theme");
+        if (saved === "dark" || saved === "light") {
+          document.documentElement.dataset.theme = saved;
+        }
+      } catch (error) {
+        /* A blocked storage jar just leaves the system theme in charge. */
+      }
+    </script>
     <script src="observability.js" defer></script>
-    <script src="photo-cloud.js" defer></script>
-    <script src="firebase.js" defer></script>
-    <script src="admin.js" defer></script>
+    <script src="photo-cloud.js?v=20260815-2" defer></script>
+    <script src="firebase.js?v=20260815-2" defer></script>
+    <script src="admin.js?v=20260815-2" defer></script>
   </head>
   <body>
     <header class="admin-header">
@@ -26,6 +38,16 @@
       </a>
       <div class="account-actions">
         <span class="account-name" id="account-name"></span>
+        <button
+          class="button button-quiet theme-toggle"
+          id="theme-toggle"
+          type="button"
+          aria-pressed="false"
+          title="Switch to dark theme"
+        >
+          <span class="theme-toggle-icon" id="theme-toggle-icon" aria-hidden="true">☾</span>
+          <span class="theme-toggle-label" id="theme-toggle-label">Dark</span>
+        </button>
         <button class="button button-quiet" id="sign-out" type="button" hidden>Sign out</button>
       </div>
     </header>
@@ -75,12 +97,19 @@
             <h3 class="scope-step-title" id="session-step-title">
               <span class="scope-step-number" aria-hidden="true">3</span> Time session
             </h3>
+            <p class="scope-step-hint">Set the Truck location X and Y inside each session.</p>
             <div class="scope-options" id="session-options"></div>
           </section>
         </nav>
 
         <div class="dashboard-detail">
-          <p class="scope-breadcrumb" id="scope-breadcrumb" role="status" aria-live="polite"></p>
+          <div class="scope-summary">
+            <p class="scope-breadcrumb" id="scope-breadcrumb" role="status" aria-live="polite"></p>
+            <div class="session-actions" id="session-actions" hidden>
+              <button class="button button-quiet" id="session-rename" type="button">Rename session</button>
+              <button class="button button-danger" id="session-delete" type="button">Delete session</button>
+            </div>
+          </div>
 
           <section class="dashboard-panel attendance-panel" id="attendance-panel" aria-labelledby="attendance-title">
             <div class="panel-heading attendance-heading">
@@ -121,6 +150,7 @@
                   <option value="all">All reviewed photos</option>
                   <option value="kept">Kept photos</option>
                   <option value="flagged">AI review bin</option>
+                  <option value="location-flagged">GPS discrepancies</option>
                 </select>
               </div>
             </div>
@@ -139,14 +169,33 @@
       <div class="dialog-body">
         <img id="dialog-image" alt="" />
         <div class="dialog-copy">
-          <p class="dialog-location" id="dialog-location"></p>
+          <div class="dialog-location">
+            <span>Location address</span>
+            <output id="dialog-location" aria-readonly="true"></output>
+          </div>
           <p class="dialog-time" id="dialog-time"></p>
+          <p class="dialog-gps-reference" id="dialog-gps-reference"></p>
+          <p class="dialog-coordinate-status" id="dialog-coordinate-status"></p>
           <p class="dialog-people" id="dialog-people"></p>
           <p class="dialog-review" id="dialog-review"></p>
         </div>
       </div>
       <form method="dialog">
         <button class="button button-quiet" type="submit">Close</button>
+      </form>
+    </dialog>
+
+    <dialog class="session-dialog" id="session-rename-dialog" aria-labelledby="session-rename-title">
+      <form id="session-rename-form">
+        <h2 id="session-rename-title">Rename session</h2>
+        <p>Use a short name that helps the team recognize this time period.</p>
+        <label for="session-rename-input">Session name</label>
+        <input id="session-rename-input" name="sessionName" maxlength="60" autocomplete="off" required />
+        <p class="session-dialog-error" id="session-rename-error" role="alert"></p>
+        <div class="session-dialog-actions">
+          <button class="button button-quiet" id="session-rename-cancel" type="button">Cancel</button>
+          <button class="button button-primary" id="session-rename-save" type="submit">Save name</button>
+        </div>
       </form>
     </dialog>
   </body>

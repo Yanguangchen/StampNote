@@ -143,6 +143,44 @@
       return { workerId, displayName, embedding, embeddings };
     }
 
+    // A worker portrait is stored the same economical way a reviewed photo is:
+    // a small JPEG held as Firestore bytes, so the project needs no paid
+    // Storage bucket. The cap is deliberately tight — this is a face at badge
+    // size, not a photograph.
+    const PROFILE_PHOTO_MAX_BYTES = 120000;
+
+    function decodeProfilePhoto(value) {
+      const source = typeof value === "string" ? value.trim() : "";
+      if (!source) return null;
+
+      const match = /^data:image\/(jpeg|png);base64,([A-Za-z0-9+/=]+)$/.exec(source);
+      if (!match) {
+        throw new Error("The worker photo must be a JPEG or PNG data URL.");
+      }
+
+      const binary = scope.atob(match[2]);
+      if (binary.length > PROFILE_PHOTO_MAX_BYTES) {
+        throw new Error("The worker photo is too large to store.");
+      }
+
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return { bytes, contentType: `image/${match[1]}` };
+    }
+
+    function encodeProfilePhoto(value) {
+      const bytes = value?.profilePhotoData?.toUint8Array?.();
+      if (!bytes || bytes.length === 0) return null;
+
+      let binary = "";
+      for (let index = 0; index < bytes.length; index += 1) {
+        binary += String.fromCharCode(bytes[index]);
+      }
+      return `data:${value.profilePhotoContentType || "image/jpeg"};base64,${scope.btoa(binary)}`;
+    }
+
     function normalizeAttendanceDateKey(value) {
       const dateKey = String(value || "").trim();
       if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
@@ -201,6 +239,45 @@
       };
     }
 
+    function dashboardSessionRecord(value, options = {}) {
+      const data = requireCloudData();
+      const location = data.normalizeLocation(value?.location);
+      const locationKey = data.createLocationKey(location);
+      const dateKey = String(value?.dateKey || "").trim();
+      const sessionId = String(value?.sessionId || "").trim();
+      const key = data.createSessionKey({ locationKey, dateKey, sessionId });
+      const label = String(value?.label || "").trim().replace(/\s+/g, " ");
+      const truckLocation = data.cleanTruckLocation(value?.truckLocation);
+
+      if (options.requireLabel && (!label || label.length > 60)) {
+        throw new Error("Session name must be between 1 and 60 characters.");
+      }
+
+      return { key, location, locationKey, dateKey, sessionId, label, truckLocation };
+    }
+
+    function isDashboardSessionRecord(value, session) {
+      const data = requireCloudData();
+      const locationKey = data.createLocationKey(value?.location);
+      const atMs = Number(value?.checkedInAtMs || value?.capturedAtMs) ||
+        Date.parse(value?.capturedAt) || 0;
+      return (
+        locationKey === session.locationKey &&
+        data.sessionDefinitionFor(atMs).id === session.sessionId
+      );
+    }
+
+    async function deleteReferences(cloud, references) {
+      const chunkSize = 450;
+      for (let start = 0; start < references.length; start += chunkSize) {
+        const batch = cloud.firestoreSdk.writeBatch(cloud.db);
+        references
+          .slice(start, start + chunkSize)
+          .forEach((reference) => batch.delete(reference));
+        await batch.commit();
+      }
+    }
+
   async function signIn() {
     const cloud = await ready;
 
@@ -227,6 +304,7 @@
     const user = requireUser(cloud, "Sign in with Google before enrolling a worker.");
     const worker = workerRecord(input);
     const { embeddings, ...documentWorker } = worker;
+    const portrait = decodeProfilePhoto(input?.profilePhoto);
     const reference = cloud.firestoreSdk.doc(
       cloud.db,
       "workers",
@@ -250,10 +328,21 @@
         sampleCount: Math.max(1, Math.min(12, Math.floor(Number(input?.sampleCount) || 7))),
         enrolledAt: cloud.firestoreSdk.serverTimestamp(),
         updatedAt: cloud.firestoreSdk.serverTimestamp(),
+        // A re-enrollment without a fresh portrait keeps the one already there.
+        ...(portrait
+          ? {
+              profilePhotoData: cloud.firestoreSdk.Bytes.fromUint8Array(portrait.bytes),
+              profilePhotoContentType: portrait.contentType,
+              profilePhotoBytes: portrait.bytes.length,
+            }
+          : {}),
       },
       { merge: true },
     );
-    return worker;
+    return {
+      ...worker,
+      profilePhoto: portrait ? String(input.profilePhoto).trim() : null,
+    };
   }
 
   async function getWorkerFaces() {
@@ -265,7 +354,12 @@
     return snapshot.docs
       .map((entry) => {
         try {
-          return { documentId: entry.id, ...workerRecord(entry.data()) };
+          const data = entry.data();
+          return {
+            documentId: entry.id,
+            ...workerRecord(data),
+            profilePhoto: encodeProfilePhoto(data),
+          };
         } catch {
           return null;
         }
@@ -345,6 +439,107 @@
         }
       })
       .filter(Boolean);
+  }
+
+  async function getDashboardSessions() {
+    const cloud = services || (await ready);
+    requireUser(cloud, "Sign in with Google to load dashboard sessions.");
+    const reference = cloud.firestoreSdk.collection(cloud.db, "dashboardSessions");
+    const snapshot = await cloud.firestoreSdk.getDocs(reference);
+
+    return snapshot.docs
+      .map((entry) => {
+        try {
+          const session = dashboardSessionRecord(entry.data());
+          return entry.id === session.key ? session : null;
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  }
+
+  const getSessionLabels = getDashboardSessions;
+
+  async function renameSession(input) {
+    const cloud = services || (await ready);
+    const user = requireUser(cloud, "Sign in with Google before renaming a session.");
+    const session = dashboardSessionRecord(input, { requireLabel: true });
+    const reference = cloud.firestoreSdk.doc(cloud.db, "dashboardSessions", session.key);
+
+    await cloud.firestoreSdk.setDoc(
+      reference,
+      {
+        location: session.location,
+        locationKey: session.locationKey,
+        dateKey: session.dateKey,
+        sessionId: session.sessionId,
+        label: session.label,
+        renamedBy: user.uid,
+        updatedAt: cloud.firestoreSdk.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    return session;
+  }
+
+  async function deleteSession(input) {
+    const cloud = services || (await ready);
+    const user = requireUser(cloud, "Sign in with Google before deleting a session.");
+    const session = dashboardSessionRecord(input);
+    const attendanceCollection = cloud.firestoreSdk.collection(
+      cloud.db,
+      "attendanceDays",
+      session.dateKey,
+      "entries",
+    );
+    const photoCollection = cloud.firestoreSdk.collection(
+      cloud.db,
+      "users",
+      user.uid,
+      "photos",
+    );
+    const photosForDate = session.dateKey === "unknown-date"
+      ? photoCollection
+      : cloud.firestoreSdk.query(
+          photoCollection,
+          cloud.firestoreSdk.where("dateKey", "==", session.dateKey),
+        );
+    const [attendanceSnapshot, photoSnapshot] = await Promise.all([
+      cloud.firestoreSdk.getDocs(attendanceCollection),
+      cloud.firestoreSdk.getDocs(photosForDate),
+    ]);
+    const attendanceDocuments = attendanceSnapshot.docs.filter((entry) =>
+      isDashboardSessionRecord(entry.data(), session),
+    );
+    const photoDocuments = photoSnapshot.docs.filter((entry) =>
+      isDashboardSessionRecord(entry.data(), session),
+    );
+    const attendanceEventIds = attendanceDocuments.map((entry) => entry.id);
+    const photoIds = photoDocuments.map((entry) => String(entry.data()?.id || entry.id));
+    const references = [
+      ...attendanceDocuments.map((entry) =>
+        cloud.firestoreSdk.doc(
+          cloud.db,
+          "attendanceDays",
+          session.dateKey,
+          "entries",
+          entry.id,
+        ),
+      ),
+      ...photoDocuments.map((entry) =>
+        cloud.firestoreSdk.doc(cloud.db, "users", user.uid, "photos", entry.id),
+      ),
+      cloud.firestoreSdk.doc(cloud.db, "dashboardSessions", session.key),
+    ];
+
+    await deleteReferences(cloud, references);
+    return {
+      attendanceDeleted: attendanceDocuments.length,
+      attendanceEventIds,
+      photoDeleted: photoDocuments.length,
+      photoIds,
+    };
   }
 
   function subscribeAuth(callback) {
@@ -477,6 +672,49 @@
     return metadata;
   }
 
+  async function updateSessionTruckLocation(sessionInput, input) {
+    const cloud = services || (await ready);
+    const user = requireUser(cloud, "Sign in with Google before editing the truck location.");
+    const data = requireCloudData();
+    const session = dashboardSessionRecord(sessionInput);
+    const truckLocation = data.cleanTruckLocation(input);
+    for (const axis of ["x", "y"]) {
+      const raw = input?.[axis];
+      if (raw !== undefined && raw !== null && raw !== "" && truckLocation[axis] === null) {
+        throw new Error(
+          axis === "x"
+            ? "Truck location X must be a longitude between -180 and 180."
+            : "Truck location Y must be a latitude between -90 and 90.",
+        );
+      }
+    }
+    if ((truckLocation.x === null) !== (truckLocation.y === null)) {
+      throw new Error("Enter both truck location coordinates, or clear both.");
+    }
+
+    const documentReference = cloud.firestoreSdk.doc(
+      cloud.db,
+      "dashboardSessions",
+      session.key,
+    );
+    await cloud.firestoreSdk.setDoc(
+      documentReference,
+      {
+        location: session.location,
+        locationKey: session.locationKey,
+        dateKey: session.dateKey,
+        sessionId: session.sessionId,
+        truckLocation,
+        truckLocationUpdatedBy: user.uid,
+        truckLocationUpdatedAt: cloud.firestoreSdk.serverTimestamp(),
+        updatedAt: cloud.firestoreSdk.serverTimestamp(),
+      },
+      { merge: true },
+    );
+
+    return { ...session, truckLocation };
+  }
+
   async function getPhotosPage(options = {}) {
     const cloud = services || (await ready);
     const user = cloud.auth.currentUser;
@@ -550,14 +788,19 @@
     return Object.freeze({
       ready,
       deleteWorkerFace,
+      deleteSession,
       getAttendance,
+      getDashboardSessions,
+      getSessionLabels,
       signIn,
       signOut,
       subscribeAuth,
       getWorkerFaces,
       saveAttendance,
       saveWorkerFace,
+      renameSession,
       uploadReviewedPhoto,
+      updateSessionTruckLocation,
       deleteReviewedPhoto,
       getPhotosPage,
       getPhotoBlob,

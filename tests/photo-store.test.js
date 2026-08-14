@@ -17,11 +17,17 @@ test("a capture record carries what a later upload would need", () => {
     blob: fakeBlob(120000),
     date: new Date(2026, 7, 11, 14, 32, 5),
     address: "  10 Bayfront Avenue  ",
+    gpsLocation: { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 12.5 },
     intervalMs: 30000,
     pose: { present: true, confidence: 0.812345, pose: "standing" },
   });
 
   assert.equal(record.address, "10 Bayfront Avenue");
+  assert.deepEqual(record.gpsLocation, {
+    latitude: 1.2868,
+    longitude: 103.8545,
+    accuracyMeters: 12.5,
+  });
   assert.equal(record.bytes, 120000);
   assert.equal(record.type, "image/jpeg");
   assert.equal(record.intervalMs, 30000);
@@ -46,6 +52,13 @@ test("a capture with nobody in frame is named without the pose marker", () => {
   assert.equal(record.name, "stampnote-20260102-030405.jpg");
   assert.equal(record.poseDetected, false);
   assert.equal(record.pose, null);
+  assert.equal(record.gpsLocation, null);
+});
+
+test("automatic GPS metadata rejects malformed fixes", () => {
+  assert.equal(storage.normalizeGpsLocation({ latitude: 91, longitude: 10, accuracy: 5 }), null);
+  assert.equal(storage.normalizeGpsLocation({ latitude: 1, longitude: 181, accuracy: 5 }), null);
+  assert.equal(storage.normalizeGpsLocation({ latitude: 1, longitude: 2, accuracy: -1 }), null);
 });
 
 test("records are listed newest first", async () => {

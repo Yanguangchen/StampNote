@@ -28,7 +28,13 @@
   const FACE_CAMERA_WIDTH = 1920;
   const FACE_CAMERA_HEIGHT = 1080;
 
+  // The portrait is a badge-sized square, not a photograph: enough to tell two
+  // workers apart in a roster, small enough to sit inside the worker document.
+  const PROFILE_PHOTO_EDGE = 256;
+  const PROFILE_PHOTO_QUALITY = 0.72;
+
   let user = null;
+  let profilePhoto = null;
   let stream = null;
   let scanner = null;
   let recognizer = null;
@@ -72,6 +78,43 @@
     instruction.textContent = scanMessage(scanState);
   }
 
+  // Taken from the live frame at the moment a sample is accepted, so the face
+  // is the one the scan just measured: centred, lit, and looking at the camera.
+  function captureProfilePhoto() {
+    const width = video.videoWidth;
+    const height = video.videoHeight;
+    if (!width || !height) return null;
+
+    try {
+      const edge = Math.min(width, height);
+      const canvas = document.createElement("canvas");
+      canvas.width = PROFILE_PHOTO_EDGE;
+      canvas.height = PROFILE_PHOTO_EDGE;
+      const context = canvas.getContext("2d");
+      if (!context) return null;
+
+      // The preview is mirrored, so the portrait is mirrored to match: the
+      // worker gets back the face they were just looking at.
+      context.translate(PROFILE_PHOTO_EDGE, 0);
+      context.scale(-1, 1);
+      context.drawImage(
+        video,
+        (width - edge) / 2,
+        (height - edge) / 2,
+        edge,
+        edge,
+        0,
+        0,
+        PROFILE_PHOTO_EDGE,
+        PROFILE_PHOTO_EDGE,
+      );
+      return canvas.toDataURL("image/jpeg", PROFILE_PHOTO_QUALITY);
+    } catch {
+      // A portrait is a nicety; enrollment carries on without one.
+      return null;
+    }
+  }
+
   function releaseScanner(nextState = "idle") {
     window.clearTimeout(timer);
     timer = null;
@@ -99,6 +142,24 @@
     workers.forEach((worker) => {
       const row = document.createElement("article");
       row.className = "worker-row";
+      const avatar = document.createElement("span");
+      avatar.className = "worker-avatar";
+      if (worker.profilePhoto) {
+        const portrait = document.createElement("img");
+        portrait.src = worker.profilePhoto;
+        portrait.alt = "";
+        portrait.loading = "lazy";
+        avatar.append(portrait);
+      } else {
+        // Enrolled before portraits, or scanned without one.
+        avatar.textContent = String(worker.displayName || worker.workerId)
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .map((part) => part[0])
+          .join("")
+          .toUpperCase();
+      }
       const identity = document.createElement("div");
       const name = document.createElement("p");
       name.className = "worker-name";
@@ -124,7 +185,7 @@
           remove.disabled = false;
         }
       });
-      row.append(identity, remove);
+      row.append(avatar, identity, remove);
       roster.append(row);
     });
   }
@@ -159,6 +220,7 @@
         embedding,
         embeddings: samples,
         sampleCount: samples.length,
+        profilePhoto,
       });
       releaseScanner("complete");
       progress.max = ONBOARDING_SAMPLES;
@@ -190,6 +252,9 @@
       );
       if (accepted && samples.length < ONBOARDING_SAMPLES) {
         samples.push(accepted.faceEmbedding);
+        // Keep the most recent accepted frame: by the last sample the worker has
+        // settled, so the newest one is usually the best portrait.
+        profilePhoto = captureProfilePhoto() || profilePhoto;
       }
       const scanState = recognizer.enrollmentState();
       updateProgress({ ...scanState, samples: samples.length });
@@ -233,6 +298,7 @@
     workerId.value = normalizedId;
     workerName.value = normalizedName;
     samples = [];
+    profilePhoto = null;
     startButton.disabled = true;
     cancelButton.hidden = false;
     scannerView.dataset.status = "scanning";
@@ -287,6 +353,8 @@
   cancelButton?.addEventListener("click", () => {
     releaseScanner("idle");
     samples = [];
+    // A cancelled scan leaves nothing behind, portrait included.
+    profilePhoto = null;
     updateProgress({ status: "no_face", samples: 0, total: ONBOARDING_SAMPLES });
     instruction.textContent = "Your face should fill the oval.";
     setStatus("Face scan cancelled. No template was saved.");

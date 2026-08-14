@@ -2,6 +2,11 @@
   "use strict";
 
   const UNKNOWN_LOCATION = "Unknown location";
+  const SESSION_DEFINITIONS = Object.freeze([
+    Object.freeze({ id: "morning", label: "Morning", fromHour: 0, toHour: 12 }),
+    Object.freeze({ id: "afternoon", label: "Afternoon", fromHour: 12, toHour: 17 }),
+    Object.freeze({ id: "evening", label: "Evening", fromHour: 17, toHour: 24 }),
+  ]);
 
   function pad(value) {
     return String(value).padStart(2, "0");
@@ -41,6 +46,36 @@
     return `${slug}-${hashText(location)}`;
   }
 
+  function sessionDefinitionFor(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    const hour = Number.isNaN(date.getTime()) ? 0 : date.getHours();
+    return (
+      SESSION_DEFINITIONS.find(
+        (session) => hour >= session.fromHour && hour < session.toHour,
+      ) || SESSION_DEFINITIONS[0]
+    );
+  }
+
+  function createSessionKey(value = {}) {
+    const locationKey = String(
+      value.locationKey || createLocationKey(value.location),
+    ).trim();
+    const dateKey = String(value.dateKey || "").trim();
+    const sessionId = String(value.sessionId || "").trim();
+
+    if (!/^[a-z0-9][a-z0-9-]{1,80}$/.test(locationKey)) {
+      throw new Error("The session needs a valid location.");
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey) && dateKey !== "unknown-date") {
+      throw new Error("The session needs a valid date.");
+    }
+    if (!SESSION_DEFINITIONS.some((session) => session.id === sessionId)) {
+      throw new Error("The session needs a valid time period.");
+    }
+
+    return `${dateKey}--${locationKey}--${sessionId}`;
+  }
+
   // Use the capture device's calendar date, not UTC, so midnight photographs
   // appear under the day the person holding the camera experienced.
   function createDateKey(value) {
@@ -69,6 +104,117 @@
 
   function optionalCount(value) {
     return value === undefined || value === null ? null : safeCount(value);
+  }
+
+  function optionalCoordinate(value) {
+    if (value === undefined || value === null || value === "") {
+      return null;
+    }
+
+    const coordinate = Number(value);
+    return Number.isFinite(coordinate) ? coordinate : null;
+  }
+
+  function cleanTruckLocation(value = {}) {
+    const x = optionalCoordinate(value?.x);
+    const y = optionalCoordinate(value?.y);
+
+    return {
+      x: x !== null && x >= -180 && x <= 180 ? x : null,
+      y: y !== null && y >= -90 && y <= 90 ? y : null,
+    };
+  }
+
+  // Temporary aliases keep older clients and stored photo metadata readable.
+  const cleanVehicleCoordinates = cleanTruckLocation;
+
+  function normalizeGpsLocation(value) {
+    const latitude = optionalCoordinate(value?.latitude);
+    const longitude = optionalCoordinate(value?.longitude);
+    const accuracyMeters = optionalCoordinate(value?.accuracyMeters ?? value?.accuracy);
+
+    if (
+      latitude === null ||
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude === null ||
+      longitude < -180 ||
+      longitude > 180 ||
+      accuracyMeters === null ||
+      accuracyMeters < 0
+    ) {
+      return null;
+    }
+
+    return { latitude, longitude, accuracyMeters };
+  }
+
+  function distanceBetweenCoordinates(left, right) {
+    const toRadians = (degrees) => (degrees * Math.PI) / 180;
+    const latitudeDelta = toRadians(right.latitude - left.latitude);
+    const longitudeDelta = toRadians(right.longitude - left.longitude);
+    const leftLatitude = toRadians(left.latitude);
+    const rightLatitude = toRadians(right.latitude);
+    const haversine =
+      Math.sin(latitudeDelta / 2) ** 2 +
+      Math.cos(leftLatitude) *
+        Math.cos(rightLatitude) *
+        Math.sin(longitudeDelta / 2) ** 2;
+
+    const bounded = Math.min(1, Math.max(0, haversine));
+    return 6_371_000 * 2 * Math.atan2(Math.sqrt(bounded), Math.sqrt(1 - bounded));
+  }
+
+  function compareTruckLocation(gpsLocation, input) {
+    const truckLocation = cleanTruckLocation(input);
+    const hasX = truckLocation.x !== null;
+    const hasY = truckLocation.y !== null;
+    const gps = normalizeGpsLocation(gpsLocation);
+
+    if (!hasX && !hasY) {
+      return {
+        status: "not_set",
+        flagged: false,
+        distanceMeters: null,
+        accuracyMeters: gps?.accuracyMeters ?? null,
+      };
+    }
+    if (!hasX || !hasY) {
+      return {
+        status: "incomplete",
+        flagged: false,
+        distanceMeters: null,
+        accuracyMeters: gps?.accuracyMeters ?? null,
+      };
+    }
+    if (!gps) {
+      return {
+        status: "gps_unavailable",
+        flagged: false,
+        distanceMeters: null,
+        accuracyMeters: null,
+      };
+    }
+
+    const distanceMeters = distanceBetweenCoordinates(gps, {
+      longitude: truckLocation.x,
+      latitude: truckLocation.y,
+    });
+    const roundedDistance = Number(distanceMeters.toFixed(1));
+    const flagged = distanceMeters > gps.accuracyMeters;
+
+    return {
+      status: flagged ? "flagged" : "within_accuracy",
+      flagged,
+      distanceMeters: roundedDistance,
+      accuracyMeters: gps.accuracyMeters,
+    };
+  }
+
+  const compareVehicleCoordinates = compareTruckLocation;
+
+  function isCoordinateFlagged(photo) {
+    return photo?.coordinateVerification?.flagged === true;
   }
 
   function cleanAiReview(aiReview) {
@@ -103,6 +249,7 @@
       ownerId: String(ownerId || ""),
       location,
       locationKey: createLocationKey(location),
+      gpsLocation: normalizeGpsLocation(record?.gpsLocation),
       dateKey: createDateKey(record?.capturedAt || capturedAtMs),
       capturedAt: String(record?.capturedAt || new Date(capturedAtMs).toISOString()),
       capturedAtMs,
@@ -168,12 +315,22 @@
 
   const api = Object.freeze({
     UNKNOWN_LOCATION,
+    SESSION_DEFINITIONS,
     normalizeLocation,
     createLocationKey,
     createDateKey,
+    createSessionKey,
     createPhotoMetadata,
+    cleanTruckLocation,
+    cleanVehicleCoordinates,
+    normalizeGpsLocation,
+    distanceBetweenCoordinates,
+    compareTruckLocation,
+    compareVehicleCoordinates,
+    isCoordinateFlagged,
     isFlagged,
     groupPhotos,
+    sessionDefinitionFor,
   });
 
   if (typeof module !== "undefined" && module.exports) {

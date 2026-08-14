@@ -61,6 +61,27 @@
     return Number.isFinite(number) ? Math.max(0, Math.min(maximum, Math.floor(number))) : 0;
   }
 
+  function normalizeGpsLocation(value) {
+    const latitude = Number(value?.latitude);
+    const longitude = Number(value?.longitude);
+    const accuracyMeters = Number(value?.accuracyMeters ?? value?.accuracy);
+
+    if (
+      !Number.isFinite(latitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      !Number.isFinite(longitude) ||
+      longitude < -180 ||
+      longitude > 180 ||
+      !Number.isFinite(accuracyMeters) ||
+      accuracyMeters < 0
+    ) {
+      return null;
+    }
+
+    return { latitude, longitude, accuracyMeters };
+  }
+
   function createCaptureRecord(input = {}) {
     const date =
       input.date instanceof Date && !Number.isNaN(input.date.getTime()) ? input.date : new Date();
@@ -72,6 +93,7 @@
       capturedAt: date.toISOString(),
       capturedAtMs: date.getTime(),
       address: String(input.address || "").trim(),
+      gpsLocation: normalizeGpsLocation(input.gpsLocation),
       // Anonymous cumulative count since this recording run began. Person IDs
       // and body geometry never enter the record.
       uniquePeopleSeen: safeCount(input.uniquePeopleSeen),
@@ -518,6 +540,7 @@
     STORE_NAME,
     buildFileName,
     byExpendability,
+    normalizeGpsLocation,
     createCaptureRecord,
     createIndexedDbBackend,
     createMemoryBackend,

@@ -23,6 +23,7 @@
       sampleFrame,
       captureImage,
       getAddress = () => "",
+      getGpsLocation = () => null,
       getFaces = () => null,
       isGesture = () => false,
       // Deciding what is worth keeping, and the small frame to decide it from.
@@ -183,6 +184,7 @@
             blob: image.blob,
             date: image.date instanceof Date ? image.date : new Date(timestamp),
             address: getAddress(),
+            gpsLocation: getGpsLocation(),
             // Cumulative anonymous count for this camera run. It is a number,
             // not the transient labels or body signatures used to derive it.
             uniquePeopleSeen: state.peopleSeen,

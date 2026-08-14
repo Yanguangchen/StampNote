@@ -16,9 +16,14 @@ test("worker onboarding has signed-in identity, scan, and roster controls", () =
   assert.match(html, /id="onboarding-video"[^>]*playsinline/);
   assert.match(html, /id="onboarding-progress"[^>]*max="7"/);
   assert.match(html, /id="worker-roster"/);
-  assert.match(html, /No face photo is uploaded/);
+  // The scan now keeps a portrait, so the page says so where the worker can
+  // read it before agreeing to be scanned.
+  assert.match(html, /one profile photo/i);
+  assert.match(html, /face template for worker ID matching/i);
   assert.ok(existsSync(resolve(root, "onboarding.css")));
   assert.match(css, /\.scanner-oval/);
+  assert.match(css, /\.worker-form,\s*\n\.scanner\s*\{[^}]*border-radius:/);
+  assert.match(css, /prefers-color-scheme: dark/);
   assert.match(css, /\.scanner-view video\s*\{[^}]*object-fit:\s*cover/);
 });
 
@@ -26,7 +31,9 @@ test("worker onboarding keeps only the enrollment controls and feedback", () => 
   assert.match(html, /<h1[^>]*>Worker onboarding<\/h1>/);
   assert.equal(/class="intro"|class="steps"|class="brand"|local-chip|step-label/.test(html), false);
   assert.equal(/<svg\b/.test(html), false);
-  assert.equal(/worker-avatar/.test(app), false);
+  // A portrait per worker, with initials still standing in for anyone enrolled
+  // before portraits existed.
+  assert.match(app, /worker-avatar/);
   assert.equal(/radial-gradient|backdrop-filter/.test(css), false);
 });
 
@@ -41,7 +48,15 @@ test("enrollment stores a representative face gallery and can delete it", () => 
   assert.match(app, /enrollmentSamples:\s*ONBOARDING_SAMPLES/);
   assert.match(app, /body\?\.enrollmentAccepted\s*===\s*true/);
   assert.match(app, /loadFaceScanner\(\)/);
-  assert.equal(/toBlob|drawImage\([^)]*canvas|imageData/.test(app), false);
+
+  // The one frame that is kept is a badge-sized square, taken from an accepted
+  // sample and sent with the enrollment; nothing else is rasterized.
+  assert.match(app, /PROFILE_PHOTO_EDGE\s*=\s*256/);
+  assert.match(app, /canvas\.toDataURL\("image\/jpeg", PROFILE_PHOTO_QUALITY\)/);
+  assert.match(app, /profilePhoto = captureProfilePhoto\(\) \|\| profilePhoto/);
+  assert.match(app, /profilePhoto,/);
+  // A cancelled scan keeps nothing.
+  assert.match(app, /profilePhoto = null;/);
 });
 
 test("the recording page links directly to worker onboarding", () => {

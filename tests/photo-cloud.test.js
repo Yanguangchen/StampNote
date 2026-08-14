@@ -10,6 +10,7 @@ function record(overrides = {}) {
     capturedAt: date.toISOString(),
     capturedAtMs: date.getTime(),
     address: "10 Marina Bay, Singapore",
+    gpsLocation: { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 12.5 },
     poseDetected: true,
     pose: { people: 2 },
     uniquePeopleSeen: 5,
@@ -46,6 +47,13 @@ test("cloud metadata contains the dashboard fields but never the Blob", () => {
 
   assert.equal(metadata.ownerId, "user-1");
   assert.equal(metadata.location, "10 Marina Bay, Singapore");
+  assert.equal(Object.hasOwn(metadata, "vehicleCoordinates"), false);
+  assert.equal(Object.hasOwn(metadata, "truckLocation"), false);
+  assert.deepEqual(metadata.gpsLocation, {
+    latitude: 1.2868,
+    longitude: 103.8545,
+    accuracyMeters: 12.5,
+  });
   assert.equal(metadata.dateKey, "2026-08-13");
   assert.equal(metadata.people, 2);
   assert.equal(metadata.uniquePeopleSeen, 5);
@@ -57,6 +65,55 @@ test("cloud metadata contains the dashboard fields but never the Blob", () => {
 test("missing locations get a stable dashboard group", () => {
   assert.equal(cloud.normalizeLocation("   "), "Unknown location");
   assert.equal(cloud.createLocationKey(""), cloud.createLocationKey("Unknown location"));
+});
+
+test("Truck location coordinates remain optional finite dashboard values", () => {
+  assert.deepEqual(cloud.cleanTruckLocation({ x: "0", y: "-3.5" }), { x: 0, y: -3.5 });
+  assert.deepEqual(cloud.cleanTruckLocation({ x: "", y: Number.POSITIVE_INFINITY }), {
+    x: null,
+    y: null,
+  });
+});
+
+test("RPA coordinates are compared with automatic GPS using its metre accuracy threshold", () => {
+  const gps = { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 15 };
+  const within = cloud.compareTruckLocation(gps, { x: 103.8545, y: 1.2868 });
+  assert.deepEqual(within, {
+    status: "within_accuracy",
+    flagged: false,
+    distanceMeters: 0,
+    accuracyMeters: 15,
+  });
+
+  const discrepant = cloud.compareTruckLocation(gps, { x: 103.8555, y: 1.2868 });
+  assert.equal(discrepant.status, "flagged");
+  assert.equal(discrepant.flagged, true);
+  assert.ok(discrepant.distanceMeters > discrepant.accuracyMeters);
+  assert.equal(cloud.isCoordinateFlagged({ coordinateVerification: discrepant }), true);
+
+  assert.equal(cloud.compareTruckLocation(null, { x: 103.8, y: 1.2 }).status, "gps_unavailable");
+  assert.equal(cloud.compareTruckLocation(gps, { x: 103.8, y: null }).status, "incomplete");
+  assert.equal(cloud.compareTruckLocation(gps, {}).status, "not_set");
+});
+
+test("dashboard session keys and time periods are deterministic", () => {
+  const locationKey = cloud.createLocationKey("10 Marina Bay");
+
+  assert.equal(cloud.sessionDefinitionFor(new Date(2026, 7, 14, 11, 59)).id, "morning");
+  assert.equal(cloud.sessionDefinitionFor(new Date(2026, 7, 14, 12, 0)).id, "afternoon");
+  assert.equal(cloud.sessionDefinitionFor(new Date(2026, 7, 14, 17, 0)).id, "evening");
+  assert.equal(
+    cloud.createSessionKey({ locationKey, dateKey: "2026-08-14", sessionId: "afternoon" }),
+    `2026-08-14--${locationKey}--afternoon`,
+  );
+  assert.throws(
+    () => cloud.createSessionKey({ locationKey, dateKey: "14-08-2026", sessionId: "afternoon" }),
+    /valid date/,
+  );
+  assert.throws(
+    () => cloud.createSessionKey({ locationKey, dateKey: "2026-08-14", sessionId: "overnight" }),
+    /valid time period/,
+  );
 });
 
 test("dashboard groups by location first, date second, newest first", () => {

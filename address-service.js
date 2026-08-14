@@ -21,10 +21,9 @@
       "Location is blocked for this site. 1) iOS Settings → Privacy & Security → Location Services → " +
       "on, and Safari Websites → While Using the App. 2) Back in Safari, tap “aA” in the address bar → " +
       "Website Settings → Location → Allow. Then reload and tap the button again.",
-    denied: "Location permission was denied — allow it in your browser's site settings, " +
-      "or type the address below.",
-    unavailable: "Location unavailable — type the address below.",
-    timeout: "Location timed out — try again, or type the address below.",
+    denied: "Location permission was denied — allow it in your browser's site settings and reload.",
+    unavailable: "Location unavailable — check location services and try again.",
+    timeout: "Location timed out — check your connection and try again.",
   });
 
   // iPadOS 13+ reports a desktop user agent, so touch support is the tiebreaker.

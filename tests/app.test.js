@@ -167,6 +167,9 @@ function createAppHarness(options = {}) {
     "capture-flash",
     "pose-overlay",
     "pose-badge",
+    "camera-loader",
+    "camera-loader-title",
+    "camera-loader-detail",
     "face-enrollment",
     "face-enrollment-kicker",
     "face-enrollment-title",
@@ -186,9 +189,7 @@ function createAppHarness(options = {}) {
     "ai-review-loader-detail",
     "cloud-auth",
     "admin-dashboard",
-    "stage-empty",
     "filmstrip",
-    "place-toggle",
     "viewer",
     "viewer-image",
     "viewer-ai-review",
@@ -203,6 +204,7 @@ function createAppHarness(options = {}) {
   elements["face-enrollment"].hidden = true;
   elements["face-enrollment-match"].hidden = true;
   elements["ai-review-loader"].hidden = true;
+  elements["camera-loader"].hidden = true;
   elements.viewer.hidden = true;
   elements["monitor-video"].readyState = 4;
   elements["monitor-video"].videoHeight = 720;
@@ -261,7 +263,7 @@ function createAppHarness(options = {}) {
     },
     async getCurrentCoordinates() {
       serviceCalls.coordinates += 1;
-      return { latitude: 1.2868, longitude: 103.8545 };
+      return { latitude: 1.2868, longitude: 103.8545, accuracy: 12.5 };
     },
     async getPermissionState() {
       return options.permission || "granted";
@@ -409,6 +411,12 @@ function createAppHarness(options = {}) {
   let cameraConstraints;
   let detectorClosed = false;
   let trackStopped = false;
+  let releaseCameraLoad = null;
+  const cameraLoadGate = options.deferCamera
+    ? new Promise((resolve) => {
+        releaseCameraLoad = resolve;
+      })
+    : null;
   const controller = {
     getState() {
       return controllerState;
@@ -475,8 +483,103 @@ function createAppHarness(options = {}) {
   const revoked = [];
   const shared = [];
   const windowListeners = new Map();
+  const audioCalls = {
+    bufferSources: [],
+    buffers: [],
+    closes: 0,
+    contexts: 0,
+    gains: [],
+    oscillators: [],
+    resumes: 0,
+  };
   let confirmCalls = 0;
   let timerId = 0;
+
+  class FakeAudioNode {
+    connect(node) {
+      return node;
+    }
+
+    disconnect() {}
+  }
+
+  class FakeAudioParam {
+    constructor(calls) {
+      this.calls = calls;
+    }
+
+    exponentialRampToValueAtTime(value, time) {
+      this.calls.push({ method: "exponentialRampToValueAtTime", time, value });
+    }
+
+    setValueAtTime(value, time) {
+      this.calls.push({ method: "setValueAtTime", time, value });
+    }
+  }
+
+  class FakeAudioContext {
+    constructor() {
+      audioCalls.contexts += 1;
+      this.currentTime = 1;
+      this.destination = new FakeAudioNode();
+      this.state = "suspended";
+    }
+
+    close() {
+      audioCalls.closes += 1;
+      this.state = "closed";
+      return Promise.resolve();
+    }
+
+    createBuffer(channels, length, sampleRate) {
+      const samples = new Float32Array(length);
+      const buffer = {
+        channels,
+        length,
+        sampleRate,
+        samples,
+        getChannelData() {
+          return samples;
+        },
+      };
+      audioCalls.buffers.push(buffer);
+      return buffer;
+    }
+
+    createBufferSource() {
+      const calls = [];
+      const source = new FakeAudioNode();
+      source.start = (time) => calls.push({ method: "start", time });
+      source.stop = (time) => calls.push({ method: "stop", time });
+      audioCalls.bufferSources.push({ calls, source });
+      return source;
+    }
+
+    createGain() {
+      const calls = [];
+      audioCalls.gains.push(calls);
+      const gain = new FakeAudioNode();
+      gain.gain = new FakeAudioParam(calls);
+      return gain;
+    }
+
+    createOscillator() {
+      const calls = [];
+      audioCalls.oscillators.push(calls);
+      const oscillator = new FakeAudioNode();
+      oscillator.frequency = new FakeAudioParam(calls);
+      oscillator.start = (time) => calls.push({ method: "start", time });
+      oscillator.stop = (time) => calls.push({ method: "stop", time });
+      return oscillator;
+    }
+
+    resume() {
+      audioCalls.resumes += 1;
+      this.state = "running";
+      return Promise.resolve();
+    }
+  }
+
   const scope = {
     StampNoteAddress: service,
     StampNoteAutoCapture: options.full === false ? null : autoCapture,
@@ -556,6 +659,9 @@ function createAppHarness(options = {}) {
       return timerId;
     },
   };
+  if (options.audio) {
+    scope.AudioContext = FakeAudioContext;
+  }
   scope.self = scope;
   scope.top = scope;
 
@@ -609,6 +715,7 @@ function createAppHarness(options = {}) {
     navigator.mediaDevices = {
       async getUserMedia(constraints) {
         cameraConstraints = constraints;
+        if (cameraLoadGate) await cameraLoadGate;
         if (options.cameraError) throw options.cameraError;
         return {
           getTracks() {
@@ -661,6 +768,7 @@ function createAppHarness(options = {}) {
   vm.runInContext(readFileSync(appPath, "utf8"), context, { filename: appPath });
 
   return {
+    audioCalls,
     auth(user, error = null) {
       authCallback?.(user, error);
     },
@@ -690,6 +798,9 @@ function createAppHarness(options = {}) {
       return personTrackerOptions;
     },
     records,
+    releaseCameraLoad() {
+      releaseCameraLoad?.();
+    },
     revoked,
     serviceCalls,
     shared,
@@ -759,7 +870,8 @@ test("capture-library initialization syncs reviewed photos and supports viewer d
 
   assert.equal(harness.elements["monitor-toggle"].dataset.running, "false");
   assert.equal(harness.elements.captures.childElementCount, 1);
-  assert.match(harness.elements["captures-summary"].textContent, /1 photo kept on this device/);
+  // The line under the strip is the storage cost and nothing else.
+  assert.match(harness.elements["captures-summary"].textContent, /^\d+(\.\d+)?\s?(B|KB|MB|GB)$/);
   assert.ok(harness.events.some((event) => event.name === "capture.store.ready"));
 
   harness.auth({ email: "owner@example.com", uid: "owner-1" });
@@ -844,7 +956,7 @@ test("manual AI review prepares compact copies, persists decisions, and keeps fl
 
   assert.equal(harness.elements["ai-review-loader"].hidden, false);
   assert.equal(harness.elements["ai-review-loader"].attributes.get("aria-busy"), "true");
-  assert.equal(harness.elements["ai-review-loader-title"].textContent, "Gemini is reviewing");
+  assert.equal(harness.elements["ai-review-loader-title"].textContent, "AI is reviewing");
   assert.match(harness.elements["ai-review-loader-detail"].textContent, /photos 1–2 of 2/i);
 
   finishReview({
@@ -876,7 +988,7 @@ test("manual AI review prepares compact copies, persists decisions, and keeps fl
 });
 
 test("the live monitor starts and stops cleanly, and unsupported cameras fail observably", async () => {
-  const harness = createAppHarness({ camera: true, tickCapture: true });
+  const harness = createAppHarness({ audio: true, camera: true, tickCapture: true });
   await settle();
   await harness.elements["monitor-toggle"].dispatch("click");
   await settle(8);
@@ -886,10 +998,28 @@ test("the live monitor starts and stops cleanly, and unsupported cameras fail ob
   assert.equal(harness.elements["monitor-toggle"].dataset.running, "true");
   assert.equal(harness.elements["monitor-toggle"].attributes.get("aria-pressed"), "true");
   assert.equal(harness.elements["monitor-frame"].hidden, false);
-  assert.equal(harness.elements["stage-empty"].hidden, true);
   assert.equal(harness.captureConfiguration.detector.kind, "model");
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(harness.captureConfiguration.getGpsLocation())),
+    { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 12.5 },
+  );
   assert.ok(harness.events.some((event) => event.name === "capture.monitor.started"));
   assert.ok(harness.events.some((event) => event.name === "capture.saved"));
+  assert.equal(harness.audioCalls.contexts, 1, "the start tap should unlock one audio context");
+  assert.ok(harness.audioCalls.resumes >= 1);
+  assert.equal(harness.audioCalls.oscillators.length, 1, "the only tone is the silent primer");
+  assert.equal(harness.audioCalls.bufferSources.length, 1, "the cue should be sampled shutter noise");
+  assert.equal(harness.audioCalls.buffers.length, 1);
+  assert.ok(
+    harness.audioCalls.buffers[0].samples.some((sample) => Math.abs(sample) > 0.1),
+    "the shutter buffer should contain mechanical noise transients",
+  );
+  assert.ok(
+    harness.audioCalls.gains
+      .flat()
+      .some((call) => call.method === "setValueAtTime" && call.value > 0.1),
+    "a successful photo should play an audible gain envelope",
+  );
 
   const capture = await harness.captureConfiguration.captureImage({
     bodies: [
@@ -928,6 +1058,26 @@ test("the live monitor starts and stops cleanly, and unsupported cameras fail ob
         event.name === "capture.monitor.failed" && event.fields.errorCode === "camera_unsupported",
     ),
   );
+});
+
+test("initial camera startup uses a prominent loader until the stream is ready", async () => {
+  const harness = createAppHarness({ camera: true, deferCamera: true });
+  await settle();
+
+  const starting = harness.elements["monitor-toggle"].dispatch("click");
+  await settle();
+  assert.equal(harness.elements["camera-loader"].hidden, false);
+  assert.equal(harness.elements["camera-loader"].attributes.get("aria-busy"), "true");
+  assert.equal(harness.elements["monitor-toggle"].disabled, true);
+  assert.match(harness.elements["camera-loader-detail"].textContent, /camera permission/i);
+
+  harness.releaseCameraLoad();
+  await starting;
+  await settle(8);
+  assert.equal(harness.elements["camera-loader"].hidden, true);
+  assert.equal(harness.elements["camera-loader"].attributes.get("aria-busy"), "false");
+  assert.equal(harness.elements["monitor-toggle"].disabled, false);
+  assert.equal(harness.controllerState.running, true);
 });
 
 test("the live camera prompts for attendance taking before the activity starts", async () => {

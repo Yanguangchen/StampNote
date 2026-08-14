@@ -3,7 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0d1512" />
+    <meta name="theme-color" content="#f5f6f5" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d1512" media="(prefers-color-scheme: dark)" />
     <title>Worker face onboarding · StampNote</title>
     <link rel="stylesheet" href="onboarding.css" />
     <script src="worker-face.js" defer></script>
@@ -53,7 +54,9 @@
             required
           />
 
-          <button class="primary-button" id="start-face-scan" type="submit">Scan face</button>
+          <button class="primary-button" id="start-face-scan" type="submit" disabled>
+            Scan face
+          </button>
           <p class="form-status" id="onboarding-status" role="status" aria-live="polite">
             Sign in to begin.
           </p>
@@ -75,13 +78,14 @@
 
           <div class="scan-progress">
             <progress id="onboarding-progress" value="0" max="7" aria-label="Face samples"></progress>
-            <span id="onboarding-progress-count">0 of 7</span>
+            <span id="onboarding-progress-count" aria-live="polite">0 of 7</span>
           </div>
           <button class="secondary-button" id="cancel-face-scan" type="button" hidden>
             Cancel scan
           </button>
           <p class="privacy-note">
-            No face photo is uploaded. Only the face template is stored for worker ID matching.
+            The scan stores a face template for worker ID matching and one profile photo,
+            taken from this scan, to identify the worker in the roster.
           </p>
         </section>
       </section>

@@ -43,7 +43,10 @@ test("page has the required HTML foundation", () => {
     // viewport-fit=cover so the picture reaches under a phone's rounded corners.
     /<meta\s+name=["']viewport["']\s+content=["']width=device-width, initial-scale=1\.0, viewport-fit=cover["']/i,
   );
-  assert.match(html, /<link\s+rel=["']stylesheet["']\s+href=["']styles\.css["']/i);
+  assert.match(
+    html,
+    /<link\s+rel=["']stylesheet["']\s+href=["']styles\.css(?:\?v=[^"']+)?["']/i,
+  );
   assert.ok(existsSync(resolve(projectRoot, "styles.css")));
 });
 
@@ -106,6 +109,18 @@ test("face enrollment visibly pauses the activity and explains how to complete i
   assert.match(controller, /skipFaceEnrollment\(\)/);
 });
 
+test("initial camera loading has a prominent, accessible throbber", () => {
+  const loader = tagWithId("section", "camera-loader");
+  assert.ok(hasAttribute(loader, "hidden"));
+  assert.ok(hasAttribute(loader, "role", "status"));
+  assert.ok(hasAttribute(loader, "aria-live", "polite"));
+  assert.match(html, /id="camera-loader-title">Getting camera ready/);
+  assert.match(html, /class="camera-throbber"/);
+  assert.match(css, /\.camera-loader\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*0/);
+  assert.match(css, /\.camera-throbber\s*\{[^}]*width:\s*clamp\(164px/);
+  assert.match(css, /@keyframes camera-throbber-clockwise/);
+});
+
 test("Firebase initializes the supplied project and Analytics", () => {
   const firebasePath = resolve(projectRoot, "firebase.js");
   const firebase = readFileSync(firebasePath, "utf8");
@@ -150,13 +165,12 @@ test("gallery control accepts multiple images", () => {
 // the button to a screen reader — but it is only shown when a pointer asks.
 const NAMED_CONTROLS = [
   ["label", "for", "gallery-input", "Choose"],
-  ["button", "id", "place-toggle", "Place"],
   ["button", "id", "monitor-toggle", "Start auto capture"],
   ["button", "id", "captures-save", "Save to this device"],
   ["button", "id", "cloud-auth", "Sign in with Google"],
   ["a", "id", "admin-dashboard", "Open photo dashboard"],
   ["button", "id", "share-button", "Share"],
-  ["button", "id", "ai-review", "Review photos with Gemini"],
+  ["button", "id", "ai-review", "Review photos with AI"],
   ["button", "id", "ai-review-bin", "Show AI review bin"],
   ["button", "id", "ai-review-purge", "Delete AI flags permanently"],
   ["button", "id", "captures-clear", "Delete every photo"],
@@ -220,17 +234,25 @@ test("a control's name is shown above it, only while a pointer is on it", () => 
   assert.match(css, /:is\([^)]*\):focus-visible > \.hint/);
 });
 
-test("the address is typed into a single field, with no location button", () => {
+test("the automatically resolved location address is immutable", () => {
   const addressField = tagWithId("textarea", "address-field");
 
   assert.ok(hasAttribute(addressField, "autocomplete", "street-address"));
-  assert.match(html, /<label\b[^>]*for=["']address-field["'][^>]*>Street address<\/label>/i);
+  assert.ok(hasAttribute(addressField, "readonly"));
+  assert.ok(hasAttribute(addressField, "aria-readonly", "true"));
+  assert.ok(hasAttribute(addressField, "tabindex", "-1"));
+  assert.match(html, /<label\b[^>]*for=["']address-field["'][^>]*>Location address<\/label>/i);
   assert.match(html, /id=["']location-status["'][^>]*role=["']status["'][^>]*aria-live=["']polite["']/i);
 
   // Removed controls leave nothing behind for the script to bind to.
   assert.equal(/id=["']locate-button["']/.test(html), false);
   assert.equal(/id=["']save-button["']/.test(html), false);
   assert.equal(/getElementById|#locate-button|#save-button/.test(readFileSync(resolve(projectRoot, "app.js"), "utf8")), false);
+});
+
+test("vehicle coordinates cannot be entered on the capture screen", () => {
+  assert.equal(/id=["']vehicle-coordinate-[xy]["']/.test(html), false);
+  assert.equal(/getVehicleCoordinates|updateVehicleCoordinates/.test(readFileSync(resolve(projectRoot, "app.js"), "utf8")), false);
 });
 
 test("geolocation helper resolves coordinates and accuracy", async () => {
@@ -380,8 +402,8 @@ test("location is attempted once per upload and never when already refused", () 
   assert.match(app, /if \(firstRun\) \{\s*autoLocate\(\);/);
   assert.match(app, /getPermissionState\(navigator\.permissions\)\) === "denied"/);
   assert.match(app, /isInAppBrowser\(context\)/);
-  // A refusal falls back to typing rather than an error the user cannot act on.
-  assert.match(app, /if \(blocked\) \{\s*setStatus\("Type the street address above\."\);/);
+  // A refusal leaves the immutable location visibly unavailable.
+  assert.match(app, /if \(blocked\) \{[\s\S]*?setStatus\("Location address unavailable\."\);/);
 });
 
 test("reverse geocoder requests one detailed address and formats the response", async () => {
@@ -471,7 +493,9 @@ test("reverse geocoder reports service and empty-address failures", async () => 
 test("CSS includes keyboard focus, mobile layout, and reduced motion support", () => {
   assert.match(css, /\.visually-hidden:focus\s*\+\s*\.button/);
   assert.match(css, /@media\s*\(max-width:\s*560px\)/);
-  assert.match(css, /@media \(min-width: 900px\) and \(orientation: landscape\)/);
+  // The capture screen fills the viewport at every width, so there is no
+  // wide-screen column rule to assert.
+  assert.doesNotMatch(css, /width:\s*min\(980px/);
   assert.match(css, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
 });
 
@@ -598,7 +622,9 @@ test("the live camera is wired for autoplay on a phone", () => {
 });
 
 test("auto capture loads its own scripts, ahead of the app that wires them", () => {
-  const order = [...html.matchAll(/<script\s+src=["']([^"']+)["']/gi)].map((match) => match[1]);
+  const order = [...html.matchAll(/<script\s+src=["']([^"']+)["']/gi)].map(
+    (match) => match[1].split("?")[0],
+  );
 
   ["pose-detector.js", "capture-scheduler.js", "photo-store.js", "auto-capture.js"].forEach(
     (file) => {
@@ -726,7 +752,7 @@ test("AI review starts hidden and rejected photos can be recovered", () => {
   assert.ok(hasAttribute(loader, "role", "status"));
   assert.ok(hasAttribute(loader, "aria-live", "polite"));
   assert.match(html, /id="ai-review-loader-title">Reviewing photos/);
-  assert.match(html, /Gemini vision/);
+  assert.match(html, /AI vision/);
 
   const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
   assert.match(app, /store\.applyAiReviews\(/);
@@ -795,6 +821,14 @@ test("vehicles are highlighted without reaching the schedule", () => {
   assert.match(app, /const VEHICLE_COLOR = /);
   assert.match(app, /drawVehicle\(context, state\.vehicle\.box, frame, width\)/);
   assert.match(app, /const label = "VEHICLE"/);
+
+  // Corner brackets, not a boxed-in rectangle with a filled slab on it: the
+  // marker states the extent without competing with the rig drawn over it.
+  assert.doesNotMatch(app, /context\.strokeRect\(left, top, boxWidth, boxHeight\)/);
+  assert.match(app, /const arm = Math\.max\(8, Math\.min\(boxWidth, boxHeight\) \* 0\.22\)/);
+  // A marker at the edge of frame must not push its own label off the screen.
+  assert.match(app, /const chipLeft = Math\.min\(\s*Math\.max\(left, frame\.left\),\s*frame\.left \+ frame\.width - chipWidth,\s*\)/);
+  assert.match(app, /top - chipHeight - gap < frame\.top \? top \+ gap : top - chipHeight - gap/);
 
   // The schedule is handed `present` — whether a person is there — and nothing
   // about vehicles. This is the line that keeps a passing car from pulling the
@@ -921,8 +955,15 @@ test("the shutter is centred and saving sits in the bottom right corner", () => 
   assert.match(css, /\.record\s*\{[^}]*color:\s*var\(--record\)/);
   assert.match(css, /\.record\s*\{[^}]*linear-gradient/);
   assert.match(css, /\.record\s*\{[^}]*box-shadow:/);
-  assert.match(css, /\.record::before\s*\{[^}]*inset:\s*5px/);
-  assert.match(css, /\.record:active\s*\{[^}]*translateY\(3px\)/);
+  assert.match(css, /\.record::before\s*\{[^}]*inset:\s*6px/);
+  // The press closes the 4px gap the resting shadow holds open.
+  assert.match(css, /\.record:active\s*\{[^}]*translateY\(4px\)/);
+
+  // Idle, the shutter waits in the middle of the screen and travels down to the
+  // bar when the camera is opening or already watching.
+  assert.match(css, /\.record\s*\{[^}]*translate:\s*0 calc\(/);
+  assert.match(css, /\.record\[data-running="true"\],\n\.ai-review-loader:not\(\[hidden\]\) ~ \.toolbar \.record \{\s*translate: 0 0;/);
+  assert.doesNotMatch(html, /id="stage-empty"/);
   assert.match(css, /\.record \.record-icon\s*\{[^}]*fill:\s*currentColor/);
   assert.match(tagWithId("button", "monitor-toggle"), /aria-pressed=["']false["']/);
 });
@@ -944,10 +985,11 @@ test("a capture is kept without anyone touching the device", () => {
 });
 
 test("nothing animates behind the picture", () => {
-  // The old card interface panned a grid across the background forever. The
-  // camera is the background now, and a loop under it is both a distraction
-  // and a phone's battery burning on a decoration. Continuous animation is
-  // limited to temporary, explicitly visible task indicators.
+  // The old card interface panned a grid across the background forever, and a
+  // loop under a live camera is both a distraction and a phone's battery going
+  // on a decoration. The default screen has no picture to sit behind, so it may
+  // drift and orbit — but every such loop must be scoped to the idle screen,
+  // and everything else must be a temporary, explicitly visible indicator.
   const infiniteAnimationSelectors = [...css.matchAll(
     /([^{}]+)\{[^{}]*animation:[^;]*infinite/g,
   )].map((match) => match[1].trim());
@@ -957,11 +999,17 @@ test("nothing animates behind the picture", () => {
   assert.ok(
     infiniteAnimationSelectors.every(
       (selector) =>
+        selector.includes('[data-stage="idle"]') ||
         selector.startsWith(".ai-review-") ||
+        selector.startsWith(".camera-throbber") ||
         selector.startsWith(".face-enrollment-progress"),
     ),
+    `Unscoped looping animation: ${infiniteAnimationSelectors.join(" | ")}`,
   );
-  assert.equal(/body::before|body::after/.test(css), false);
+  // The one background loop that exists is the idle screen's, and it stops the
+  // moment the camera takes over.
+  assert.equal(/^body::before/m.test(css), false);
+  assert.match(css, /body\[data-stage="idle"\]::before/);
 });
 
 test("share control is present and starts hidden", () => {
@@ -1015,4 +1063,49 @@ test("the watch tracks a room, not just one person", () => {
   assert.match(app, /drawPersonMarker\(captureContext, body,/);
   assert.match(controller, /bodies: \(state\.bodies \|\| \[\]\)/);
   assert.equal(/personIds:\s*state\.personIds/.test(controller), false);
+});
+
+test("the default screen drifts, and the tools orbit the shutter until reached for", () => {
+  const orbit = readFileSync(resolve(projectRoot, "orbit.js"), "utf8");
+
+  assert.match(html, /<script\s+src=["']orbit\.js[^"']*["']\s+defer><\/script>/i);
+
+  // Idle only: a drifting gradient behind the whole screen, and no stage black
+  // cutting it in half.
+  assert.match(css, /body\[data-stage="idle"\]::before\s*\{[^}]*animation:\s*stage-drift/);
+  assert.match(css, /@keyframes stage-drift/);
+  assert.match(css, /body\[data-stage="idle"\] \.stage\s*\{\s*background:\s*transparent/);
+
+  // The ring: a shared circuit, one seat per tool, glyphs kept upright by the
+  // counter-rotation in the keyframes.
+  assert.match(css, /body\[data-stage="idle"\] \.toolbar \.tool\s*\{[^}]*animation:\s*tool-orbit/);
+  assert.match(css, /animation-delay:\s*calc\(var\(--i, 0\) \/ var\(--n, 1\) \* var\(--orbit-duration\) \* -1\)/);
+  assert.match(css, /@keyframes tool-orbit\s*\{[\s\S]*?rotate\(360deg\)[\s\S]*?rotate\(-360deg\)/);
+
+  // Reaching for a tool — or tabbing to one — holds the ring still to be hit.
+  assert.match(css, /\[data-orbit-paused="true"\] \.tool,[\s\S]*?:focus-within \.tool\s*\{\s*animation-play-state:\s*paused/);
+
+  // The pause is proximity to the ring itself, measured off a seat because a
+  // clamp() in a custom property never resolves to pixels.
+  assert.match(orbit, /Math\.abs\(distance - ring\.radius\) <= APPROACH/);
+  assert.match(orbit, /toolbar\.dataset\.orbitPaused = near \? "true" : "false"/);
+  assert.match(orbit, /record\.dataset\.running !== "true"/);
+  assert.match(orbit, /document\.body\.dataset\.stage = idle \? "idle" : "live"/);
+  // The opening screen is light, so the phone's status bar follows it.
+  assert.match(orbit, /themeColour\?\.setAttribute\("content", idle \? "#f6f7f6" : "#0d1512"\)/);
+  assert.match(css, /body\[data-stage="idle"\]\s*\{[^}]*background:\s*#f6f7f6/);
+  // A hidden tool must not hold an empty seat.
+  assert.match(orbit, /tools\.filter\(\(tool\) => !tool\.hidden\)/);
+});
+
+test("the opening screen keeps queued photographs out of sight", () => {
+  const orbit = readFileSync(resolve(projectRoot, "orbit.js"), "utf8");
+
+  // Photos left over from a previous visit reveal the strip through app.js, so
+  // the opening screen suppresses it in CSS rather than fighting that state.
+  assert.match(css, /body\[data-recorded="false"\] \.filmstrip\s*\{\s*display:\s*none/);
+  assert.match(orbit, /document\.body\.dataset\.recorded = "false"/);
+  // The first press ends the opening screen, and the strip behaves normally
+  // from then on — including after the camera stops.
+  assert.match(orbit, /document\.body\.dataset\.recorded = "true"/);
 });
