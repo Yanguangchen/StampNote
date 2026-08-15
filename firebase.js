@@ -248,23 +248,78 @@
       const key = data.createSessionKey({ locationKey, dateKey, sessionId });
       const label = String(value?.label || "").trim().replace(/\s+/g, " ");
       const truckLocation = data.cleanTruckLocation(value?.truckLocation);
+      const weather = data.cleanSessionWeather(value?.weather);
+      const gpsLocation = data.normalizeGpsLocation(value?.gpsLocation);
+      const gpsCapturedAtMs = Number(value?.gpsCapturedAtMs) || null;
 
       if (options.requireLabel && (!label || label.length > 60)) {
         throw new Error("Session name must be between 1 and 60 characters.");
       }
 
-      return { key, location, locationKey, dateKey, sessionId, label, truckLocation };
+      return {
+        key,
+        location,
+        locationKey,
+        dateKey,
+        sessionId,
+        label,
+        truckLocation,
+        weather,
+        ...(gpsLocation ? { gpsLocation, gpsCapturedAtMs } : {}),
+      };
     }
 
-    function isDashboardSessionRecord(value, session) {
+    // A location holds days and a day holds sessions, so what is being deleted is
+    // a scope rather than always one session: omitting the session means the whole
+    // day, and omitting the date as well means the whole site.
+    function deleteScopeRecord(value, options = {}) {
       const data = requireCloudData();
-      const locationKey = data.createLocationKey(value?.location);
+      const location = data.normalizeLocation(value?.location);
+      const locationKey = data.createLocationKey(location);
+      const dateKey = String(value?.dateKey || "").trim() || null;
+      const sessionId = String(value?.sessionId || "").trim() || null;
+
+      // Deleting one session is the narrowest case and keeps the strict contract:
+      // it must name the day and the period it belongs to.
+      if (options.requireSession) {
+        data.createSessionKey({ locationKey, dateKey: dateKey || "", sessionId: sessionId || "" });
+      }
+      if (dateKey && dateKey !== "unknown-date" && !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+        throw new Error("The session needs a valid date.");
+      }
+      if (sessionId && !data.SESSION_DEFINITIONS.some((entry) => entry.id === sessionId)) {
+        throw new Error("The session needs a valid time period.");
+      }
+      // A period without a day would mean "every morning ever recorded here",
+      // which no button on the dashboard offers and nobody could mean to ask for.
+      if (sessionId && !dateKey) {
+        throw new Error("The session needs a valid date.");
+      }
+
+      // A site the dashboard reads as one place can be spelled several ways in
+      // the records, because a fifty metre error renames the street. Deleting
+      // the site has to take every spelling with it, or the rows left behind
+      // bring it straight back.
+      const locationKeys = [
+        ...new Set([
+          locationKey,
+          ...(Array.isArray(value?.locationKeys) ? value.locationKeys : [])
+            .map((entry) => String(entry || "").trim())
+            .filter(Boolean),
+        ]),
+      ];
+
+      return { location, locationKey, locationKeys, dateKey, sessionId };
+    }
+
+    function isDashboardSessionRecord(value, scope) {
+      const data = requireCloudData();
+      const keys = scope.locationKeys || [scope.locationKey];
+      if (!keys.includes(data.createLocationKey(value?.location))) return false;
+      if (!scope.sessionId) return true;
       const atMs = Number(value?.checkedInAtMs || value?.capturedAtMs) ||
         Date.parse(value?.capturedAt) || 0;
-      return (
-        locationKey === session.locationKey &&
-        data.sessionDefinitionFor(atMs).id === session.sessionId
-      );
+      return data.sessionDefinitionFor(atMs).id === scope.sessionId;
     }
 
     async function deleteReferences(cloud, references) {
@@ -461,6 +516,38 @@
 
   const getSessionLabels = getDashboardSessions;
 
+  // The sky over a finished day does not change, so a session's weather is
+  // written once and read from then on. Nothing is re-fetched for a day whose
+  // record is already final.
+  async function updateSessionWeather(sessionInput, input) {
+    const cloud = services || (await ready);
+    const user = requireUser(cloud, "Sign in with Google before recording session weather.");
+    const data = requireCloudData();
+    const session = dashboardSessionRecord(sessionInput);
+    const weather = data.cleanSessionWeather(input);
+
+    if (!weather) {
+      throw new Error("The session weather could not be read.");
+    }
+
+    await cloud.firestoreSdk.setDoc(
+      cloud.firestoreSdk.doc(cloud.db, "dashboardSessions", session.key),
+      {
+        location: session.location,
+        locationKey: session.locationKey,
+        dateKey: session.dateKey,
+        sessionId: session.sessionId,
+        weather,
+        weatherRecordedBy: user.uid,
+        weatherRecordedAt: cloud.firestoreSdk.serverTimestamp(),
+        updatedAt: cloud.firestoreSdk.serverTimestamp(),
+      },
+      { merge: true },
+    );
+
+    return { ...session, weather };
+  }
+
   async function renameSession(input) {
     const cloud = services || (await ready);
     const user = requireUser(cloud, "Sign in with Google before renaming a session.");
@@ -483,46 +570,49 @@
     return session;
   }
 
-  async function deleteSession(input) {
+  async function deleteScope(input, options = {}) {
     const cloud = services || (await ready);
     const user = requireUser(cloud, "Sign in with Google before deleting a session.");
-    const session = dashboardSessionRecord(input);
-    const attendanceCollection = cloud.firestoreSdk.collection(
-      cloud.db,
-      "attendanceDays",
-      session.dateKey,
-      "entries",
-    );
+    const data = requireCloudData();
+    const scope = deleteScopeRecord(input, options);
+    // A day's check-ins live under that day, so a whole site has to be swept out
+    // of every day at once.
+    const attendanceSource = scope.dateKey
+      ? cloud.firestoreSdk.collection(cloud.db, "attendanceDays", scope.dateKey, "entries")
+      : cloud.firestoreSdk.collectionGroup(cloud.db, "entries");
     const photoCollection = cloud.firestoreSdk.collection(
       cloud.db,
       "users",
       user.uid,
       "photos",
     );
-    const photosForDate = session.dateKey === "unknown-date"
-      ? photoCollection
-      : cloud.firestoreSdk.query(
+    // Photographs whose timestamp could not be read carry no usable date, so for
+    // those the whole collection is read and narrowed by location instead.
+    const photoSource = scope.dateKey && scope.dateKey !== "unknown-date"
+      ? cloud.firestoreSdk.query(
           photoCollection,
-          cloud.firestoreSdk.where("dateKey", "==", session.dateKey),
-        );
+          cloud.firestoreSdk.where("dateKey", "==", scope.dateKey),
+        )
+      : photoCollection;
     const [attendanceSnapshot, photoSnapshot] = await Promise.all([
-      cloud.firestoreSdk.getDocs(attendanceCollection),
-      cloud.firestoreSdk.getDocs(photosForDate),
+      cloud.firestoreSdk.getDocs(attendanceSource),
+      cloud.firestoreSdk.getDocs(photoSource),
     ]);
     const attendanceDocuments = attendanceSnapshot.docs.filter((entry) =>
-      isDashboardSessionRecord(entry.data(), session),
+      isDashboardSessionRecord(entry.data(), scope),
     );
     const photoDocuments = photoSnapshot.docs.filter((entry) =>
-      isDashboardSessionRecord(entry.data(), session),
+      isDashboardSessionRecord(entry.data(), scope),
     );
     const attendanceEventIds = attendanceDocuments.map((entry) => entry.id);
     const photoIds = photoDocuments.map((entry) => String(entry.data()?.id || entry.id));
+    const sessionKeys = await scopedSessionKeys(cloud, data, scope);
     const references = [
       ...attendanceDocuments.map((entry) =>
         cloud.firestoreSdk.doc(
           cloud.db,
           "attendanceDays",
-          session.dateKey,
+          scope.dateKey || normalizeAttendanceDateKey(entry.data()?.dateKey),
           "entries",
           entry.id,
         ),
@@ -530,7 +620,7 @@
       ...photoDocuments.map((entry) =>
         cloud.firestoreSdk.doc(cloud.db, "users", user.uid, "photos", entry.id),
       ),
-      cloud.firestoreSdk.doc(cloud.db, "dashboardSessions", session.key),
+      ...sessionKeys.map((key) => cloud.firestoreSdk.doc(cloud.db, "dashboardSessions", key)),
     ];
 
     await deleteReferences(cloud, references);
@@ -539,7 +629,47 @@
       attendanceEventIds,
       photoDeleted: photoDocuments.length,
       photoIds,
+      sessionKeys,
     };
+  }
+
+  // The custom names and truck coordinates a session carries are keyed by day and
+  // period, so a narrow delete can name its document outright while a whole day
+  // names the three it could possibly have. Only a whole site has to be looked up,
+  // because its days are not known in advance.
+  async function scopedSessionKeys(cloud, data, scope) {
+    const locationKeys = scope.locationKeys || [scope.locationKey];
+    if (scope.sessionId) {
+      return locationKeys.map((locationKey) =>
+        data.createSessionKey({
+          locationKey,
+          dateKey: scope.dateKey,
+          sessionId: scope.sessionId,
+        }),
+      );
+    }
+    if (scope.dateKey) {
+      return locationKeys.flatMap((locationKey) =>
+        data.SESSION_DEFINITIONS.map((definition) =>
+          data.createSessionKey({
+            locationKey,
+            dateKey: scope.dateKey,
+            sessionId: definition.id,
+          }),
+        ),
+      );
+    }
+
+    const snapshot = await cloud.firestoreSdk.getDocs(
+      cloud.firestoreSdk.collection(cloud.db, "dashboardSessions"),
+    );
+    return snapshot.docs
+      .filter((entry) => locationKeys.includes(data.createLocationKey(entry.data()?.location)))
+      .map((entry) => entry.id);
+  }
+
+  function deleteSession(input) {
+    return deleteScope(input, { requireSession: true });
   }
 
   function subscribeAuth(callback) {
@@ -634,7 +764,7 @@
     }
   }
 
-  async function uploadReviewedPhoto(record) {
+  async function uploadPhoto(record, options = {}) {
     const cloud = services || (await ready);
     const user = cloud.auth.currentUser;
 
@@ -643,7 +773,7 @@
         code: "auth-required",
       });
     }
-    if (!record?.blob || !record?.aiReview) {
+    if (!record?.blob || (options.requireReview === true && !record?.aiReview)) {
       throw new Error("Only complete Gemini-reviewed photos can be uploaded.");
     }
 
@@ -670,6 +800,23 @@
     );
 
     return metadata;
+  }
+
+  async function uploadReviewedPhoto(record) {
+    return uploadPhoto(record, { requireReview: true });
+  }
+
+  // A worker-selected photo is useful evidence without running a recording
+  // session or asking Gemini to approve it first. It still follows the same
+  // idempotent Firestore path and image-size ceiling as every other photo.
+  async function uploadWorkerPhoto(record) {
+    if (record?.trigger !== "worker") {
+      throw new Error("Only worker camera or library photos can use this upload path.");
+    }
+    if (!record?.aiReview) {
+      throw new Error("Worker photos must complete Gemini sanitization before upload.");
+    }
+    return uploadPhoto(record);
   }
 
   async function updateSessionTruckLocation(sessionInput, input) {
@@ -713,6 +860,45 @@
     );
 
     return { ...session, truckLocation };
+  }
+
+  async function recordSessionGpsLocation(sessionInput, input) {
+    const cloud = services || (await ready);
+    const user = requireUser(cloud, "Sign in with Google before recording session GPS.");
+    const data = requireCloudData();
+    const session = dashboardSessionRecord(sessionInput);
+    const gpsLocation = data.normalizeGpsLocation(input);
+    const gpsCapturedAtMs = Number(sessionInput?.gpsCapturedAtMs) || Date.now();
+
+    if (!gpsLocation) {
+      throw new Error("The automatic session GPS coordinate is invalid.");
+    }
+    if (!Number.isFinite(gpsCapturedAtMs) || gpsCapturedAtMs <= 0) {
+      throw new Error("The automatic session GPS capture time is invalid.");
+    }
+
+    const documentReference = cloud.firestoreSdk.doc(
+      cloud.db,
+      "dashboardSessions",
+      session.key,
+    );
+    await cloud.firestoreSdk.setDoc(
+      documentReference,
+      {
+        location: session.location,
+        locationKey: session.locationKey,
+        dateKey: session.dateKey,
+        sessionId: session.sessionId,
+        gpsLocation,
+        gpsCapturedAtMs,
+        gpsRecordedBy: user.uid,
+        gpsRecordedAt: cloud.firestoreSdk.serverTimestamp(),
+        updatedAt: cloud.firestoreSdk.serverTimestamp(),
+      },
+      { merge: true },
+    );
+
+    return { ...session, gpsLocation, gpsCapturedAtMs };
   }
 
   async function getPhotosPage(options = {}) {
@@ -788,6 +974,7 @@
     return Object.freeze({
       ready,
       deleteWorkerFace,
+      deleteScope,
       deleteSession,
       getAttendance,
       getDashboardSessions,
@@ -800,7 +987,10 @@
       saveWorkerFace,
       renameSession,
       uploadReviewedPhoto,
+      uploadWorkerPhoto,
+      recordSessionGpsLocation,
       updateSessionTruckLocation,
+      updateSessionWeather,
       deleteReviewedPhoto,
       getPhotosPage,
       getPhotoBlob,

@@ -7,6 +7,7 @@
   const schedule = window.StampNoteSchedule;
   const storage = window.StampNoteStore;
   const cloud = window.StampNoteFirebase;
+  const cloudData = window.StampNotePhotoCloud;
   const telemetry = window.StampNoteObservability;
   const facialRecognition = window.StampNoteFaceIdentity;
   const personIdentity = window.StampNotePersonTracker;
@@ -56,7 +57,6 @@
   const aiReviewProgress = document.querySelector("#ai-review-progress");
   const aiReviewProgressFill = document.querySelector("#ai-review-progress-fill");
   const cloudAuth = document.querySelector("#cloud-auth");
-  const adminDashboard = document.querySelector("#admin-dashboard");
   const filmstrip = document.querySelector("#filmstrip");
   const viewer = document.querySelector("#viewer");
   const viewerImage = document.querySelector("#viewer-image");
@@ -306,6 +306,49 @@
     }
 
     return requestLocation({ focusField: false });
+  }
+
+  async function recordAutomaticSessionGpsLocation() {
+    if (
+      !cloud?.recordSessionGpsLocation ||
+      !cloudData ||
+      !signedInUser ||
+      !automaticGpsLocation
+    ) {
+      return;
+    }
+
+    const capturedAt = new Date();
+    const session = cloudData.sessionDefinitionFor(capturedAt);
+    try {
+      await cloud.recordSessionGpsLocation(
+        {
+          location: addressField.value,
+          dateKey: cloudData.createDateKey(capturedAt),
+          sessionId: session.id,
+          gpsCapturedAtMs: capturedAt.getTime(),
+        },
+        automaticGpsLocation,
+      );
+      telemetry?.event("session.gps.saved", {
+        accuracyMeters: automaticGpsLocation.accuracyMeters,
+        sessionId: session.id,
+        status: "success",
+      });
+    } catch (error) {
+      console.warn("[StampNote GPS] Session coordinate could not sync.", {
+        errorCode: telemetry?.safeErrorCode(error, "session_gps_save_failed"),
+      });
+      telemetry?.event(
+        "session.gps.save_failed",
+        {
+          errorCode: telemetry?.safeErrorCode(error, "session_gps_save_failed"),
+          sessionId: session.id,
+          status: "failed",
+        },
+        { immediate: true, dedupeMs: 60000 },
+      );
+    }
   }
 
   async function addPhotos(files) {
@@ -653,13 +696,9 @@
       cloudAuth.setAttribute("aria-pressed", String(Boolean(user)));
       const name = cloudAuth.querySelector(".hint");
       if (name) {
-        name.textContent = user
-          ? `Sign out ${user.email || "Google account"}`
-          : "Sign in with Google";
+        name.textContent = "Account";
       }
-    }
-    if (adminDashboard) {
-      adminDashboard.hidden = !user;
+      cloudAuth.setAttribute("aria-label", user ? "Sign out of account" : "Sign in to account");
     }
   }
 
@@ -967,12 +1006,11 @@
   }
 
   function setToggleLabel(running) {
-    const name = running ? "Stop auto capture" : "Start auto capture";
-
     monitorToggle.dataset.running = String(running);
     monitorToggle.setAttribute("aria-pressed", String(running));
+    monitorToggle.setAttribute("aria-label", running ? "Stop camera" : "Start camera");
     if (monitorToggleName) {
-      monitorToggleName.textContent = name;
+      monitorToggleName.textContent = "Camera";
     }
     if (monitorIconStart && monitorIconStop) {
       // `hidden` is an HTMLElement property, so assigning it on an SVG element
@@ -1747,8 +1785,12 @@
       aiReviewBin.setAttribute("aria-pressed", String(showingAiDiscarded));
       const name = aiReviewBin.querySelector(".hint");
       if (name) {
-        name.textContent = showingAiDiscarded ? "Show kept photos" : "Show AI review bin";
+        name.textContent = showingAiDiscarded ? "Photos" : "Flags";
       }
+      aiReviewBin.setAttribute(
+        "aria-label",
+        showingAiDiscarded ? "Show kept photos" : "Show flagged photos",
+      );
     }
     if (aiReviewPurge) {
       aiReviewPurge.hidden = !showingAiDiscarded || usage.discarded === 0;
@@ -2542,6 +2584,7 @@
     });
 
     controller.start();
+    await recordAutomaticSessionGpsLocation();
     target = null;
     drawn = null;
     window.cancelAnimationFrame(painter);
@@ -2651,11 +2694,15 @@
       return;
     }
 
-    name.textContent = folder
-      ? `Saving into ${folder.name}`
-      : canKeepFolder
-        ? "Keep saving into a folder"
-        : "Save to this device";
+    name.textContent = "Save";
+    capturesSave.setAttribute(
+      "aria-label",
+      folder
+        ? `Saving into ${folder.name}`
+        : canKeepFolder
+          ? "Save photos into a folder"
+          : "Save photos to this device",
+    );
     capturesSave.dataset.armed = String(Boolean(folder));
   }
 

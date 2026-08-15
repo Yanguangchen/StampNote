@@ -200,6 +200,23 @@ function createAdapter(landmarker) {
 
 // The GPU delegate is much faster on a phone but wants WebGL2, so a device
 // without it drops to CPU rather than to nothing.
+//
+// Every task must ask, because MediaPipe's own default is CPU — and its CPU
+// path is single-threaded WebAssembly. On a desktop where SharedArrayBuffer is
+// unavailable that means one core out of twelve, with the GPU untouched: the
+// object pass measured 70ms and the hand pass 37ms of unyieldable main thread,
+// against a tick that only has 250ms and a screen that wants to paint every 16.
+async function withGpuDelegate(create, options) {
+  try {
+    return await create({
+      ...options,
+      baseOptions: { ...options.baseOptions, delegate: "GPU" },
+    });
+  } catch {
+    return create(options);
+  }
+}
+
 async function createLandmarker(fileset) {
   const options = {
     baseOptions: { modelAssetPath: `${BASE}/models/pose_landmarker_lite.task` },
@@ -217,14 +234,10 @@ async function createLandmarker(fileset) {
     minTrackingConfidence: 0.5,
   };
 
-  try {
-    return await PoseLandmarker.createFromOptions(fileset, {
-      ...options,
-      baseOptions: { ...options.baseOptions, delegate: "GPU" },
-    });
-  } catch {
-    return PoseLandmarker.createFromOptions(fileset, options);
-  }
+  return withGpuDelegate(
+    (chosen) => PoseLandmarker.createFromOptions(fileset, chosen),
+    options,
+  );
 }
 
 // The recording overlay and the opening scan both want face landmarks, and
@@ -246,14 +259,10 @@ async function createFaceScanner(fileset) {
     minFacePresenceConfidence: 0.65,
     minTrackingConfidence: 0.65,
   };
-  try {
-    return await FaceLandmarker.createFromOptions(fileset, {
-      ...options,
-      baseOptions: { ...options.baseOptions, delegate: "GPU" },
-    });
-  } catch {
-    return FaceLandmarker.createFromOptions(fileset, options);
-  }
+  return withGpuDelegate(
+    (chosen) => FaceLandmarker.createFromOptions(fileset, chosen),
+    options,
+  );
 }
 
 // Resolving the fileset reads and compiles the eleven-megabyte vision runtime.
@@ -354,7 +363,7 @@ async function load() {
   adapter.onFirstFullTick(() => {
     // Asked at a lower bar than the mapping accepts, so the mapping is the one
     // place a threshold lives and `person` can be read without being drawn.
-    ObjectDetector.createFromOptions(fileset, {
+    withGpuDelegate((chosen) => ObjectDetector.createFromOptions(fileset, chosen), {
       baseOptions: { modelAssetPath: `${BASE}/models/efficientdet_lite0.tflite` },
       runningMode: "IMAGE",
       scoreThreshold: 0.3,
@@ -368,7 +377,7 @@ async function load() {
     // The pose model reports a wrist and three coarse hand points; fingers come
     // only from here. Another seven and a half megabytes, so it follows the
     // others in rather than holding the watch up.
-    HandLandmarker.createFromOptions(fileset, {
+    withGpuDelegate((chosen) => HandLandmarker.createFromOptions(fileset, chosen), {
       baseOptions: { modelAssetPath: `${BASE}/models/hand_landmarker.task` },
       runningMode: "IMAGE",
       numHands: MAX_HANDS,

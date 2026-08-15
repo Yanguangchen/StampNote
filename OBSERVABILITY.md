@@ -30,6 +30,7 @@ The browser sanitizer drops every field that is not on its fixed allowlist. The 
 | Google sign-in | `cloud.auth.state` | `cloud.auth.failed` | fixed `status`, `errorCode` |
 | Camera and tracking | `capture.monitor.started`, `tracking.recovered` | `capture.monitor.failed`, `tracking.failed` | `errorCode`, `durationMs` |
 | Dashboard | `dashboard.load.completed`, `attendance.load.completed` | `dashboard.load.failed`, `dashboard.image.failed`, `attendance.load.failed` | `photoCount`, `workerCount`, `checkInCount`, `durationMs`, `errorCode` |
+| Dashboard deletion | `dashboard.location.deleted`, `dashboard.date.deleted`, `dashboard.session.deleted` | `dashboard.location.delete_failed`, `dashboard.date.delete_failed`, `dashboard.session.delete_failed` | `checkInCount`, `photoCount`, fixed `status`, `errorCode` |
 | Attendance sync | `attendance.saved` | `attendance.save.failed` | fixed `status`, `errorCode` |
 | Browser performance | `web.vital`, `client.ready` | `client.error` | `metricName`, `metricValue`, `metricRating`, `online` |
 

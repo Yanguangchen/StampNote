@@ -82,11 +82,41 @@
     return { latitude, longitude, accuracyMeters };
   }
 
+  const WEATHER_SEVERITIES = new Set(["storm", "wet", "damp", "dry", "unknown"]);
+
+  function optionalNumber(value, places = 1) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return null;
+    const factor = 10 ** places;
+    return Math.round(number * factor) / factor;
+  }
+
+  function normalizeWeather(value) {
+    if (!value || !WEATHER_SEVERITIES.has(String(value.severity || ""))) return null;
+
+    return {
+      severity: String(value.severity),
+      condition: String(value.condition || "").trim().slice(0, 60),
+      precipitationMm: optionalNumber(value.precipitationMm),
+      maxGustKph: optionalNumber(value.maxGustKph, 0),
+      temperatureC: optionalNumber(value.temperatureC, 0),
+      wetHours: Math.max(0, Math.min(24, Math.floor(Number(value.wetHours) || 0))),
+      hours: Math.max(0, Math.min(24, Math.floor(Number(value.hours) || 0))),
+      lostHours: optionalNumber(value.lostHours),
+      impactPercent: optionalNumber(value.impactPercent, 0),
+      provisional: value.provisional === true,
+      recordedAtMs: Number.isFinite(Number(value.recordedAtMs))
+        ? Math.floor(Number(value.recordedAtMs))
+        : null,
+    };
+  }
+
   function createCaptureRecord(input = {}) {
     const date =
       input.date instanceof Date && !Number.isNaN(input.date.getTime()) ? input.date : new Date();
     const pose = input.pose || null;
     const poseDetected = Boolean(pose?.present);
+    const weather = normalizeWeather(input.weather);
 
     return {
       id: createId(date),
@@ -94,6 +124,9 @@
       capturedAtMs: date.getTime(),
       address: String(input.address || "").trim(),
       gpsLocation: normalizeGpsLocation(input.gpsLocation),
+      weather,
+      weatherStatus:
+        input.weatherStatus === "unavailable" ? "unavailable" : weather ? "recorded" : null,
       // Anonymous cumulative count since this recording run began. Person IDs
       // and body geometry never enter the record.
       uniquePeopleSeen: safeCount(input.uniquePeopleSeen),
@@ -113,8 +146,10 @@
       score: typeof input.score === "number" ? Number(input.score.toFixed(3)) : null,
       sharpness: typeof input.sharpness === "number" ? Math.round(input.sharpness) : null,
       fingerprint: typeof input.fingerprint === "string" ? input.fingerprint : null,
-      // Whether the schedule asked for this one or somebody did.
-      trigger: input.trigger === "gesture" ? "gesture" : "schedule",
+      // Worker photos are deliberately outside the recording and AI-review
+      // flow, even though they share the same durable photo store.
+      trigger: ["gesture", "worker"].includes(input.trigger) ? input.trigger : "schedule",
+      source: ["camera", "library"].includes(input.source) ? input.source : null,
       bytes: Number(input.blob?.size) || 0,
       type: input.blob?.type || "image/jpeg",
       name: buildFileName(date, poseDetected),
@@ -210,7 +245,11 @@
     const size = Math.max(1, Math.floor(Number(batchSize) || 1));
     const eligible = [...(records || [])]
       .filter(
-        (record) => record?.blob && record.trigger !== "gesture" && !record.aiReview,
+        (record) =>
+          record?.blob &&
+          record.trigger !== "gesture" &&
+          record.trigger !== "worker" &&
+          !record.aiReview,
       )
       .sort((left, right) => (left.capturedAtMs || 0) - (right.capturedAtMs || 0));
 
@@ -541,6 +580,7 @@
     buildFileName,
     byExpendability,
     normalizeGpsLocation,
+    normalizeWeather,
     createCaptureRecord,
     createIndexedDbBackend,
     createMemoryBackend,

@@ -22,7 +22,9 @@ test("worker onboarding has signed-in identity, scan, and roster controls", () =
   assert.match(html, /face template for worker ID matching/i);
   assert.ok(existsSync(resolve(root, "onboarding.css")));
   assert.match(css, /\.scanner-oval/);
-  assert.match(css, /\.worker-form,\s*\n\.scanner\s*\{[^}]*border-radius:/);
+  // Every step shares one card shell, so the column's edges line up.
+  assert.match(css, /\.card\s*\{[^}]*border-radius:/);
+  assert.match(html, /class="card worker-form"[\s\S]*class="card scanner"[\s\S]*class="card roster"/);
   assert.match(css, /prefers-color-scheme: dark/);
   assert.match(css, /\.scanner-view video\s*\{[^}]*object-fit:\s*cover/);
 });
@@ -65,8 +67,70 @@ test("enrollment stores a representative face gallery and can delete it", () => 
   assert.match(app, /profileReady = false;/);
 });
 
-test("the recording page links directly to worker onboarding", () => {
+test("the page arrives a step at a time rather than all at once", () => {
+  // An idle camera frame, an oval and a seven-sample counter are the largest
+  // thing here and the least actionable before there is a worker to scan, so
+  // step two is absent rather than dimmed.
+  assert.match(html, /class="card scanner"[^>]*\bhidden\b/);
+  assert.doesNotMatch(css, /~ \.scanner:has\(/);
+  assert.match(app, /function detailsComplete\(\)/);
+  assert.match(app, /normalizeWorkerId\?\.\(workerId\.value\)/);
+  assert.match(app, /scannerCard\.hidden = !ready && !scanActive/);
+  // An untouched form is two fields and nothing else; the button arrives with the
+  // first character, disabled, beside whichever field is still wrong.
+  assert.match(app, /function detailsStarted\(\)/);
+  assert.match(app, /startButton\.hidden = !detailsStarted\(\) && !scanActive/);
+  assert.match(css, /\.card-footer:has\(\.primary-button\[hidden\]\)/);
+  // Typing is the trigger, so the reveal keeps up with the keystrokes.
+  assert.match(
+    app,
+    /workerName\?\.addEventListener\("input", \(\) => \{\s*refreshFlow\(\);\s*issueWorkerId\(\);/,
+  );
+  // A scan already running keeps its camera even if the details are edited.
+  assert.match(app, /scanActive = true;/);
+
+  // Who is already enrolled is reference material: folded away, behind one
+  // button that carries a glyph rather than a word.
+  assert.match(html, /id="roster-body"[^>]*\bhidden\b/);
+  assert.match(html, /id="roster-toggle"[\s\S]*?aria-expanded="false"/);
+  assert.match(html, /aria-controls="roster-body"/);
+  assert.match(html, /class="roster-chevron"[^>]*aria-hidden="true"/);
+  assert.match(html, /Show enrolled workers/);
+  assert.match(css, /\.roster-chevron\s*\{[^}]*transform:\s*rotate\(45deg\)/);
+  assert.match(
+    css,
+    /\.roster-toggle\[aria-expanded="true"\] \.roster-chevron\s*\{[^}]*rotate\(225deg\)/,
+  );
+  // Nothing is read for a list nobody has opened; enrolling while it is closed
+  // marks it stale instead.
+  assert.match(app, /if \(!rosterOpen\) \{\s*rosterStale = true;/);
+  assert.match(app, /await refreshRoster\(\);/);
+});
+
+test("the worker ID is issued from the name rather than typed", () => {
+  // Asked for in the order it is derived: the name, then the ID read out of it.
+  assert.match(html, /id="worker-name"[\s\S]*id="worker-id"/);
+  assert.match(html, /id="worker-id"[^>]*readonly/s);
+  // Nothing for the operator to satisfy in a field they cannot type into.
+  assert.doesNotMatch(html, /id="worker-id"[^>]*(?:pattern|required)/s);
+  assert.match(css, /\.worker-form input\[readonly\]\s*\{/);
+
+  assert.match(app, /async function issueWorkerId\(/);
+  assert.match(app, /workerFace\.nextWorkerId\(name, taken\)/);
+  assert.match(app, /workerId\.value = issued \|\| ""/);
+  // Saving merges into whatever document the ID names, so the number is issued
+  // again from a fresh read once the scan is over.
+  assert.match(app, /issueWorkerId\(\{ fresh: true \}\)/);
+  assert.match(app, /workerId: issued,/);
+  // The roster read and the numbering are the same read.
+  assert.match(app, /function readWorkers\(/);
+  assert.doesNotMatch(app, /await cloud\.getWorkerFaces\(\)/);
+});
+
+test("the recording page moves worker onboarding into the shared page drawer", () => {
   const capture = readFileSync(resolve(root, "index.html"), "utf8");
-  assert.match(capture, /id="worker-onboarding"[^>]*href="onboarding\.html"/);
-  assert.match(capture, /Enroll worker faces/);
+  const sidebar = readFileSync(resolve(root, "sidebar.js"), "utf8");
+  assert.match(capture, /data-sidebar-mount/);
+  assert.doesNotMatch(capture, /id="worker-onboarding"|Enroll worker faces/);
+  assert.match(sidebar, /file: "onboarding\.html", label: "Worker onboarding"/);
 });

@@ -229,6 +229,37 @@ test("pose loading retries on CPU and optional model failures do not block captu
   assert.equal(result.extra.hands.length, 0);
 });
 
+test("every model asks for the GPU, because MediaPipe's own default is the CPU", async () => {
+  const harness = loadModelHarness();
+  const adapter = await harness.model.load();
+  // Objects and hands are built on the first full tick, so one is needed before
+  // their configurations exist to be checked.
+  adapter.detect({ videoWidth: 640, videoHeight: 480 });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  // Left on the default, MediaPipe runs single-threaded WebAssembly: the object
+  // pass alone measured 70ms of main thread against a 250ms tick, on a machine
+  // whose GPU was doing nothing.
+  ["pose", "face", "objects", "hands"].forEach((model) => {
+    assert.ok(harness.calls[model].length > 0, `${model} was never built`);
+    assert.equal(
+      harness.calls[model][0].configuration.baseOptions.delegate,
+      "GPU",
+      `${model} did not ask for the GPU`,
+    );
+  });
+});
+
+test("a model the GPU refuses is rebuilt on the CPU rather than dropped", async () => {
+  const harness = loadModelHarness({ gpuFailure: new Error("WebGL unavailable") });
+  const adapter = await harness.model.load();
+  adapter.detect({ videoWidth: 640, videoHeight: 480 });
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(harness.calls.pose.length, 2);
+  assert.equal(harness.calls.pose[1].configuration.baseOptions.delegate, undefined);
+});
+
 test("worker onboarding can scan a close face without requiring a full body pose", async () => {
   const harness = loadModelHarness();
   const scanner = await harness.model.loadFaceScanner();

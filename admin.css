@@ -36,6 +36,12 @@
   --shadow: 0 18px 50px rgba(30, 48, 40, 0.09);
   --card-shadow: 0 8px 26px rgba(30, 48, 40, 0.06);
   --card-shadow-hover: 0 14px 34px rgba(30, 48, 40, 0.12);
+
+  /* One curve for everything that moves, eased in and out at both ends. */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-fast: 140ms;
+  --motion: 220ms;
+  --motion-slow: 340ms;
 }
 
 /* The dark palette follows the operating system unless the header toggle has
@@ -132,7 +138,7 @@ body {
     var(--paper);
   background-attachment: fixed;
   color: var(--ink);
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: "Outfit", system-ui, -apple-system, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -148,7 +154,9 @@ input {
   z-index: 10;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  /* The drawer's toggle sits ahead of the brand, so the account controls are
+     pushed to the far edge rather than the row being spread three ways. */
+  justify-content: flex-start;
   gap: 16px;
   min-height: 68px;
   padding: 12px clamp(18px, 4vw, 56px);
@@ -181,6 +189,7 @@ input {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-left: auto;
 }
 
 .account-name {
@@ -198,16 +207,23 @@ input {
   padding: clamp(24px, 3vw, 44px) clamp(18px, 4vw, 56px) 72px;
 }
 
-.intro {
-  margin-bottom: 20px;
-}
-
-h1 {
-  margin: 0;
-  max-width: 760px;
-  font-size: clamp(27px, 3.4vw, 40px);
-  line-height: 1.05;
-  letter-spacing: -0.04em;
+/* The page title and the scope line both said what the session rail already
+   shows, so neither is drawn any more. They stay in the document for the
+   heading outline and for the polite announcement a rail selection would
+   otherwise make silently. A delete's name is here for the same reason: the
+   button shows a glyph, but it is still called something. */
+.intro,
+.scope-breadcrumb,
+.scope-delete-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .toolbar {
@@ -276,6 +292,20 @@ h1 {
   .throbber {
     animation-duration: 2.4s;
   }
+
+  /* Eased feedback is a courtesy, not information: it goes when asked. */
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
+
+  .button:not(:disabled):active,
+  .scope-option:active,
+  .photo-open:hover,
+  .photo-open:focus-visible {
+    transform: none;
+  }
 }
 
 .auth-gate {
@@ -332,6 +362,16 @@ h1 {
   border-radius: 11px;
   font-weight: 680;
   cursor: pointer;
+  transition:
+    background var(--motion-fast) var(--ease),
+    border-color var(--motion-fast) var(--ease),
+    color var(--motion-fast) var(--ease),
+    opacity var(--motion-fast) var(--ease),
+    transform var(--motion-fast) var(--ease);
+}
+
+.button:not(:disabled):active {
+  transform: scale(0.985);
 }
 
 .button:disabled {
@@ -394,18 +434,23 @@ h1 {
   color: var(--danger);
 }
 
+/* The rail is a band across the top rather than a column down the side. Choosing
+   a site narrows the day, and a day narrows the session, so the three steps read
+   left to right; as a sidebar they had a quarter of the width to do it in and had
+   to run downwards instead. */
 .dashboard-workspace {
   display: grid;
-  grid-template-columns: minmax(280px, 0.62fr) minmax(0, 2fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: 18px;
 }
 
 .scope-rail {
-  position: sticky;
-  top: 86px;
   display: grid;
-  gap: 20px;
+  /* Location, date, session — one column each, widening together. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px 20px;
+  align-items: start;
   min-width: 0;
   padding: clamp(16px, 2vw, 22px);
   border: 1px solid var(--glass-line);
@@ -421,6 +466,7 @@ h1 {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  grid-column: 1 / -1;
 }
 
 .scope-rail-heading h2 {
@@ -431,7 +477,26 @@ h1 {
 
 .scope-step {
   display: grid;
+  align-content: start;
   gap: 8px;
+  min-width: 0;
+}
+
+/* A ruled gutter so the three read as one narrowing choice rather than three
+   unrelated lists that happen to sit beside each other. */
+.scope-step + .scope-step {
+  padding-left: 20px;
+  border-left: 1px solid var(--glass-line);
+}
+
+/* The step's name on the left, and the delete that acts on this level on the
+   right, where the header row was otherwise empty. */
+.scope-step-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 26px;
   min-width: 0;
 }
 
@@ -445,6 +510,45 @@ h1 {
   font-weight: 720;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+/* Quiet until it is reached for: destructive, but it sits above a list the eye
+   is meant to be reading. A glyph rather than a word, because three columns each
+   spelling out their own delete competed with the choices underneath them. */
+.scope-delete {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  min-height: 0;
+  padding: 0;
+  border-color: var(--glass-line);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.scope-delete-icon {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.6;
+}
+
+.scope-delete:hover:not(:disabled),
+.scope-delete:focus-visible:not(:disabled) {
+  border-color: var(--danger-line);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.scope-delete:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 
 .scope-step-number {
@@ -469,26 +573,83 @@ h1 {
 .scope-options {
   display: grid;
   gap: 6px;
-  max-height: 34vh;
+  /* A cap per column is safe now they are side by side: the band is one of these
+     tall, not three, so the whole chooser stays inside the viewport and each
+     column scrolls only its own overflow. */
+  max-height: clamp(150px, 26vh, 280px);
   overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.scope-date-field {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.scope-date-field input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface-solid);
+  color: var(--ink);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.scope-date-field input:focus {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 1px;
+}
+
+.scope-date-field input:disabled {
+  opacity: 0.55;
+}
+
+.scope-date-hint {
+  margin: 0 0 2px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.scope-date-hint[data-state="error"] {
+  color: var(--danger);
 }
 
 .scope-option {
+  position: relative;
   display: grid;
   gap: 2px;
   min-width: 0;
-  padding: 10px 12px;
+  /* Room on the right for the weather glyph, so a long session name never runs
+     under it. */
+  padding: 10px 30px 10px 12px;
   border: 1px solid var(--glass-line);
   border-radius: 13px;
   background: var(--surface);
   color: inherit;
   text-align: left;
   cursor: pointer;
-  transition: border-color 140ms ease, background 140ms ease;
+  transition:
+    border-color var(--motion-fast) var(--ease),
+    background var(--motion-fast) var(--ease),
+    transform var(--motion-fast) var(--ease);
 }
 
 .scope-option:hover {
   border-color: var(--line-strong);
+}
+
+.scope-option:active {
+  transform: scale(0.99);
 }
 
 .scope-option strong {
@@ -514,51 +675,87 @@ h1 {
   color: var(--accent);
 }
 
-.scope-session-card {
+/* A session the weather may have delayed is marked in the rail itself, so a
+   reader scanning the day sees which one to ask about before opening it. */
+.scope-option[data-severity="wet"],
+.scope-option[data-severity="storm"] {
+  border-left: 3px solid var(--weather-line);
+}
+
+.scope-option[data-severity="wet"] {
+  --weather-line: #b7791f;
+}
+
+.scope-option[data-severity="storm"] {
+  --weather-line: var(--danger);
+}
+
+/* What the sky was doing while this session was worked: a glyph and a short
+   statement, rather than a paragraph a reader has to work through. */
+.session-weather {
   display: grid;
-  gap: 7px;
-  padding: 6px;
+  gap: 6px;
+  padding: 12px 14px;
   border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--panel-soft);
+  border-radius: 12px;
+  background: var(--surface-solid);
 }
 
-.session-option-actions {
+.session-weather-row {
   display: flex;
-  justify-content: flex-end;
-  gap: 2px;
+  align-items: center;
+  gap: 10px;
 }
 
-.session-option-action {
-  min-height: 28px;
-  padding: 0 6px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 680;
-  cursor: pointer;
+.weather-icon {
+  flex: none;
+  font-size: 20px;
+  line-height: 1;
 }
 
-.session-option-action:hover {
-  border-color: var(--line-strong);
+.scope-option-icon {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.weather-badge {
+  min-width: 0;
+  overflow: hidden;
   color: var(--ink);
+  font-size: 13px;
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.session-option-delete {
-  color: var(--danger);
-}
-
-.session-option-delete:hover {
-  border-color: var(--danger-line);
+/* The warning is a chip beside the statement, not a paragraph under it. */
+.weather-delay {
+  flex: none;
+  margin-left: auto;
+  padding: 3px 9px;
+  border: 1px solid var(--danger-line);
+  border-radius: 999px;
   background: var(--danger-soft);
   color: var(--danger);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
-.session-option-action:disabled {
-  cursor: wait;
-  opacity: 0.55;
+.weather-figures {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The coordinates for the session being looked at, beside the breadcrumb naming
+   it, rather than repeated inside every row of the rail. */
+.session-truck-location {
+  min-width: 0;
 }
 
 .truck-location-form {
@@ -577,14 +774,6 @@ h1 {
   margin: 0;
   padding: 0;
   border: 0;
-}
-
-.truck-location-form legend {
-  grid-column: 1 / -1;
-  margin-bottom: 2px;
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 760;
 }
 
 .truck-location-form label {
@@ -658,19 +847,82 @@ h1 {
   min-width: 0;
 }
 
+.detail-column {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-width: 0;
+}
+
+/* Beyond this width there is room for the roster to sit beside the photographs.
+   Stacked, the attendance panel spent 1313px to show a number and a word — its
+   two summary tiles were 623px each — and pushed the photographs to y=1161 on a
+   900px screen, so the main content of the page began below the fold. */
+@media (min-width: 1100px) {
+  .dashboard-detail {
+    grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  /* The breadcrumb names the session both columns belong to. */
+  .scope-summary {
+    grid-column: 1 / -1;
+  }
+
+  /* A heading and its filter no longer fit shoulder to shoulder in a column this
+     narrow, so they stack and the select takes the full width. */
+  .attendance-heading {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .attendance-filter {
+    max-width: none;
+  }
+}
+
+/* With the breadcrumb gone this row is just the session's own actions, so it
+   collapses to nothing rather than holding a line's worth of empty space. */
+.scope-summary:has(.session-actions[hidden]) {
+  display: none;
+}
+
+/* What is missing, in the place the answer will appear. */
+.scope-guidance {
+  margin: 0;
+  padding: 28px 20px;
+  border: 1px dashed var(--line-dashed);
+  border-radius: 16px;
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+/* Each panel arrives once its scope is chosen rather than blinking into place,
+   and a rail step does the same when the step above it is answered. */
+.detail-column:not([hidden]),
+.photos-panel:not([hidden]),
+.scope-guidance:not([hidden]),
+.scope-step:not([hidden]) {
+  animation: detail-reveal var(--motion-slow) var(--ease) both;
+}
+
+.photos-panel:not([hidden]) {
+  animation-delay: 60ms;
+}
+
+@keyframes detail-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
 .scope-summary {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
-  min-height: 42px;
-}
-
-.scope-breadcrumb {
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  font-weight: 680;
 }
 
 .session-actions {
@@ -883,7 +1135,9 @@ h1 {
   text-align: left;
   box-shadow: var(--card-shadow);
   cursor: pointer;
-  transition: transform 160ms ease, box-shadow 160ms ease;
+  transition:
+    transform var(--motion) var(--ease),
+    box-shadow var(--motion) var(--ease);
 }
 
 .photo-open:hover,
@@ -908,7 +1162,7 @@ h1 {
   height: 100%;
   object-fit: cover;
   opacity: 0;
-  transition: opacity 220ms ease;
+  transition: opacity var(--motion) var(--ease);
 }
 
 .photo-frame img[data-loaded="true"] {
@@ -1180,19 +1434,24 @@ h1 {
     padding-top: 34px;
   }
 
-  .dashboard-workspace {
-    grid-template-columns: 1fr;
-  }
-
   .dashboard-panel {
     padding: 17px;
     border-radius: 18px;
   }
 
+  /* No room to go sideways on a phone, so the three steps go back to running
+     down the page and each list gives up its cap and flows. */
   .scope-rail {
-    position: static;
+    grid-template-columns: minmax(0, 1fr);
     padding: 17px;
     border-radius: 18px;
+  }
+
+  .scope-step + .scope-step {
+    padding-left: 0;
+    padding-top: 16px;
+    border-left: 0;
+    border-top: 1px solid var(--glass-line);
   }
 
   .scope-options {
@@ -1233,19 +1492,14 @@ h1 {
   }
 }
 
+/* Three columns still fit here — the rail spans the page at every width now — but
+   the gutters tighten so none of them squeezes its labels. */
 @media (min-width: 721px) and (max-width: 1040px) {
-  .dashboard-workspace {
-    grid-template-columns: 1fr;
-  }
-
   .scope-rail {
-    position: static;
+    gap: 14px;
   }
 
-  .scope-options {
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(210px, 1fr);
-    max-height: none;
-    overflow-x: auto;
+  .scope-step + .scope-step {
+    padding-left: 14px;
   }
 }

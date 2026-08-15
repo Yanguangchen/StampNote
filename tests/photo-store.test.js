@@ -61,6 +61,34 @@ test("automatic GPS metadata rejects malformed fixes", () => {
   assert.equal(storage.normalizeGpsLocation({ latitude: 1, longitude: 2, accuracy: -1 }), null);
 });
 
+test("worker photos preserve their source and weather without entering AI review", () => {
+  const weather = {
+    severity: "wet",
+    condition: "Rain",
+    precipitationMm: 2.34,
+    maxGustKph: 31.6,
+    temperatureC: 28.4,
+    wetHours: 1,
+    hours: 1,
+    recordedAtMs: 1786852800000,
+  };
+  const record = storage.createCaptureRecord({
+    blob: fakeBlob(2400),
+    date: new Date("2026-08-16T12:00:00.000Z"),
+    trigger: "worker",
+    source: "library",
+    weather,
+    weatherStatus: "recorded",
+  });
+
+  assert.equal(record.trigger, "worker");
+  assert.equal(record.source, "library");
+  assert.equal(record.weatherStatus, "recorded");
+  assert.equal(record.weather.precipitationMm, 2.3);
+  assert.equal(record.weather.maxGustKph, 32);
+  assert.equal(storage.selectAiReviewBatch(Array(8).fill(record), 8).length, 0);
+});
+
 test("records are listed newest first", async () => {
   const store = createStore();
 

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en" data-surface="worker-photos">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f3f5f3" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0b1210" media="(prefers-color-scheme: dark)" />
+    <title>Worker photos · StampNote</title>
+    <link
+      rel="preload"
+      href="vendor/fonts/outfit-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="vendor/fonts/outfit.css" />
+    <link rel="stylesheet" href="sidebar.css" />
+    <link rel="stylesheet" href="worker-photos.css" />
+    <script src="sidebar.js" defer></script>
+    <script src="address-service.js" defer></script>
+    <script src="stamp.js" defer></script>
+    <script src="photo-store.js" defer></script>
+    <script src="photo-cloud.js" defer></script>
+    <script src="weather-service.js" defer></script>
+    <script src="firebase.js" defer></script>
+    <script src="worker-photos.js" defer></script>
+  </head>
+  <body>
+    <header class="photo-header" data-sidebar-mount>
+      <div class="account-controls">
+        <p id="worker-photo-account">Photos save on this device</p>
+        <button class="auth-button" id="worker-photo-auth" type="button">
+          Sign in to sync
+        </button>
+      </div>
+    </header>
+
+    <main class="photo-main">
+      <section class="intro" aria-labelledby="worker-photo-title">
+        <p class="eyebrow">No recording needed</p>
+        <h1 id="worker-photo-title">Add a site photo</h1>
+        <p class="intro-copy">
+          Take one now or choose existing photos. StampNote automatically attaches the current GPS,
+          address, time, and weather to every photo.
+        </p>
+      </section>
+
+      <section class="action-card" aria-labelledby="photo-action-title">
+        <h2 id="photo-action-title">Choose how to add it</h2>
+        <div class="photo-actions" id="photo-actions">
+          <label class="photo-action primary-action" for="take-photo">
+            <span class="action-icon" aria-hidden="true">＋</span>
+            <span>
+              <strong>Take a photo</strong>
+              <small>Open the rear camera</small>
+            </span>
+          </label>
+          <input
+            class="visually-hidden-input"
+            id="take-photo"
+            type="file"
+            accept="image/*"
+            capture="environment"
+          />
+
+          <label class="photo-action" for="choose-photos">
+            <span class="action-icon library-icon" aria-hidden="true">▧</span>
+            <span>
+              <strong>Choose from library</strong>
+              <small>Select one or several</small>
+            </span>
+          </label>
+          <input
+            class="visually-hidden-input"
+            id="choose-photos"
+            type="file"
+            accept="image/*"
+            multiple
+          />
+        </div>
+
+        <div class="save-status" id="worker-photo-status" data-state="idle" role="status" aria-live="polite" hidden>
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="worker-photo-status-text"></span>
+        </div>
+        <button class="send-button" id="worker-photo-send" type="button" disabled>Send</button>
+      </section>
+    </main>
+  </body>
+</html>

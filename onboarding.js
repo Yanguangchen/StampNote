@@ -13,6 +13,7 @@
   const startButton = document.querySelector("#start-face-scan");
   const cancelButton = document.querySelector("#cancel-face-scan");
   const status = document.querySelector("#onboarding-status");
+  const scannerCard = document.querySelector("#scanner-card");
   const scannerView = document.querySelector("#scanner-view");
   const video = document.querySelector("#onboarding-video");
   const instruction = document.querySelector("#scanner-instruction");
@@ -20,6 +21,9 @@
   const progressCount = document.querySelector("#onboarding-progress-count");
   const roster = document.querySelector("#worker-roster");
   const rosterEmpty = document.querySelector("#roster-empty");
+  const rosterBody = document.querySelector("#roster-body");
+  const rosterToggle = document.querySelector("#roster-toggle");
+  const rosterToggleLabel = document.querySelector("#roster-toggle-label");
 
   // Enrollment deliberately takes longer than the opening match. Seven
   // spaced, mutually consistent views make the stored template less dependent
@@ -48,10 +52,83 @@
   let saving = false;
   let samples = [];
   let scaler = null;
+  // True from the moment a scan is committed to until the camera is released,
+  // which is wider than `scanning`: it also covers the seconds spent opening the
+  // camera and loading the model, when the card must not be taken away.
+  let scanActive = false;
+  let rosterOpen = false;
+  let rosterStale = true;
+  // Both the roster and the numbering need to know who is already enrolled, so
+  // they share one read rather than each making their own.
+  let workerRead = null;
+  // Each request for an ID carries a number, so a slow answer that a later
+  // keystroke has already overtaken is dropped instead of overwriting it.
+  let issueToken = 0;
 
   function setStatus(message, state = "idle") {
     status.textContent = message;
     status.dataset.state = state;
+  }
+
+  // The same two values `startScan` insists on, asked the same way, so the button
+  // becomes usable exactly when the scan would accept it rather than a keystroke
+  // before.
+  function detailsComplete() {
+    return Boolean(
+      workerFace?.normalizeWorkerId?.(workerId.value) &&
+        workerFace?.normalizeDisplayName?.(workerName.value),
+    );
+  }
+
+  // An untouched form is two fields and nothing else. The button arrives with the
+  // first character typed into either one — disabled until both are valid, so it
+  // can say "not yet" next to a field the browser has already marked red — rather
+  // than waiting for validity and appearing out of nowhere.
+  function detailsStarted() {
+    return Boolean(workerId.value.trim() || workerName.value.trim());
+  }
+
+  // The ID belongs to the page rather than the operator: the worker's initials and
+  // the next number those initials have not used. It is shown before the scan so
+  // it can be read out or written on a badge, and issued once more from a fresh
+  // read before anything is written.
+  async function issueWorkerId({ fresh = false } = {}) {
+    const token = ++issueToken;
+    const name = workerFace.normalizeDisplayName(workerName.value);
+    if (!user || !name) {
+      workerId.value = "";
+      refreshFlow();
+      return null;
+    }
+
+    let taken = [];
+    try {
+      taken = (await readWorkers({ fresh })).map((worker) => worker.workerId);
+    } catch {
+      // Not knowing which numbers are spent, any guess could name a document that
+      // already belongs to somebody — and a save merges into it rather than
+      // refusing — so no ID is offered and the scan stays out of reach.
+      if (token !== issueToken) return null;
+      workerId.value = "";
+      refreshFlow();
+      setStatus("Enrolled worker IDs could not be read, so no ID can be issued yet.", "error");
+      return null;
+    }
+
+    if (token !== issueToken) return null;
+    const issued = workerFace.nextWorkerId(name, taken);
+    workerId.value = issued || "";
+    refreshFlow();
+    return issued;
+  }
+
+  // Step two exists once there is a worker for it to scan, and stays for as long
+  // as a scan is running even if the details are edited underneath it.
+  function refreshFlow() {
+    const ready = Boolean(user) && detailsComplete();
+    scannerCard.hidden = !ready && !scanActive;
+    startButton.hidden = !detailsStarted() && !scanActive;
+    startButton.disabled = !ready || scanActive;
   }
 
   function scanMessage(scanState) {
@@ -138,6 +215,7 @@
     timer = null;
     scanning = false;
     saving = false;
+    scanActive = false;
     scanner?.close?.();
     scanner = null;
     recognizer?.reset?.();
@@ -149,7 +227,7 @@
     video.srcObject = null;
     scannerView.dataset.status = nextState;
     cancelButton.hidden = true;
-    startButton.disabled = !user;
+    refreshFlow();
   }
 
   function renderRoster(workers) {
@@ -199,7 +277,7 @@
         try {
           await cloud.deleteWorkerFace(worker.workerId);
           setStatus(`${worker.workerId} face template deleted.`, "success");
-          await loadRoster();
+          await refreshRoster();
         } catch (error) {
           setStatus(error?.message || "The face template could not be deleted.", "error");
           remove.disabled = false;
@@ -210,13 +288,27 @@
     });
   }
 
+  function readWorkers({ fresh = false } = {}) {
+    if (!user) return Promise.resolve([]);
+    if (fresh) workerRead = null;
+    if (!workerRead) {
+      workerRead = cloud.getWorkerFaces().catch((error) => {
+        // A refusal is forgotten rather than remembered, so the next keystroke or
+        // the next open gets to try again instead of inheriting it.
+        workerRead = null;
+        throw error;
+      });
+    }
+    return workerRead;
+  }
+
   async function loadRoster() {
     if (!user) {
       renderRoster([]);
       return [];
     }
     try {
-      const workers = await cloud.getWorkerFaces();
+      const workers = await readWorkers();
       renderRoster(workers);
       return workers;
     } catch (error) {
@@ -226,6 +318,43 @@
     }
   }
 
+  // A closed list is not worth a read. Enrolling somebody, or signing in as
+  // somebody else, only notes that what is folded away is out of date; the fetch
+  // waits until it is opened.
+  async function refreshRoster() {
+    // Something has changed, so the shared read is dropped whether or not the
+    // list is on screen to show it.
+    workerRead = null;
+    if (!user) {
+      rosterStale = true;
+      renderRoster([]);
+      return;
+    }
+    if (!rosterOpen) {
+      rosterStale = true;
+      return;
+    }
+    rosterStale = false;
+    await loadRoster();
+  }
+
+  async function setRosterOpen(open) {
+    rosterOpen = open;
+    rosterBody.hidden = !open;
+    rosterToggle.setAttribute("aria-expanded", String(open));
+    const label = open ? "Hide enrolled workers" : "Show enrolled workers";
+    rosterToggleLabel.textContent = label;
+    rosterToggle.title = label;
+    if (!open || !rosterStale) return;
+    if (user) {
+      // Said before the await, so an empty card cannot read as "nobody is
+      // enrolled" while the list is still on its way.
+      rosterEmpty.hidden = false;
+      rosterEmpty.textContent = "Loading enrolled workers…";
+    }
+    await refreshRoster();
+  }
+
   async function saveEnrollment() {
     if (saving) return;
     saving = true;
@@ -233,9 +362,23 @@
     instruction.textContent = "Encrypting the connection and saving the face template…";
     const embedding = workerFace.averageEmbeddings(samples);
 
+    // The number on screen was worked out before a seven-second scan, and another
+    // operator may have enrolled somebody since. A save merges into whatever
+    // document the ID names, so writing under a stale number would fold two
+    // workers into one record: it is issued again, against a fresh read.
+    const issued = await issueWorkerId({ fresh: true });
+    if (!issued) {
+      saving = false;
+      scannerView.dataset.status = "scanning";
+      cancelButton.hidden = false;
+      setStatus("A worker ID could not be issued, so nothing was saved. Try again.", "error");
+      instruction.textContent = "The scan is complete but has not been saved. Try again.";
+      return;
+    }
+
     try {
       const saved = await cloud.saveWorkerFace({
-        workerId: workerId.value,
+        workerId: issued,
         displayName: workerName.value,
         embedding,
         embeddings: samples,
@@ -251,7 +394,7 @@
         `${saved.displayName} (${saved.workerId}) enrolled. Recording can now match this worker ID.`,
         "success",
       );
-      await loadRoster();
+      await refreshRoster();
     } catch (error) {
       saving = false;
       scannerView.dataset.status = "scanning";
@@ -306,13 +449,15 @@
       setStatus("Sign in with Google before scanning a worker.", "error");
       return;
     }
-    if (!normalizedId) {
-      setStatus("Enter a valid 2–32 character worker ID.", "error");
-      workerId.focus();
-      return;
-    }
     if (!normalizedName) {
       setStatus("Enter the worker’s name.", "error");
+      workerName.focus();
+      return;
+    }
+    // Nothing the operator can fix in the ID field itself, so the name is what
+    // they are sent back to.
+    if (!normalizedId) {
+      setStatus("No worker ID has been issued yet. Check the worker’s name.", "error");
       workerName.focus();
       return;
     }
@@ -329,7 +474,8 @@
     workerName.value = normalizedName;
     samples = [];
     profileReady = false;
-    startButton.disabled = true;
+    scanActive = true;
+    refreshFlow();
     cancelButton.hidden = false;
     scannerView.dataset.status = "scanning";
     updateProgress({ status: "loading", samples: 0, total: ONBOARDING_SAMPLES });
@@ -381,6 +527,19 @@
     if (!scanning && !saving) startScan();
   });
 
+  // Typing is what reveals the rest of the page, so this runs on every keystroke
+  // rather than on blur: the ID and the camera card should both be there by the
+  // time the eye leaves the name field. The button answers the first character;
+  // the ID needs a whole name and a look at what is taken, so it follows.
+  workerName?.addEventListener("input", () => {
+    refreshFlow();
+    issueWorkerId();
+  });
+
+  rosterToggle?.addEventListener("click", () => {
+    setRosterOpen(rosterBody.hidden);
+  });
+
   cancelButton?.addEventListener("click", () => {
     releaseScanner("idle");
     samples = [];
@@ -416,12 +575,14 @@
     signedInState.textContent = user ? user.email || "Signed in" : "Not signed in";
     signedInState.dataset.signedIn = String(Boolean(user));
     authButton.textContent = user ? "Sign out" : "Sign in with Google";
-    startButton.disabled = !user || scanning || saving;
+    refreshFlow();
     if (error) setStatus(error?.message || "Google sign-in is unavailable.", "error");
     else if (user) setStatus("Enter the worker details, then start the face scan.");
     else setStatus("Sign in, then enter the worker details.");
     if (!user && (scanning || saving)) releaseScanner("idle");
-    await loadRoster();
+    await refreshRoster();
+    // Signing in over an already-typed name issues its ID; signing out clears it.
+    await issueWorkerId();
   });
 
   window.addEventListener("pagehide", () => releaseScanner("idle"));

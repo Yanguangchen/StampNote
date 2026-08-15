@@ -6,7 +6,17 @@
     <meta name="theme-color" content="#f5f6f5" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#0d1512" media="(prefers-color-scheme: dark)" />
     <title>Worker face onboarding · StampNote</title>
+    <link
+      rel="preload"
+      href="vendor/fonts/outfit-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="vendor/fonts/outfit.css" />
+    <link rel="stylesheet" href="sidebar.css" />
     <link rel="stylesheet" href="onboarding.css" />
+    <script src="sidebar.js" defer></script>
     <script src="worker-face.js" defer></script>
     <script src="frame-scaler.js" defer></script>
     <script src="face-identity.js" defer></script>
@@ -16,8 +26,9 @@
     <script src="onboarding.js" type="module"></script>
   </head>
   <body>
-    <header class="onboarding-header">
-      <a class="back-link" href="index.html">← Recording</a>
+    <!-- The drawer holds every page, Recording included, so the header no
+         longer carries a link of its own. -->
+    <header class="onboarding-header" data-sidebar-mount>
       <div class="account-controls">
         <p id="signed-in-state">Not signed in</p>
         <button class="auth-button" id="onboarding-auth" type="button">Sign in with Google</button>
@@ -26,50 +37,62 @@
 
     <main class="onboarding-main">
       <h1 id="onboarding-title">Worker onboarding</h1>
-      <p class="page-instruction">Enter the worker details, then scan their face.</p>
 
-      <section class="enrollment-grid" aria-labelledby="onboarding-title">
-        <form class="worker-form" id="worker-form">
-          <label for="worker-id">Worker ID</label>
-          <input
-            id="worker-id"
-            name="worker-id"
-            type="text"
-            inputmode="text"
-            autocomplete="off"
-            maxlength="32"
-            pattern="[A-Za-z0-9][A-Za-z0-9_-]{1,31}"
-            placeholder="e.g. SG-0042"
-            title="Use 2–32 letters, numbers, dashes, or underscores."
-            required
-          />
+      <div class="flow" aria-labelledby="onboarding-title">
+        <form class="card worker-form" id="worker-form" aria-labelledby="details-title">
+          <p class="card-title" id="details-title"><span class="step-badge">1</span>Worker details</p>
 
-          <label for="worker-name">Worker name</label>
-          <input
-            id="worker-name"
-            name="worker-name"
-            type="text"
-            autocomplete="name"
-            maxlength="60"
-            placeholder="e.g. Ari Tan"
-            required
-          />
+          <!-- The name is asked for first because the ID is read out of it. Two
+               workers may share a name; the number after the initials is what
+               keeps their records apart. -->
+          <div class="field-row">
+            <div class="field">
+              <label for="worker-name">Worker name</label>
+              <input
+                id="worker-name"
+                name="worker-name"
+                type="text"
+                autocomplete="name"
+                maxlength="60"
+                placeholder="e.g. Ari Tan"
+                required
+              />
+            </div>
 
-          <button class="primary-button" id="start-face-scan" type="submit" disabled>
-            Scan face
-          </button>
-          <p class="form-status" id="onboarding-status" role="status" aria-live="polite">
-            Sign in to begin.
-          </p>
+            <div class="field">
+              <label for="worker-id">Worker ID</label>
+              <input
+                id="worker-id"
+                name="worker-id"
+                type="text"
+                autocomplete="off"
+                placeholder="From the name"
+                readonly
+              />
+            </div>
+          </div>
+
+          <div class="card-footer">
+            <button class="primary-button" id="start-face-scan" type="submit" disabled>
+              Scan face
+            </button>
+            <p class="form-status" id="onboarding-status" role="status" aria-live="polite">
+              Sign in to begin.
+            </p>
+          </div>
         </form>
 
-        <section class="scanner" aria-labelledby="scanner-title">
-          <h2 class="visually-hidden" id="scanner-title">Face scan</h2>
+        <!-- Step two is not drawn at all until there is a worker to scan against.
+             An idle camera frame and a seven-sample counter are the largest thing
+             on the page, and neither can be acted on before the details above it
+             are filled in. -->
+        <section class="card scanner" id="scanner-card" aria-labelledby="scanner-title" hidden>
+          <p class="card-title" id="scanner-title"><span class="step-badge">2</span>Face scan</p>
 
           <div class="scanner-view" id="scanner-view" data-status="idle">
             <video id="onboarding-video" playsinline muted autoplay></video>
             <div class="scanner-placeholder" id="scanner-placeholder">
-              Camera starts after worker details are confirmed.
+              The camera starts once you scan.
             </div>
             <div class="scanner-oval" aria-hidden="true"></div>
             <p class="scanner-instruction" id="scanner-instruction" aria-live="polite">
@@ -84,18 +107,35 @@
           <button class="secondary-button" id="cancel-face-scan" type="button" hidden>
             Cancel scan
           </button>
-          <p class="privacy-note">
-            The scan stores a face template for worker ID matching and one profile photo,
-            taken from this scan, to identify the worker in the roster.
-          </p>
         </section>
-      </section>
 
-      <section class="roster" aria-labelledby="roster-title">
-        <h2 id="roster-title">Enrolled workers</h2>
-        <p class="roster-empty" id="roster-empty">Sign in to see enrolled worker IDs.</p>
-        <div class="roster-list" id="worker-roster"></div>
-      </section>
+        <!-- Who is already enrolled is reference, not part of enrolling anyone, so
+             it stays folded away until it is asked for. -->
+        <section class="card roster" aria-labelledby="roster-title">
+          <div class="roster-heading">
+            <p class="card-title" id="roster-title">Enrolled workers</p>
+            <button
+              class="roster-toggle"
+              id="roster-toggle"
+              type="button"
+              title="Show enrolled workers"
+              aria-expanded="false"
+              aria-controls="roster-body"
+            >
+              <span class="roster-chevron" aria-hidden="true"></span>
+              <span class="visually-hidden" id="roster-toggle-label">Show enrolled workers</span>
+            </button>
+          </div>
+          <div class="roster-body" id="roster-body" hidden>
+            <p class="roster-empty" id="roster-empty">Sign in to see enrolled worker IDs.</p>
+            <div class="roster-list" id="worker-roster"></div>
+          </div>
+        </section>
+
+        <p class="privacy-note">
+          A scan stores one face template for worker ID matching and one profile photo for the roster.
+        </p>
+      </div>
     </main>
   </body>
 </html>

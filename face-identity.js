@@ -25,6 +25,61 @@
     knownIdentityVotes: 2,
   });
 
+  // One page, one recognition network.
+  //
+  // `createFaceIdentity` is built fresh for every camera start and every
+  // enrolment scan, so a cache held per instance was empty each time and asked
+  // face-api to load again. Its `faceRecognitionNet` is a module singleton, and
+  // loading it a second time replaces its weights without disposing the old
+  // ones: 117 tensors, about 21MB, stranded per start, climbing for as long as
+  // the page lives. Holding the promise out here means the weights are fetched
+  // and uploaded exactly once however often the camera is restarted.
+  //
+  // Keyed by loader as well as path so an injected loader in a test never reads
+  // another test's network, and the real page — which always passes the same
+  // hoisted `defaultLoadFaceApi` — always hits.
+  const loadedNetworks = new Map();
+
+  const defaultLoadFaceApi = () => import("./vendor/face-api/face-api.esm.js");
+
+  function sharedNetwork(loadFaceApi, modelPath) {
+    let byPath = loadedNetworks.get(loadFaceApi);
+    if (!byPath) {
+      byPath = new Map();
+      loadedNetworks.set(loadFaceApi, byPath);
+    }
+
+    const cached = byPath.get(modelPath);
+    if (cached) return cached;
+
+    const pending = Promise.resolve()
+      .then(loadFaceApi)
+      .then(async (loaded) => {
+        const api = loaded?.default || loaded;
+        if (!api?.nets?.faceRecognitionNet) throw new Error("Face recognition model is missing.");
+        if (api.tf?.setBackend) {
+          try {
+            const selected = await api.tf.setBackend("webgl");
+            if (!selected) await api.tf.setBackend("cpu");
+          } catch {
+            await api.tf.setBackend("cpu");
+          }
+        }
+        await api.tf?.ready?.();
+        await api.nets.faceRecognitionNet.loadFromUri(modelPath);
+        return api;
+      })
+      .catch((error) => {
+        // A refused download is forgotten rather than remembered, so the next
+        // camera start gets to try again instead of inheriting the failure.
+        byPath.delete(modelPath);
+        throw error;
+      });
+
+    byPath.set(modelPath, pending);
+    return pending;
+  }
+
   function featureCenter(face, feature) {
     const points = (face?.[feature] || [])
       .flat(2)
@@ -253,8 +308,7 @@
 
   function createFaceIdentity(options = {}) {
     const settings = { ...DEFAULTS, ...options };
-    const loadFaceApi =
-      options.loadFaceApi || (() => import("./vendor/face-api/face-api.esm.js"));
+    const loadFaceApi = options.loadFaceApi || defaultLoadFaceApi;
     let faceApi = options.faceApi || null;
     let loading = null;
     let failed = false;
@@ -298,21 +352,8 @@
     async function load() {
       if (faceApi) return faceApi;
       if (loading) return loading;
-      loading = Promise.resolve()
-        .then(loadFaceApi)
-        .then(async (loaded) => {
-          const api = loaded?.default || loaded;
-          if (!api?.nets?.faceRecognitionNet) throw new Error("Face recognition model is missing.");
-          if (api.tf?.setBackend) {
-            try {
-              const selected = await api.tf.setBackend("webgl");
-              if (!selected) await api.tf.setBackend("cpu");
-            } catch {
-              await api.tf.setBackend("cpu");
-            }
-          }
-          await api.tf?.ready?.();
-          await api.nets.faceRecognitionNet.loadFromUri(settings.modelPath);
+      loading = sharedNetwork(loadFaceApi, settings.modelPath)
+        .then((api) => {
           faceApi = api;
           failed = false;
           if (enrollmentStatus === "loading") enrollmentStatus = "no_face";

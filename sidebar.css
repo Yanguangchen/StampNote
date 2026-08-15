@@ -1,0 +1,172 @@
+/* The drawer that moves between the app's pages. It is shared by surfaces with
+   very different palettes, so every colour here reads a token the host page
+   already defines and falls back to a neutral if that page has no such token. */
+.sidebar-toggle {
+  display: grid;
+  flex: none;
+  place-items: center;
+  gap: 4px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--line, #d5dad7);
+  border-radius: 11px;
+  background: var(--surface-solid, var(--surface, #fff));
+  color: var(--ink, #17201c);
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast, 140ms) var(--ease, ease-in-out),
+    background var(--motion-fast, 140ms) var(--ease, ease-in-out);
+}
+
+.sidebar-toggle:hover {
+  border-color: var(--line-strong, #b9c8c0);
+}
+
+/* Three rules that fold into a cross: the button says what pressing it will do
+   now, not what it did a moment ago. */
+.sidebar-toggle-bars {
+  display: grid;
+  gap: 4px;
+  width: 17px;
+}
+
+.sidebar-toggle-bars span {
+  display: block;
+  height: 2px;
+  border-radius: 2px;
+  background: currentcolor;
+  transition:
+    transform var(--motion, 220ms) var(--ease, ease-in-out),
+    opacity var(--motion-fast, 140ms) var(--ease, ease-in-out);
+}
+
+.sidebar-toggle[aria-expanded="true"] .sidebar-toggle-bars span:first-child {
+  transform: translateY(6px) rotate(45deg);
+}
+
+.sidebar-toggle[aria-expanded="true"] .sidebar-toggle-bars span:nth-child(2) {
+  opacity: 0;
+}
+
+.sidebar-toggle[aria-expanded="true"] .sidebar-toggle-bars span:last-child {
+  transform: translateY(-6px) rotate(-45deg);
+}
+
+.sidebar-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(6, 12, 10, 0.42);
+  opacity: 0;
+  transition:
+    opacity var(--motion, 220ms) var(--ease, ease-in-out),
+    visibility var(--motion, 220ms) var(--ease, ease-in-out);
+  visibility: hidden;
+}
+
+.app-sidebar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 41;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(264px, 82vw);
+  padding: calc(env(safe-area-inset-top, 0px) + 16px)
+    16px calc(env(safe-area-inset-bottom, 0px) + 16px)
+    calc(env(safe-area-inset-left, 0px) + 16px);
+  overflow-y: auto;
+  border-right: 1px solid var(--line, #d5dad7);
+  background: var(--surface-solid, var(--surface, #fff));
+  box-shadow: 0 0 40px rgba(6, 12, 10, 0.18);
+  /* Closed is off to the left and out of the way; visibility follows the slide
+     so nothing is reachable behind the page while it is shut. */
+  transform: translateX(-100%);
+  transition:
+    transform var(--motion-slow, 340ms) var(--ease, ease-in-out),
+    visibility var(--motion-slow, 340ms) var(--ease, ease-in-out);
+  visibility: hidden;
+}
+
+.app-sidebar[data-open="true"],
+.sidebar-scrim[data-open="true"] {
+  visibility: visible;
+}
+
+.app-sidebar[data-open="true"] {
+  transform: translateX(0);
+}
+
+.sidebar-scrim[data-open="true"] {
+  opacity: 1;
+}
+
+.sidebar-heading {
+  margin: 0 0 4px;
+  padding: 0 10px;
+  color: var(--muted, #68726d);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sidebar-link {
+  display: grid;
+  gap: 2px;
+  padding: 11px 10px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  color: var(--ink, #17201c);
+  font-size: 14px;
+  font-weight: 650;
+  text-decoration: none;
+  transition:
+    background var(--motion-fast, 140ms) var(--ease, ease-in-out),
+    border-color var(--motion-fast, 140ms) var(--ease, ease-in-out),
+    transform var(--motion-fast, 140ms) var(--ease, ease-in-out);
+}
+
+.sidebar-link:hover {
+  border-color: var(--line, #d5dad7);
+  background: var(--chip, rgba(127, 140, 134, 0.12));
+}
+
+.sidebar-link:active {
+  transform: scale(0.99);
+}
+
+.sidebar-link span {
+  color: var(--muted, #68726d);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* The page you are already on is marked rather than removed: the list stays the
+   same shape wherever you open it from. */
+.sidebar-link[aria-current="page"] {
+  background: var(--accent-soft, rgba(23, 97, 70, 0.1));
+  color: var(--accent, #176146);
+}
+
+.sidebar-link[aria-current="page"] span {
+  color: inherit;
+}
+
+.sidebar-toggle:focus-visible,
+.sidebar-link:focus-visible {
+  outline: 2px solid var(--accent, #176146);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-toggle-bars span,
+  .sidebar-scrim,
+  .app-sidebar,
+  .sidebar-link {
+    transition-duration: 0.01ms !important;
+  }
+}

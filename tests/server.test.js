@@ -87,6 +87,12 @@ test("the local server exposes public assets and every API boundary without expo
     assert.equal((await fetch(`${origin}/onboarding.css`)).status, 200);
     assert.equal((await fetch(`${origin}/onboarding.js`)).status, 200);
 
+    const workerPhotos = await fetch(`${origin}/worker-photos.html`);
+    assert.equal(workerPhotos.status, 200);
+    assert.match(await workerPhotos.text(), /Take a photo/);
+    assert.equal((await fetch(`${origin}/worker-photos.css`)).status, 200);
+    assert.equal((await fetch(`${origin}/worker-photos.js`)).status, 200);
+
     const manifest = await fetch(`${origin}/manifest.json`);
     assert.equal(manifest.status, 200);
     assert.match(manifest.headers.get("content-type"), /^application\/manifest\+json/);

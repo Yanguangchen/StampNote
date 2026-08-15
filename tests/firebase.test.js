@@ -628,6 +628,8 @@ test("dashboard sessions load names and Truck locations and rename in Firestore"
             sessionId: "afternoon",
             label: "PM site walk",
             truckLocation: { x: 103.8555, y: 1.2868 },
+            gpsLocation: { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 12.5 },
+            gpsCapturedAtMs: Date.parse("2026-08-14T13:00:00.000Z"),
           }),
         },
         {
@@ -656,6 +658,10 @@ test("dashboard sessions load names and Truck locations and rename in Firestore"
       sessionId: "afternoon",
       label: "PM site walk",
       truckLocation: { x: 103.8555, y: 1.2868 },
+      gpsLocation: { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 12.5 },
+      gpsCapturedAtMs: Date.parse("2026-08-14T13:00:00.000Z"),
+      // A session nobody has looked up the weather for yet carries none.
+      weather: null,
     },
     {
       key: morningKey,
@@ -665,6 +671,7 @@ test("dashboard sessions load names and Truck locations and rename in Firestore"
       sessionId: "morning",
       label: "",
       truckLocation: { x: 103.8545, y: 1.2867 },
+      weather: null,
     },
   ]);
 
@@ -732,6 +739,11 @@ test("deleting a dashboard session removes every matching check-in, photo, and c
     attendanceEventIds: ["attendance-afternoon"],
     photoDeleted: 1,
     photoIds: ["photo-afternoon"],
+    // Reported back so the dashboard can forget the names and truck coordinates
+    // it had cached for the sessions that no longer exist.
+    sessionKeys: [
+      cloudData.createSessionKey({ locationKey, dateKey: "2026-08-14", sessionId: "afternoon" }),
+    ],
   });
   assert.deepEqual(harness.calls.queries[1].clauses, [
     { kind: "where", field: "dateKey", operator: "==", value: "2026-08-14" },
@@ -748,6 +760,229 @@ test("deleting a dashboard session removes every matching check-in, photo, and c
         cloudData.createSessionKey({ locationKey, dateKey: "2026-08-14", sessionId: "afternoon" }),
       ],
     ],
+  );
+});
+
+test("deleting a whole day takes every session in it, at that site only", async () => {
+  const location = "10 Marina Bay";
+  const locationKey = cloudData.createLocationKey(location);
+  const afternoon = new Date(2026, 7, 14, 13, 0).getTime();
+  const morning = new Date(2026, 7, 14, 9, 0).getTime();
+  const harness = createHarness({
+    queryResults: [
+      [
+        { id: "attendance-afternoon", data: () => ({ location, checkedInAtMs: afternoon }) },
+        { id: "attendance-morning", data: () => ({ location, checkedInAtMs: morning }) },
+        {
+          id: "attendance-other-site",
+          data: () => ({ location: "Orchard Road", checkedInAtMs: afternoon }),
+        },
+      ],
+      [
+        {
+          id: "photo-afternoon-doc",
+          data: () => ({ id: "photo-afternoon", location, capturedAtMs: afternoon }),
+        },
+        {
+          id: "photo-morning-doc",
+          data: () => ({ id: "photo-morning", location, capturedAtMs: morning }),
+        },
+      ],
+    ],
+  });
+  await harness.client.ready;
+
+  const deleted = await harness.client.deleteScope({
+    location,
+    locationKey,
+    dateKey: "2026-08-14",
+  });
+
+  // Both periods of the day go, and the neighbouring site stays.
+  assert.equal(deleted.attendanceDeleted, 2);
+  assert.deepEqual(deleted.attendanceEventIds, ["attendance-afternoon", "attendance-morning"]);
+  assert.deepEqual(deleted.photoIds, ["photo-afternoon", "photo-morning"]);
+  // A day can only hold the three fixed periods, so their names are named
+  // outright rather than read back first. Deleting one that was never renamed
+  // costs nothing.
+  assert.deepEqual(
+    deleted.sessionKeys,
+    cloudData.SESSION_DEFINITIONS.map((definition) =>
+      cloudData.createSessionKey({ locationKey, dateKey: "2026-08-14", sessionId: definition.id }),
+    ),
+  );
+  assert.deepEqual(
+    harness.calls.batches[0].deletes.map((reference) => reference.segments.slice(1)),
+    [
+      ["attendanceDays", "2026-08-14", "entries", "attendance-afternoon"],
+      ["attendanceDays", "2026-08-14", "entries", "attendance-morning"],
+      ["users", "user-1", "photos", "photo-afternoon-doc"],
+      ["users", "user-1", "photos", "photo-morning-doc"],
+      ...deleted.sessionKeys.map((key) => ["dashboardSessions", key]),
+    ],
+  );
+});
+
+test("deleting a whole location sweeps every day it ever reported", async () => {
+  const location = "10 Marina Bay";
+  const locationKey = cloudData.createLocationKey(location);
+  const august = new Date(2026, 7, 14, 13, 0).getTime();
+  const july = new Date(2026, 6, 2, 9, 0).getTime();
+  const renamedKey = cloudData.createSessionKey({
+    locationKey,
+    dateKey: "2026-07-02",
+    sessionId: "morning",
+  });
+  const harness = createHarness({
+    queryResults: [
+      [
+        {
+          id: "attendance-august",
+          data: () => ({ location, checkedInAtMs: august, dateKey: "2026-08-14" }),
+        },
+        {
+          id: "attendance-july",
+          data: () => ({ location, checkedInAtMs: july, dateKey: "2026-07-02" }),
+        },
+        {
+          id: "attendance-other-site",
+          data: () => ({ location: "Orchard Road", checkedInAtMs: august, dateKey: "2026-08-14" }),
+        },
+      ],
+      [
+        {
+          id: "photo-august-doc",
+          data: () => ({ id: "photo-august", location, capturedAtMs: august }),
+        },
+        {
+          id: "photo-other-site-doc",
+          data: () => ({ id: "photo-other", location: "Orchard Road", capturedAtMs: july }),
+        },
+      ],
+      [
+        { id: renamedKey, data: () => ({ location, dateKey: "2026-07-02", sessionId: "morning" }) },
+        {
+          id: "other-site-key",
+          data: () => ({ location: "Orchard Road", dateKey: "2026-08-14", sessionId: "afternoon" }),
+        },
+      ],
+    ],
+  });
+  await harness.client.ready;
+
+  const deleted = await harness.client.deleteScope({ location, locationKey });
+
+  assert.deepEqual(deleted.attendanceEventIds, ["attendance-august", "attendance-july"]);
+  assert.deepEqual(deleted.photoIds, ["photo-august"]);
+  // Which days a site reported on is not known in advance, so the names are read
+  // back and filtered rather than generated.
+  assert.deepEqual(deleted.sessionKeys, [renamedKey]);
+  // Check-ins are filed under their own day, so a site is swept out of all of
+  // them at once and each row is put back together with the day it came from.
+  assert.deepEqual(harness.calls.queries[0], { kind: "collectionGroup", name: "entries" });
+  assert.deepEqual(
+    harness.calls.batches[0].deletes.map((reference) => reference.segments.slice(1)),
+    [
+      ["attendanceDays", "2026-08-14", "entries", "attendance-august"],
+      ["attendanceDays", "2026-07-02", "entries", "attendance-july"],
+      ["users", "user-1", "photos", "photo-august-doc"],
+      ["dashboardSessions", renamedKey],
+    ],
+  );
+});
+
+test("deleting a site takes every address a GPS error split it into", async () => {
+  // The dashboard reads these two as one yard, so the delete has to sweep the
+  // records filed under both spellings — otherwise the site comes straight back.
+  const location = "34 Parbury Avenue";
+  const locationKey = cloudData.createLocationKey(location);
+  const aliasKey = cloudData.createLocationKey("32 Parbury Avenue");
+  const august = new Date(2026, 7, 14, 13, 0).getTime();
+  const aliasSessionKey = cloudData.createSessionKey({
+    locationKey: aliasKey,
+    dateKey: "2026-08-14",
+    sessionId: "afternoon",
+  });
+  const harness = createHarness({
+    queryResults: [
+      [
+        {
+          id: "attendance-canonical",
+          data: () => ({ location, checkedInAtMs: august, dateKey: "2026-08-14" }),
+        },
+        {
+          id: "attendance-alias",
+          data: () => ({
+            location: "32 Parbury Avenue",
+            checkedInAtMs: august,
+            dateKey: "2026-08-14",
+          }),
+        },
+        {
+          id: "attendance-elsewhere",
+          data: () => ({ location: "Orchard Road", checkedInAtMs: august, dateKey: "2026-08-14" }),
+        },
+      ],
+      [
+        {
+          id: "photo-alias-doc",
+          data: () => ({ id: "photo-alias", location: "32 Parbury Avenue", capturedAtMs: august }),
+        },
+      ],
+      [
+        {
+          id: aliasSessionKey,
+          data: () => ({
+            location: "32 Parbury Avenue",
+            dateKey: "2026-08-14",
+            sessionId: "afternoon",
+          }),
+        },
+        {
+          id: "elsewhere-key",
+          data: () => ({ location: "Orchard Road", dateKey: "2026-08-14", sessionId: "afternoon" }),
+        },
+      ],
+    ],
+  });
+  await harness.client.ready;
+
+  const deleted = await harness.client.deleteScope({
+    location,
+    locationKey,
+    locationKeys: [locationKey, aliasKey],
+  });
+
+  assert.deepEqual(deleted.attendanceEventIds, ["attendance-canonical", "attendance-alias"]);
+  assert.deepEqual(deleted.photoIds, ["photo-alias"]);
+  // The truck coordinates saved under the other spelling go with it.
+  assert.deepEqual(deleted.sessionKeys, [aliasSessionKey]);
+  // The neighbouring site is untouched.
+  assert.equal(
+    harness.calls.batches[0].deletes.some((reference) =>
+      reference.segments.includes("attendance-elsewhere"),
+    ),
+    false,
+  );
+});
+
+test("a delete needs a site, and a period without a day is refused", async () => {
+  const harness = createHarness();
+  await harness.client.ready;
+
+  // "Every morning ever recorded here" is not something the dashboard offers or
+  // that anyone could mean to ask for.
+  await assert.rejects(
+    harness.client.deleteScope({ location: "10 Marina Bay", sessionId: "morning" }),
+    /valid date/,
+  );
+  await assert.rejects(
+    harness.client.deleteScope({ location: "10 Marina Bay", dateKey: "14-08-2026" }),
+    /valid date/,
+  );
+  await assert.rejects(
+    harness.client.deleteSession({ location: "10 Marina Bay", dateKey: "2026-08-14" }),
+    /valid time period/,
   );
 });
 
@@ -781,6 +1016,146 @@ test("reviewed photos are resized, encoded, and written idempotently to Firestor
   assert.equal(Object.hasOwn(harness.calls.writes[0].value, "vehicleCoordinates"), false);
   assert.equal(Object.hasOwn(harness.calls.writes[0].value, "truckLocation"), false);
   assert.deepEqual(harness.calls.writes[0].writeOptions, { merge: true });
+});
+
+test("sanitized worker photos upload without a recording session", async () => {
+  const harness = createHarness();
+  await harness.client.ready;
+  const metadata = await harness.client.uploadWorkerPhoto(
+    reviewedPhoto({
+      aiReview: { action: "keep", recommendation: "keep", confidence: 0.96 },
+      trigger: "worker",
+      source: "library",
+      weatherStatus: "recorded",
+      weather: {
+        severity: "dry",
+        condition: "Clear",
+        precipitationMm: 0,
+        temperatureC: 30,
+        hours: 1,
+        recordedAtMs: 1786635912000,
+      },
+    }),
+  );
+
+  assert.equal(metadata.trigger, "worker");
+  assert.equal(metadata.source, "library");
+  assert.equal(metadata.aiReview.action, "keep");
+  assert.equal(metadata.weather.condition, "Clear");
+  assert.equal(harness.calls.writes.length, 1);
+  await assert.rejects(
+    harness.client.uploadWorkerPhoto(reviewedPhoto({ trigger: "schedule" })),
+    /worker camera or library/,
+  );
+  await assert.rejects(
+    harness.client.uploadWorkerPhoto(reviewedPhoto({ trigger: "worker", aiReview: null })),
+    /Gemini sanitization/,
+  );
+});
+
+test("a session's weather is stored on the session and read back with it", async () => {
+  const harness = createHarness();
+  await harness.client.ready;
+  const location = "10 Marina Bay";
+  const locationKey = cloudData.createLocationKey(location);
+  const session = { location, locationKey, dateKey: "2026-08-14", sessionId: "afternoon" };
+  const key = cloudData.createSessionKey(session);
+
+  const saved = await harness.client.updateSessionWeather(session, {
+    severity: "storm",
+    label: "Storm",
+    delayNote: "Storms very likely delayed this session.",
+    condition: "Thunderstorm",
+    precipitationMm: 10.34,
+    maxGustKph: 71.4,
+    temperatureC: 28.6,
+    wetHours: 2,
+    hours: 5,
+    lostHours: 2.75,
+    impactPercent: 55,
+    provisional: false,
+    recordedAtMs: 1786635912000,
+  });
+
+  assert.equal(saved.key, key);
+  const write = harness.calls.writes.at(-1);
+  assert.deepEqual(write.reference.segments.slice(1), ["dashboardSessions", key]);
+  assert.deepEqual(write.writeOptions, { merge: true });
+  assert.equal(write.value.weatherRecordedBy, "user-1");
+  // Only the reading and the judgement are kept, rounded to what a foreman
+  // would say out loud. The wording is put back when it is read.
+  assert.deepEqual(write.value.weather, {
+    severity: "storm",
+    condition: "Thunderstorm",
+    precipitationMm: 10.3,
+    maxGustKph: 71,
+    temperatureC: 29,
+    wetHours: 2,
+    hours: 5,
+    // The cost is stored with the reading, so the figure a reader was shown is
+    // the one they see again, whatever the thresholds become later.
+    lostHours: 2.8,
+    impactPercent: 55,
+    provisional: false,
+    recordedAtMs: 1786635912000,
+  });
+  // The session it belongs to is named alongside it, so the document stands on
+  // its own the way a renamed or placed session does.
+  assert.equal(write.value.locationKey, locationKey);
+  assert.equal(write.value.dateKey, "2026-08-14");
+  assert.equal(write.value.sessionId, "afternoon");
+
+  // A reading with no severity is not a reading.
+  await assert.rejects(
+    harness.client.updateSessionWeather(session, { condition: "Thunderstorm" }),
+    /could not be read/,
+  );
+  await assert.rejects(
+    harness.client.updateSessionWeather(session, { severity: "drizzly" }),
+    /could not be read/,
+  );
+});
+
+test("stored sessions carry their weather back to the dashboard", async () => {
+  const location = "10 Marina Bay";
+  const locationKey = cloudData.createLocationKey(location);
+  const key = cloudData.createSessionKey({ locationKey, dateKey: "2026-08-14", sessionId: "morning" });
+  const harness = createHarness({
+    queryResults: [
+      [
+        {
+          id: key,
+          data: () => ({
+            location,
+            locationKey,
+            dateKey: "2026-08-14",
+            sessionId: "morning",
+            label: "Early start",
+            weather: {
+              severity: "wet",
+              condition: "Rain",
+              precipitationMm: 4.2,
+              maxGustKph: 22,
+              temperatureC: 27,
+              wetHours: 3,
+              hours: 6,
+              provisional: true,
+              recordedAtMs: 1786635912000,
+            },
+          }),
+        },
+      ],
+    ],
+  });
+  await harness.client.ready;
+
+  const [session] = await harness.client.getDashboardSessions();
+  assert.equal(session.label, "Early start");
+  assert.equal(session.weather.severity, "wet");
+  assert.equal(session.weather.precipitationMm, 4.2);
+  // A reading taken while the session was still being worked says so, so it can
+  // be taken again once the day is over.
+  assert.equal(session.weather.provisional, true);
 });
 
 test("Truck location coordinates are stored once on the dashboard session", async () => {
@@ -828,6 +1203,41 @@ test("Truck location coordinates are stored once on the dashboard session", asyn
   });
   assert.deepEqual(cleared.truckLocation, { x: null, y: null });
   assert.deepEqual(harness.calls.writes.at(-1).value.truckLocation, { x: null, y: null });
+});
+
+test("automatic GPS is stored directly on the dashboard session", async () => {
+  const harness = createHarness();
+  await harness.client.ready;
+  const session = {
+    location: "10 Marina Bay",
+    dateKey: "2026-08-14",
+    sessionId: "afternoon",
+    gpsCapturedAtMs: Date.parse("2026-08-14T13:00:00.000Z"),
+  };
+  const gpsLocation = { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 12.5 };
+
+  const saved = await harness.client.recordSessionGpsLocation(session, gpsLocation);
+
+  assert.deepEqual(saved.gpsLocation, gpsLocation);
+  assert.equal(saved.gpsCapturedAtMs, session.gpsCapturedAtMs);
+  const write = harness.calls.writes.at(-1);
+  assert.deepEqual(write.reference.segments.slice(1), [
+    "dashboardSessions",
+    cloudData.createSessionKey(session),
+  ]);
+  assert.deepEqual(write.value.gpsLocation, gpsLocation);
+  assert.equal(write.value.gpsCapturedAtMs, session.gpsCapturedAtMs);
+  assert.equal(write.value.gpsRecordedBy, "user-1");
+  assert.deepEqual(write.writeOptions, { merge: true });
+
+  await assert.rejects(
+    harness.client.recordSessionGpsLocation(session, {
+      latitude: 91,
+      longitude: 103.8545,
+      accuracyMeters: 12.5,
+    }),
+    /invalid/i,
+  );
 });
 
 test("photo upload fails safely before writing incomplete or unencodable records", async () => {

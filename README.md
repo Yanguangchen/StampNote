@@ -103,6 +103,21 @@ Captures first go to IndexedDB on the device. After Gemini reviews a batch, each
 
 Photo documents remain under `users/{uid}/photos/{photoId}`, worker templates live in the team-wide `workers/{workerId}` roster, and matched check-ins live under `attendanceDays/{date}/entries/{eventId}`. A recording session writes one attendance event per recognized worker: the opening worker is recorded after the two-view check, and additional enrolled workers are recorded after two live face matches while capture continues. The same worker is never duplicated within one camera session. Firestore requires Google authentication but, by explicit project policy, any authenticated project user can read or write every document. Anonymous visitors remain blocked. No public image URL exists: the authenticated dashboard turns Firestore bytes into a temporary in-browser image URL. Open `admin.html` to browse photos alongside recent attendance grouped by location and then date, and open `onboarding.html` to enroll, replace, or delete worker templates.
 
+The intended RPA truck-coordinate workflow matches the active session to the nearest truck by GPS
+proximity; it does not infer the session address from the truck coordinate. The conservative match,
+ambiguity, customer-language, and audit requirements are specified in
+[`LOCATION_MATCHING.md`](LOCATION_MATCHING.md). On the dashboard, selecting a location, date, and
+specific time session still supports manual truck placement. The dedicated Geographic Surveillence
+page at `coordinates.html` lists every GPS reading beside its date/time session, orders dates and sessions for direct
+comparison, and puts the truck X/Y inputs on the same session card. Stable `data-*` fields and a
+page-level JSON index expose the same records to browser automation. Recording start also writes its
+automatic GPS fix directly to the dashboard session, so the page does not have to wait for a photo
+batch to finish AI review and cloud upload. Each session conceals its GPS and truck coordinate area
+behind a Show coordinates button, and a truck point more than 25 m from the GPS reference is
+explicitly flagged for review in both the UI and automation JSON. Compare on map opens both positions,
+their straight-line difference, and the GPS uncertainty area on an attributed OpenStreetMap view.
+Automatic nearest-truck resolution is not yet implemented.
+
 `firebase.js` loads Firebase JavaScript SDK 12.17.1 modules directly from Google's CDN: App, Authentication, Cloud Firestore and optional Analytics. The checked-in browser configuration—including the API key and `storageBucket` name—identifies the Firebase project; it is not an authorization secret. StampNote does not load the Firebase Storage SDK or write photos to Cloud Storage. It stores compact JPEG bytes in authenticated-team Firestore documents.
 
 The 512-pixel representation is deliberate. [Firestore documents are limited to 1 MiB](https://firebase.google.com/docs/firestore/quotas), while [Cloud Storage for Firebase requires the Blaze plan](https://firebase.google.com/docs/storage/faqs-storage-changes-announced-sept-2024). Keeping the compact bytes in Firestore lets this project use Firestore's no-cost quota without depending on Cloud Storage. Full-resolution originals remain in the device's IndexedDB and can still be saved out as files.
@@ -240,6 +255,7 @@ See [OBSERVABILITY.md](OBSERVABILITY.md) for the event catalog, production log c
 - `pose-detector.js` — the fallback detector, used when the models cannot load
 - `vendor/mediapipe/` — the committed MediaPipe runtime and models, with provenance and licence
 - `vendor/face-api/` — the committed face-recognition runtime and weights, with provenance and licence
+- `vendor/fonts/` — the committed type, so an offline load still gets Outfit and, on Geographic Surveillence, JetBrains Mono
 - `capture-scheduler.js` — the 30-second and 120-second capture cadences
 - `photo-store.js` — on-device capture store, with pruning and fallbacks
 - `photo-cloud.js` — deterministic cloud paths, safe metadata and location/date grouping
@@ -256,6 +272,7 @@ See [OBSERVABILITY.md](OBSERVABILITY.md) for the event catalog, production log c
 - `auto-capture.js` — the watch loop joining tracker, schedule and store
 - `firebase.js` — Google Authentication plus Firestore photo, attendance, and worker-template access
 - `admin.html`, `admin.css`, `admin.js` — combined authenticated photo and attendance dashboard
+- `coordinates.html`, `coordinates.css`, `coordinates.js` — Geographic Surveillence GPS comparison and truck-coordinate entry workspace
 - `onboarding.html`, `onboarding.css`, `onboarding.js` — signed-in worker face enrollment and roster management
 - `firebase.json`, `.firebaserc` — Firebase provider/rules deployment configuration and project alias
 - `firestore.rules` — authenticated-team-wide Firebase access policy
@@ -269,6 +286,7 @@ See [OBSERVABILITY.md](OBSERVABILITY.md) for the event catalog, production log c
 - `package-lock.json` — pinned dependency graph
 - `.env.example` — safe placeholders for the server-only Google AI Studio key and local port
 - `OBSERVABILITY.md` — operational event catalog, privacy contract and incident runbooks
+- `LOCATION_MATCHING.md` — conservative session-to-truck GPS proximity and ambiguity policy
 - `README.md` — product scope and development notes
 
 ## Address data

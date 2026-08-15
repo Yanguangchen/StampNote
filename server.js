@@ -30,9 +30,18 @@ const publicFiles = new Set([
   "admin.html",
   "admin.css",
   "admin.js",
+  "coordinates.html",
+  "coordinates.css",
+  "coordinates.js",
   "onboarding.html",
   "onboarding.css",
   "onboarding.js",
+  "worker-photos.html",
+  "worker-photos.css",
+  "worker-photos.js",
+  "sidebar.css",
+  "sidebar.js",
+  "weather-service.js",
   "manifest.json",
   "icons/stampnote.svg",
   "icons/stampnote-180.png",
@@ -50,6 +59,7 @@ const contentTypes = {
   // Served as application/wasm so the browser can compile it as it downloads
   // rather than waiting for all eleven megabytes to arrive first.
   ".wasm": "application/wasm",
+  ".woff2": "font/woff2",
   ".task": "application/octet-stream",
   ".tflite": "application/octet-stream",
 };

@@ -126,7 +126,7 @@ test("Firebase initializes the supplied project and Analytics", () => {
   const firebase = readFileSync(firebasePath, "utf8");
 
   assert.match(html, /<script\s+src=["']photo-cloud\.js["']\s+defer><\/script>/i);
-  assert.match(html, /<script\s+src=["']firebase\.js["']\s+defer><\/script>/i);
+  assert.match(html, /<script\s+src=["']firebase\.js(?:\?v=[^"']+)?["']\s+defer><\/script>/i);
   assert.ok(existsSync(firebasePath));
   assert.match(firebase, /firebasejs\/12\.17\.1/);
   assert.match(firebase, /firebase-app\.js/);
@@ -161,22 +161,20 @@ test("gallery control accepts multiple images", () => {
   assert.equal(hasAttribute(galleryInput, "capture"), false);
 });
 
-// Every control on screen is a glyph. Its name is in the markup — so it names
-// the button to a screen reader — but it is only shown when a pointer asks.
+// Every control on screen is a glyph with one concise name in the markup.
 const NAMED_CONTROLS = [
-  ["label", "for", "gallery-input", "Choose"],
-  ["button", "id", "monitor-toggle", "Start auto capture"],
-  ["button", "id", "captures-save", "Save to this device"],
-  ["button", "id", "cloud-auth", "Sign in with Google"],
-  ["a", "id", "admin-dashboard", "Open photo dashboard"],
+  ["label", "for", "gallery-input", "Gallery"],
+  ["button", "id", "monitor-toggle", "Camera"],
+  ["button", "id", "captures-save", "Save"],
+  ["button", "id", "cloud-auth", "Account"],
   ["button", "id", "share-button", "Share"],
-  ["button", "id", "ai-review", "Review photos with AI"],
-  ["button", "id", "ai-review-bin", "Show AI review bin"],
-  ["button", "id", "ai-review-purge", "Delete AI flags permanently"],
-  ["button", "id", "captures-clear", "Delete every photo"],
-  ["button", "id", "viewer-restore", "Restore this photo"],
-  ["button", "id", "viewer-share", "Share this photo"],
-  ["button", "id", "viewer-delete", "Delete this photo"],
+  ["button", "id", "ai-review", "Review"],
+  ["button", "id", "ai-review-bin", "Flags"],
+  ["button", "id", "ai-review-purge", "Delete"],
+  ["button", "id", "captures-clear", "Delete"],
+  ["button", "id", "viewer-restore", "Restore"],
+  ["button", "id", "viewer-share", "Share"],
+  ["button", "id", "viewer-delete", "Delete"],
   ["button", "id", "viewer-close", "Close"],
 ];
 
@@ -191,15 +189,14 @@ function controlMarkup(tagName, attribute, id) {
   return match;
 }
 
-test("controls carry their name in the markup and nothing beside the glyph", () => {
+test("controls carry one-word names in the markup alongside their glyphs", () => {
   NAMED_CONTROLS.forEach(([tagName, attribute, id, name]) => {
     const match = controlMarkup(tagName, attribute, id);
 
     assert.match(match[1], new RegExp(`class=["'][^"']*hint[^"']*["'][^>]*>${escapeRegExp(name)}<`, "i"));
     assert.match(match[1], /<svg\b[^>]*aria-hidden=["']true["']/i);
 
-    // The glyph and the name are the whole of it, so no wording is laid out
-    // next to the icon.
+    // The glyph and its one-word name are the whole control.
     const visible = match[1]
       .replace(/<svg\b[\s\S]*?<\/svg>/gi, "")
       .replace(/<span\b[^>]*class=["'][^"']*hint[^"']*["'][^>]*>[\s\S]*?<\/span>/gi, "")
@@ -209,7 +206,15 @@ test("controls carry their name in the markup and nothing beside the glyph", () 
   });
 });
 
-test("a control's name is shown above it, only while a pointer is on it", () => {
+test("page navigation uses the shared hamburger instead of orbiting links", () => {
+  assert.match(html, /<link rel="stylesheet" href="sidebar\.css" \/>/);
+  assert.match(html, /<script src="sidebar\.js" defer><\/script>/);
+  assert.match(html, /<header[^>]*class="capture-header"[^>]*data-sidebar-mount/);
+  assert.doesNotMatch(html, /id="worker-onboarding"|id="admin-dashboard"/);
+  assert.match(css, /\.capture-header\s*\{[^}]*position:\s*fixed;[^}]*z-index:\s*39/);
+});
+
+test("capture choices stay labelled while secondary names appear on request", () => {
   // One tooltip, not two: a title attribute would have the browser drawing its
   // own next to the styled one.
   NAMED_CONTROLS.forEach(([tagName, attribute, id]) => {
@@ -227,11 +232,15 @@ test("a control's name is shown above it, only while a pointer is on it", () => 
   assert.match(css, /\.hint\s*\{[^}]*pointer-events:\s*none/);
   assert.equal(/\.hint\s*\{[^}]*display:\s*none/.test(css), false);
 
-  // Hover is what reveals it, and only where hovering is a thing that happens.
+  // Secondary controls reveal their names on hover, press, or keyboard focus.
   assert.match(css, /@media \(hover: hover\)\s*\{\s*:is\([^)]*\):hover > \.hint/);
-  // A finger has no hover, so a press shows it, and a keyboard gets it on focus.
   assert.match(css, /:is\([^)]*\):active > \.hint/);
   assert.match(css, /:is\([^)]*\):focus-visible > \.hint/);
+
+  // Camera and Gallery are visible without requiring any gesture.
+  assert.match(css, /\.toolbar > \.toolbar-group:first-child > \.tool > \.hint,/);
+  assert.match(css, /\.toolbar > \.record > \.hint\s*\{[^}]*position:\s*static/);
+  assert.match(css, /\.toolbar > \.record > \.hint\s*\{[^}]*opacity:\s*1/);
 });
 
 test("the automatically resolved location address is immutable", () => {
@@ -962,7 +971,7 @@ test("the shutter is centred and saving sits in the bottom right corner", () => 
   // Idle, the shutter waits in the middle of the screen and travels down to the
   // bar when the camera is opening or already watching.
   assert.match(css, /\.record\s*\{[^}]*translate:\s*0 calc\(/);
-  assert.match(css, /\.record\[data-running="true"\],\n\.ai-review-loader:not\(\[hidden\]\) ~ \.toolbar \.record \{\s*translate: 0 0;/);
+  assert.match(css, /\.record\[data-running="true"\],\r?\n\.ai-review-loader:not\(\[hidden\]\) ~ \.toolbar \.record \{\s*translate: 0 0;/);
   assert.doesNotMatch(html, /id="stage-empty"/);
   assert.match(css, /\.record \.record-icon\s*\{[^}]*fill:\s*currentColor/);
   assert.match(tagWithId("button", "monitor-toggle"), /aria-pressed=["']false["']/);
@@ -1091,9 +1100,15 @@ test("the default screen drifts, and the tools orbit the shutter until reached f
   assert.match(orbit, /toolbar\.dataset\.orbitPaused = near \? "true" : "false"/);
   assert.match(orbit, /record\.dataset\.running !== "true"/);
   assert.match(orbit, /document\.body\.dataset\.stage = idle \? "idle" : "live"/);
-  // The opening screen is light, so the phone's status bar follows it.
-  assert.match(orbit, /themeColour\?\.setAttribute\("content", idle \? "#f6f7f6" : "#0d1512"\)/);
+  // The phone status bar follows either idle palette and stays dark over the camera.
+  assert.match(orbit, /window\.matchMedia\("\(prefers-color-scheme: dark\)"\)/);
+  assert.match(orbit, /const idleThemeColour = darkScheme\.matches \? "#0d1512" : "#f6f7f6"/);
+  assert.match(orbit, /themeColour\?\.setAttribute\("content", idle \? idleThemeColour : "#0d1512"\)/);
+  assert.match(orbit, /darkScheme\.addEventListener\("change", syncStage\)/);
   assert.match(css, /body\[data-stage="idle"\]\s*\{[^}]*background:\s*#f6f7f6/);
+  assert.match(css, /@media \(prefers-color-scheme: dark\)[\s\S]*?body\[data-stage="idle"\]\s*\{[^}]*background:\s*#0d1512/);
+  assert.match(css, /@media \(prefers-color-scheme: dark\)[\s\S]*?--surface-solid:\s*#151d1a/);
+  assert.match(css, /@media \(prefers-color-scheme: dark\)[\s\S]*?body\[data-stage="idle"\] \.toolbar \.tool\s*\{[^}]*color:\s*rgba\(232, 239, 233, 0\.82\)/);
   // A hidden tool must not hold an empty seat.
   assert.match(orbit, /tools\.filter\(\(tool\) => !tool\.hidden\)/);
 });

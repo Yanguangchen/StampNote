@@ -4,6 +4,7 @@
   const cloud = window.StampNoteFirebase;
   const data = window.StampNoteCloudData;
   const telemetry = window.StampNoteObservability;
+  const weather = window.StampNoteWeather;
   const themeToggle = document.querySelector("#theme-toggle");
   const themeToggleIcon = document.querySelector("#theme-toggle-icon");
   const themeToggleLabel = document.querySelector("#theme-toggle-label");
@@ -30,10 +31,16 @@
   const attendanceWorkerFilter = document.querySelector("#attendance-worker-filter");
   const locationOptions = document.querySelector("#location-options");
   const dateOptions = document.querySelector("#date-options");
+  const datePicker = document.querySelector("#date-picker");
+  const dateHint = document.querySelector("#date-hint");
   const sessionOptions = document.querySelector("#session-options");
   const scopeBreadcrumb = document.querySelector("#scope-breadcrumb");
   const sessionActions = document.querySelector("#session-actions");
+  const sessionTruckLocation = document.querySelector("#session-truck-location");
+  const sessionWeather = document.querySelector("#session-weather");
   const sessionRenameButton = document.querySelector("#session-rename");
+  const locationDeleteButton = document.querySelector("#location-delete");
+  const dateDeleteButton = document.querySelector("#date-delete");
   const sessionDeleteButton = document.querySelector("#session-delete");
   const sessionRenameDialog = document.querySelector("#session-rename-dialog");
   const sessionRenameForm = document.querySelector("#session-rename-form");
@@ -41,6 +48,11 @@
   const sessionRenameError = document.querySelector("#session-rename-error");
   const sessionRenameCancel = document.querySelector("#session-rename-cancel");
   const sessionRenameSave = document.querySelector("#session-rename-save");
+  const dateStep = document.querySelector("#date-step");
+  const sessionStep = document.querySelector("#session-step");
+  const detailColumn = document.querySelector("#detail-column");
+  const photosPanel = document.querySelector("#photos-panel");
+  const scopeGuidanceLine = document.querySelector("#scope-guidance");
   const attendanceStatus = document.querySelector("#attendance-status");
   const attendanceList = document.querySelector("#attendance-list");
   const presentWorkerCount = document.querySelector("#present-worker-count");
@@ -63,11 +75,23 @@
   let editingSession = null;
   let renderVersion = 0;
   const photoUrls = new Map();
+  // A day's weather at a site, asked for once. Three sessions read the same
+  // answer, and the sky over a past day does not change.
+  const weatherDays = new Map();
+  // Session keys already written this visit, so a day is never saved twice.
+  const weatherWrites = new Set();
 
   // A day is read as three working sessions so a location's morning crew is
   // never mixed with the people who arrived after lunch.
   const SESSIONS = data?.SESSION_DEFINITIONS || [];
-  const selection = { locationKey: null, dateKey: null, sessionId: "all" };
+
+  // The rail lists the days a location has worked, and that list only ever grows.
+  // Only the newest few are worth a button; the calendar beside them reaches the
+  // rest without the rail growing a row taller for every day that passes.
+  const RECENT_DATE_LIMIT = 6;
+  // Nothing is chosen until it is chosen. A null session means the third step
+  // has not been answered yet; "all" is the reader having picked "Whole day".
+  const selection = { locationKey: null, dateKey: null, sessionId: null };
 
   const THEME_KEY = "stampnote-theme";
 
@@ -257,14 +281,25 @@
   // dashboard only ever shows one site's work at a time.
   function buildScope() {
     const locations = new Map();
+    // Photographs carry the coordinates, so they decide which addresses are one
+    // site. Attendance has only the address it was written with, and follows.
+    const sites = data.createSiteIndex(photos);
 
     function locationNode(rawLocation, atMs) {
-      const location = data.normalizeLocation(rawLocation);
-      const locationKey = data.createLocationKey(location);
-      if (!locations.has(locationKey)) {
-        locations.set(locationKey, { location, locationKey, latestAtMs: 0, dates: new Map() });
+      const site = sites.siteFor(rawLocation);
+      if (!locations.has(site.locationKey)) {
+        locations.set(site.locationKey, {
+          location: site.location,
+          locationKey: site.locationKey,
+          // Where the site is, so the weather can be asked about this place.
+          point: site.point,
+          aliases: site.aliases,
+          aliasKeys: site.aliasKeys,
+          latestAtMs: 0,
+          dates: new Map(),
+        });
       }
-      const node = locations.get(locationKey);
+      const node = locations.get(site.locationKey);
       node.latestAtMs = Math.max(node.latestAtMs, atMs || 0);
       return node;
     }
@@ -329,12 +364,28 @@
                   dateKey: dateGroup.dateKey,
                   sessionId: session.id,
                 });
-                const savedSession = dashboardSessions.get(key);
+                // Anything saved before two addresses were read as one site is
+                // filed under the address of the day, so those keys are tried
+                // too. A later save writes to the site's own key.
+                const savedSession =
+                  dashboardSessions.get(key) ||
+                  (location.aliasKeys || [])
+                    .map((aliasKey) =>
+                      dashboardSessions.get(
+                        data.createSessionKey({
+                          locationKey: aliasKey,
+                          dateKey: dateGroup.dateKey,
+                          sessionId: session.id,
+                        }),
+                      ),
+                    )
+                    .find(Boolean);
                 return {
                   ...session,
                   key,
                   label: savedSession?.label || session.label,
                   truckLocation: data.cleanTruckLocation(savedSession?.truckLocation),
+                  weather: data.cleanSessionWeather(savedSession?.weather),
                   entries: [...session.entries].sort(
                     (left, right) => left.checkedInAtMs - right.checkedInAtMs,
                   ),
@@ -351,23 +402,42 @@
       });
   }
 
+  // Only what has actually been chosen resolves. A step whose choice has since
+  // been deleted falls back to nothing rather than to the first row, so the rail
+  // never answers a question on the reader's behalf.
   function resolveSelection(scope) {
-    const location =
-      scope.find((entry) => entry.locationKey === selection.locationKey) || scope[0] || null;
-    const dateGroup = location
-      ? location.dates.find((entry) => entry.dateKey === selection.dateKey) ||
-        location.dates[0] ||
-        null
+    const location = selection.locationKey
+      ? scope.find((entry) => entry.locationKey === selection.locationKey) || null
       : null;
+    const dateGroup =
+      location && selection.dateKey
+        ? location.dates.find((entry) => entry.dateKey === selection.dateKey) || null
+        : null;
     const session = dateGroup
       ? dateGroup.sessions.find((entry) => entry.id === selection.sessionId) || null
       : null;
 
     selection.locationKey = location?.locationKey || null;
     selection.dateKey = dateGroup?.dateKey || null;
-    selection.sessionId = session?.id || "all";
+    // "Whole day" survives as an answer in its own right; a session that no
+    // longer exists takes the third step back to unanswered.
+    if (!dateGroup) selection.sessionId = null;
+    else if (selection.sessionId !== "all") selection.sessionId = session?.id || null;
 
     return { location, dateGroup, session };
+  }
+
+  // The detail side is a reward for finishing the rail: a location, a date, and
+  // an answer to the third step, whether that answer is one session or the day.
+  function isScopeChosen(view) {
+    return Boolean(view.location && view.dateGroup && selection.sessionId);
+  }
+
+  function scopeGuidance(view, scope) {
+    if (scope.length === 0) return "No site has reported attendance or photos yet.";
+    if (!view.location) return "Pick a location to see its photos and attendance.";
+    if (!view.dateGroup) return "Now pick a date.";
+    return "Now pick a time session, or the whole day.";
   }
 
   function scopedEntries(view) {
@@ -448,7 +518,7 @@
     return row;
   }
 
-  function createScopeOption({ title, detail, selected, onSelect }) {
+  function createScopeOption({ title, detail, selected, onSelect, severity, icon, automation = {} }) {
     const option = document.createElement("button");
     const name = document.createElement("strong");
     const meta = document.createElement("span");
@@ -456,10 +526,21 @@
     option.type = "button";
     option.className = "scope-option";
     option.dataset.selected = String(Boolean(selected));
+    if (severity) option.dataset.severity = severity;
+    Object.entries(automation).forEach(([name, value]) => {
+      if (value !== undefined && value !== null) option.dataset[name] = String(value);
+    });
     option.setAttribute("aria-pressed", String(Boolean(selected)));
     name.textContent = title;
     meta.textContent = detail;
     option.append(name, meta);
+    if (icon) {
+      const glyph = document.createElement("span");
+      glyph.className = "scope-option-icon";
+      glyph.setAttribute("aria-hidden", "true");
+      glyph.textContent = icon;
+      option.append(glyph);
+    }
     option.addEventListener("click", onSelect);
     return option;
   }
@@ -474,7 +555,9 @@
   function truckLocationSummary(session) {
     const truckLocation = data.cleanTruckLocation(session?.truckLocation);
     if (truckLocation.x === null || truckLocation.y === null) {
-      return { message: "Enter X and Y for this session.", state: "idle" };
+      // The two empty fields say this themselves; a line of prose under them
+      // only repeated their labels.
+      return { message: "", state: "idle" };
     }
 
     const comparisons = (session.photos || [])
@@ -501,7 +584,6 @@
   function createTruckLocationForm(descriptor, session) {
     const form = document.createElement("form");
     const fieldset = document.createElement("fieldset");
-    const legend = document.createElement("legend");
     const xLabel = document.createElement("label");
     const xText = document.createElement("span");
     const xInput = document.createElement("input");
@@ -519,8 +601,9 @@
 
     form.className = "truck-location-form";
     form.dataset.sessionKey = descriptor.key;
+    // No visible legend: the pane is already the session's, and the two labelled
+    // fields say what they are. The name stays on the form for assistive tech.
     form.setAttribute("aria-label", `Truck location for ${session.label} session`);
-    legend.textContent = "Truck location";
 
     xText.textContent = "X · longitude";
     xInput.id = `truck-location-x-${descriptor.key}`;
@@ -551,15 +634,16 @@
     yLabel.append(yText, yInput);
 
     coordinateStatus.className = "truck-location-status";
-    coordinateStatus.textContent = busy ? "Saving truck location…" : summary.message;
+    coordinateStatus.textContent = busy ? "Saving…" : summary.message;
     coordinateStatus.dataset.state = busy ? "loading" : summary.state;
+    coordinateStatus.hidden = !coordinateStatus.textContent;
     coordinateStatus.setAttribute("role", "status");
     coordinateStatus.setAttribute("aria-live", "polite");
 
     formActions.className = "truck-location-actions";
     saveButton.className = "button button-primary truck-location-save";
     saveButton.type = "submit";
-    saveButton.textContent = "Save truck location";
+    saveButton.textContent = "Save";
     saveButton.disabled = busy;
     clearButton.className = "button button-quiet truck-location-clear";
     clearButton.type = "button";
@@ -572,50 +656,252 @@
       saveTruckLocation(event, descriptor, controls, { clear: true }),
     );
 
-    fieldset.append(legend, xLabel, yLabel);
+    fieldset.append(xLabel, yLabel);
     formActions.append(saveButton, clearButton);
     form.append(fieldset, coordinateStatus, formActions);
     return form;
   }
 
-  function createSessionScopeCard(view, session) {
-    const card = document.createElement("div");
-    const actions = document.createElement("div");
-    const renameButton = document.createElement("button");
-    const deleteButton = document.createElement("button");
+  // A row, not a card. Rename, delete and the truck coordinates belong to the
+  // session being looked at, so they are drawn once in the detail pane rather
+  // than three times over inside the rail — which is what made a step holding
+  // three fixed periods want seven hundred pixels of a sticky column.
+  function createSessionScopeOption(view, session) {
     const range = sessionRange(session);
-    const descriptor = sessionDescriptorFor(view.location, view.dateGroup, session);
+    const summary = sessionWeatherSummary(view, session);
+    return createScopeOption({
+      title: range ? `${session.label} · ${range}` : session.label,
+      detail: [
+        plural(countWorkers(session.entries), "worker"),
+        plural(session.photos.length, "photo"),
+        describeSessionWeather(summary),
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      icon: summary && weather ? weather.weatherIcon(summary) : null,
+      selected: session.id === view.session?.id,
+      // A stormy or wet session is marked in the rail, so a reader scanning the
+      // day sees which one to ask about before opening it.
+      severity: weather?.delaysLikely(summary) ? summary.severity : null,
+      automation: {
+        scopeKind: "session",
+        locationKey: view.location?.locationKey,
+        dateKey: view.dateGroup?.dateKey,
+        sessionId: session.id,
+        weather: summary?.severity || null,
+      },
+      onSelect: () => {
+        selection.sessionId = session.id;
+        renderDashboard();
+      },
+    });
+  }
 
-    card.className = "scope-session-card";
-    actions.className = "session-option-actions";
-    renameButton.type = "button";
-    renameButton.className = "session-option-action session-option-rename";
-    renameButton.textContent = "Rename";
-    renameButton.setAttribute("aria-label", `Rename ${session.label} session`);
-    renameButton.disabled = sessionActionBusy;
-    deleteButton.type = "button";
-    deleteButton.className = "session-option-action session-option-delete";
-    deleteButton.textContent = "Delete";
-    deleteButton.setAttribute("aria-label", `Delete ${session.label} session`);
-    deleteButton.disabled = sessionActionBusy;
+  // ---------------------------------------------------------------------------
+  // Weather
+  // ---------------------------------------------------------------------------
 
-    renameButton.addEventListener("click", () => openRenameDialog(descriptor));
-    deleteButton.addEventListener("click", () => deleteSelectedSession(descriptor));
-    actions.append(renameButton, deleteButton);
-    card.append(
-      createScopeOption({
-        title: range ? `${session.label} · ${range}` : session.label,
-        detail: `${plural(countWorkers(session.entries), "worker")} · ${plural(session.photos.length, "photo")}`,
-        selected: session.id === view.session?.id,
-        onSelect: () => {
-          selection.sessionId = session.id;
-          renderDashboard();
-        },
-      }),
-      actions,
-      createTruckLocationForm(descriptor, session),
+  function weatherDayKey(location, dateGroup) {
+    return `${location?.locationKey || ""}|${dateGroup?.dateKey || ""}`;
+  }
+
+  // Asks the sky about one site on one day, once. The rail is drawn again when
+  // the answer lands, so nothing waits on the network to appear.
+  // A session's weather is final once its hours have passed and it has been
+  // written down. Anything else is still worth asking about.
+  function sessionWeatherIsFinal(dateGroup, session) {
+    const stored = session?.weather;
+    if (!stored) return false;
+    if (!stored.provisional) return true;
+    // A provisional reading was partly forecast; it stands only until the
+    // session's own hours are over.
+    return !weather.sessionWindowEnded({ dateKey: dateGroup.dateKey, toHour: session.toHour });
+  }
+
+  function ensureDayWeather(location, dateGroup) {
+    if (!weather || !location?.point || !dateGroup) return null;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateGroup.dateKey)) return null;
+
+    // Every session already written down and final: the day needs no network.
+    if ((dateGroup.sessions || []).every((session) => sessionWeatherIsFinal(dateGroup, session))) {
+      return null;
+    }
+
+    const key = weatherDayKey(location, dateGroup);
+    const cached = weatherDays.get(key);
+    if (cached) return cached;
+
+    const entry = { status: "loading", rows: [] };
+    weatherDays.set(key, entry);
+    weather
+      .fetchDayWeather({
+        latitude: location.point.latitude,
+        longitude: location.point.longitude,
+        dateKey: dateGroup.dateKey,
+      })
+      .then(async (rows) => {
+        entry.status = "ready";
+        entry.rows = rows;
+        renderDashboard();
+        await recordDayWeather(location, dateGroup, rows);
+      })
+      .catch((error) => {
+        entry.status = "failed";
+        entry.error = error;
+        telemetry?.event(
+          "dashboard.weather.failed",
+          {
+            errorCode: telemetry.safeErrorCode(error, "weather_unavailable"),
+            status: "failed",
+          },
+          { dedupeMs: 300000 },
+        );
+        renderDashboard();
+      });
+    return entry;
+  }
+
+  function sessionWeatherSummary(view, session) {
+    if (!weather) return null;
+    // What was written down at the time is the record. Only a session without
+    // one is read from the day just fetched.
+    const stored = weather.restoreSessionWeather(session?.weather);
+    if (stored) return stored;
+
+    const entry = weatherDays.get(weatherDayKey(view.location, view.dateGroup));
+    if (!entry || entry.status !== "ready") return null;
+    return weather.summarizeSessionWeather(entry.rows, {
+      dateKey: view.dateGroup.dateKey,
+      fromHour: session.fromHour,
+      toHour: session.toHour,
+    });
+  }
+
+  // Writes a day's readings against the sessions they belong to, so the next
+  // reader — and the next device — sees the same weather without asking again.
+  async function recordDayWeather(location, dateGroup, rows) {
+    if (!cloud?.updateSessionWeather || !signedInUser || rows.length === 0) return;
+
+    const pending = (dateGroup.sessions || []).filter(
+      (session) => !sessionWeatherIsFinal(dateGroup, session) && !weatherWrites.has(session.key),
     );
-    return card;
+    if (pending.length === 0) return;
+
+    let wrote = false;
+    for (const session of pending) {
+      const summary = weather.summarizeSessionWeather(rows, {
+        dateKey: dateGroup.dateKey,
+        fromHour: session.fromHour,
+        toHour: session.toHour,
+      });
+      // A session the service has no hours for is not a session that was fine,
+      // so nothing is written for it. The cost it carries is written with it, so
+      // a stored reading never has to be re-judged.
+      if (summary.severity === "unknown") continue;
+
+      weatherWrites.add(session.key);
+      try {
+        await cloud.updateSessionWeather(
+          {
+            location: location.location,
+            locationKey: location.locationKey,
+            dateKey: dateGroup.dateKey,
+            sessionId: session.id,
+          },
+          {
+            ...summary,
+            provisional: !weather.sessionWindowEnded({
+              dateKey: dateGroup.dateKey,
+              toHour: session.toHour,
+            }),
+            recordedAtMs: Date.now(),
+          },
+        );
+        wrote = true;
+      } catch (error) {
+        // A reading that could not be saved is still on screen; it will be
+        // written the next time the day is opened.
+        weatherWrites.delete(session.key);
+        telemetry?.event(
+          "dashboard.weather.save_failed",
+          {
+            errorCode: telemetry.safeErrorCode(error, "weather_save_failed"),
+            status: "failed",
+          },
+          { dedupeMs: 300000 },
+        );
+      }
+    }
+
+    if (wrote) await loadDashboardSessions();
+  }
+
+  // Beside the session in the rail: short enough to sit under the counts.
+  function describeSessionWeather(summary) {
+    return weather ? weather.describeSessionWeather(summary) : "";
+  }
+
+  function renderSessionWeather(view) {
+    if (!sessionWeather) return;
+    sessionWeather.replaceChildren();
+
+    const entry = weatherDays.get(weatherDayKey(view.location, view.dateGroup));
+    const summary = view.session ? sessionWeatherSummary(view, view.session) : null;
+    const failed = entry?.status === "failed";
+    // A reading — written down or just fetched — is shown. A failure says so.
+    // Anything else is still on its way, and the panel stays out of the way.
+    const hidden = !view.session || (!summary && !failed);
+    sessionWeather.hidden = hidden;
+    if (hidden) return;
+
+    // A reading that was written down stands even if today's lookup failed.
+    const unavailable = failed && !summary;
+    const severity = unavailable ? "unavailable" : summary?.severity || "unknown";
+
+    const row = document.createElement("div");
+    row.className = "session-weather-row";
+    row.dataset.severity = severity;
+
+    const icon = document.createElement("span");
+    icon.className = "weather-icon";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = unavailable ? "—" : weather.weatherIcon(summary);
+
+    // "Drizzle, low impact": what it was and what it cost, in one glance.
+    const badge = document.createElement("span");
+    badge.className = "weather-badge";
+    badge.dataset.severity = severity;
+    badge.textContent = unavailable
+      ? "Weather unavailable"
+      : describeSessionWeather(summary) || "No record";
+    row.append(icon, badge);
+
+    // A warning only when the weather earns one, and in as few words.
+    if (summary?.delayNote) {
+      const note = document.createElement("span");
+      note.className = "weather-delay";
+      note.dataset.severity = summary.severity;
+      note.textContent = summary.delayNote;
+      row.append(note);
+    }
+    sessionWeather.append(row);
+
+    // The figures behind the statement, for a reader who wants to check it.
+    const figures = weather.describeWeatherFigures(summary);
+    if (figures) {
+      const detail = document.createElement("p");
+      detail.className = "weather-figures";
+      detail.textContent = figures;
+      sessionWeather.append(detail);
+    }
+  }
+
+  // Says so plainly when a site is more than one recorded address, so a reader
+  // who expected two rows can see why there is one.
+  function describeAliases(aliases) {
+    if (!aliases || aliases.length === 0) return "";
+    if (aliases.length === 1) return `also ${aliases[0]}`;
+    return `${aliases.length} nearby addresses`;
   }
 
   function sessionRange(session) {
@@ -635,10 +921,12 @@
     dateOptions.replaceChildren();
     sessionOptions.replaceChildren();
 
+    if (dateStep) dateStep.hidden = !view.location;
+    if (sessionStep) sessionStep.hidden = !view.dateGroup;
+
     if (scope.length === 0) {
       locationOptions.append(createScopeEmpty("No sites have reported yet."));
-      dateOptions.append(createScopeEmpty("Pick a location first."));
-      sessionOptions.append(createScopeEmpty("Pick a date first."));
+      renderDatePicker([], view);
       return;
     }
 
@@ -646,44 +934,68 @@
       locationOptions.append(
         createScopeOption({
           title: location.location,
-          detail: `${plural(location.dates.length, "day")} · ${plural(location.photos.length, "photo")}`,
+          detail: [
+            plural(location.dates.length, "day"),
+            plural(location.photos.length, "photo"),
+            describeAliases(location.aliases),
+          ]
+            .filter(Boolean)
+            .join(" · "),
           selected: location.locationKey === view.location?.locationKey,
+          automation: { scopeKind: "location", locationKey: location.locationKey },
           onSelect: () => {
             selection.locationKey = location.locationKey;
             selection.dateKey = null;
-            selection.sessionId = "all";
+            selection.sessionId = null;
             renderDashboard();
           },
         }),
       );
     });
 
-    (view.location?.dates || []).forEach((dateGroup) => {
+    const dates = view.location?.dates || [];
+    renderDatePicker(dates, view);
+
+    // A step that is not on screen has nothing to say.
+    if (!view.location) return;
+
+    // The selected day keeps its button even when it is old enough to have
+    // fallen out of the recent few, so the rail never shows nothing chosen.
+    const recent = dates.slice(0, RECENT_DATE_LIMIT);
+    const selectedDate = dates.find((entry) => entry.dateKey === view.dateGroup?.dateKey);
+    if (selectedDate && !recent.includes(selectedDate)) {
+      recent.push(selectedDate);
+    }
+
+    recent.forEach((dateGroup) => {
       dateOptions.append(
         createScopeOption({
           title: formatDate(dateGroup.dateKey),
           detail: `${plural(countWorkers(dateGroup.entries), "worker")} · ${plural(dateGroup.photos.length, "photo")}`,
           selected: dateGroup.dateKey === view.dateGroup?.dateKey,
-          onSelect: () => {
-            selection.dateKey = dateGroup.dateKey;
-            selection.sessionId = "all";
-            renderDashboard();
+          automation: {
+            scopeKind: "date",
+            locationKey: view.location.locationKey,
+            dateKey: dateGroup.dateKey,
           },
+          onSelect: () => selectDate(dateGroup.dateKey),
         }),
       );
     });
 
-    if (!view.dateGroup) {
-      dateOptions.append(createScopeEmpty("Pick a location first."));
-      sessionOptions.append(createScopeEmpty("Pick a date first."));
-      return;
-    }
+    if (!view.dateGroup) return;
 
     sessionOptions.append(
       createScopeOption({
         title: "Whole day",
         detail: `${plural(countWorkers(view.dateGroup.entries), "worker")} · ${plural(view.dateGroup.photos.length, "photo")}`,
-        selected: !view.session,
+        selected: selection.sessionId === "all",
+        automation: {
+          scopeKind: "session",
+          locationKey: view.location.locationKey,
+          dateKey: view.dateGroup.dateKey,
+          sessionId: "all",
+        },
         onSelect: () => {
           selection.sessionId = "all";
           renderDashboard();
@@ -692,16 +1004,75 @@
     );
 
     view.dateGroup.sessions.forEach((session) => {
-      sessionOptions.append(createSessionScopeCard(view, session));
+      sessionOptions.append(createSessionScopeOption(view, session));
     });
   }
 
-  function renderBreadcrumb(view) {
-    if (!view.location) {
-      scopeBreadcrumb.textContent = "No location has reported attendance or photos yet.";
+  function selectDate(dateKey) {
+    selection.dateKey = dateKey;
+    selection.sessionId = null;
+    renderDashboard();
+  }
+
+  // Dates arrive newest first, and only the real calendar ones can be typed into
+  // a date field — a photograph with an unreadable timestamp is grouped under
+  // "unknown-date" and stays reachable through its button alone.
+  function renderDatePicker(dates, view) {
+    if (!datePicker) return;
+
+    const calendarDates = dates
+      .map((dateGroup) => dateGroup.dateKey)
+      .filter((dateKey) => /^\d{4}-\d{2}-\d{2}$/.test(dateKey));
+    const selectedKey = view.dateGroup?.dateKey || "";
+
+    datePicker.disabled = calendarDates.length === 0;
+    datePicker.value = /^\d{4}-\d{2}-\d{2}$/.test(selectedKey) ? selectedKey : "";
+    if (calendarDates.length > 0) {
+      datePicker.min = calendarDates[calendarDates.length - 1];
+      datePicker.max = calendarDates[0];
+    } else {
+      datePicker.removeAttribute?.("min");
+      datePicker.removeAttribute?.("max");
+    }
+
+    if (!dateHint) return;
+    if (dates.length === 0) {
+      dateHint.textContent = "Pick a location first.";
+      dateHint.dataset.state = "idle";
       return;
     }
-    const parts = [view.location.location, formatDate(view.dateGroup?.dateKey)];
+    const hidden = Math.max(0, dates.length - RECENT_DATE_LIMIT);
+    dateHint.textContent = hidden
+      ? `${plural(dates.length, "day")} recorded — the newest are below.`
+      : `${plural(dates.length, "day")} recorded.`;
+    dateHint.dataset.state = "idle";
+  }
+
+  function handleDatePicked() {
+    const chosen = String(datePicker?.value || "");
+    if (!chosen) return;
+
+    const view = resolveSelection(buildScope());
+    const match = (view.location?.dates || []).find((entry) => entry.dateKey === chosen);
+    if (!match) {
+      // Left selected rather than reverted, so the reader can see which day they
+      // asked for while being told there is nothing under it.
+      if (dateHint) {
+        dateHint.textContent = `No check-ins or photos on ${formatDate(chosen)}.`;
+        dateHint.dataset.state = "error";
+      }
+      return;
+    }
+
+    selectDate(match.dateKey);
+  }
+
+  function renderBreadcrumb(view, scope) {
+    if (!isScopeChosen(view)) {
+      scopeBreadcrumb.textContent = scopeGuidance(view, scope);
+      return;
+    }
+    const parts = [view.location.location, formatDate(view.dateGroup.dateKey)];
     parts.push(view.session ? `${view.session.label} session` : "Whole day");
     scopeBreadcrumb.textContent = parts.join(" · ");
   }
@@ -722,14 +1093,6 @@
     return sessionDescriptorFor(view.location, view.dateGroup, view.session);
   }
 
-  function findSessionView(descriptor) {
-    const scope = buildScope();
-    const location = scope.find((entry) => entry.locationKey === descriptor?.locationKey) || null;
-    const dateGroup = location?.dates.find((entry) => entry.dateKey === descriptor?.dateKey) || null;
-    const session = dateGroup?.sessions.find((entry) => entry.id === descriptor?.sessionId) || null;
-    return { location, dateGroup, session };
-  }
-
   function refreshSessionControls() {
     const scope = buildScope();
     const view = resolveSelection(scope);
@@ -741,7 +1104,30 @@
     const descriptor = sessionDescriptor(view);
     sessionActions.hidden = !descriptor;
     sessionRenameButton.disabled = sessionActionBusy || !descriptor;
-    sessionDeleteButton.disabled = sessionActionBusy || !descriptor;
+    // Each level can only be deleted once something is chosen at it.
+    setDeleteButtonState(locationDeleteButton, scopeDescriptor(view, "location"));
+    setDeleteButtonState(dateDeleteButton, scopeDescriptor(view, "date"));
+    setDeleteButtonState(sessionDeleteButton, scopeDescriptor(view, "session"));
+  }
+
+  function setDeleteButtonState(button, descriptor) {
+    if (!button) return;
+    button.disabled = sessionActionBusy || !descriptor;
+    if (descriptor) {
+      button.title = `Delete ${descriptor.label}`;
+    } else {
+      button.removeAttribute?.("title");
+    }
+  }
+
+  function renderTruckLocation(view) {
+    if (!sessionTruckLocation) return;
+
+    const descriptor = sessionDescriptor(view);
+    sessionTruckLocation.replaceChildren();
+    sessionTruckLocation.hidden = !descriptor;
+    if (!descriptor || !view.session) return;
+    sessionTruckLocation.append(createTruckLocationForm(descriptor, view.session));
   }
 
   function renderAttendance(view) {
@@ -771,14 +1157,57 @@
     workers.forEach((worker) => attendanceList.append(createAttendanceRow(worker)));
   }
 
+  // The photographs, the attendance and the truck fields all belong to one
+  // chosen session, so none of them is drawn until the rail has been answered.
+  function renderDetailReveal(view, scope) {
+    const chosen = isScopeChosen(view);
+    if (detailColumn) detailColumn.hidden = !chosen;
+    if (photosPanel) photosPanel.hidden = !chosen;
+    if (scopeGuidanceLine) {
+      scopeGuidanceLine.hidden = chosen;
+      scopeGuidanceLine.textContent = chosen ? "" : scopeGuidance(view, scope);
+    }
+    return chosen;
+  }
+
   function renderDashboard() {
     const scope = buildScope();
     const view = resolveSelection(scope);
+    ensureDayWeather(view.location, view.dateGroup);
     renderScopeRail(scope, view);
-    renderBreadcrumb(view);
+    renderBreadcrumb(view, scope);
     renderSessionActions(view);
+    if (!renderDetailReveal(view, scope)) {
+      // Nothing below is on screen, so nothing below needs building.
+      clearDetail();
+      return;
+    }
+    renderSessionWeather(view);
+    renderTruckLocation(view);
     renderAttendance(view);
     renderPhotos(view);
+  }
+
+  // An unanswered rail leaves no stale session's photographs or totals behind.
+  function clearDetail() {
+    // The guidance panel is saying what to do next, so the status line does not
+    // repeat it, and it stops claiming to be loading once the fetch is done.
+    if (!photoLoadFailed && !loading) setStatus("");
+    if (sessionWeather) {
+      sessionWeather.replaceChildren();
+      sessionWeather.hidden = true;
+    }
+    if (sessionTruckLocation) {
+      sessionTruckLocation.replaceChildren();
+      sessionTruckLocation.hidden = true;
+    }
+    attendanceList.replaceChildren();
+    presentWorkerCount.textContent = "0";
+    attendanceCheckinCount.textContent = "0";
+    library.replaceChildren();
+    library.hidden = true;
+    toolbar.hidden = true;
+    loadMoreRow.hidden = true;
   }
 
   async function loadDashboardSessions() {
@@ -859,28 +1288,111 @@
     }
   }
 
-  async function deleteSelectedSession(requestedSession = null) {
+  // The three levels differ only in how much they take and what is left selected
+  // afterwards, so they are one path rather than three near-copies. `node` is the
+  // location, day or session being removed, and carries the check-ins and photos
+  // that belong to it.
+  function scopeDescriptor(view, level) {
+    if (!view.location) return null;
+    const locationKeys = [view.location.locationKey, ...(view.location.aliasKeys || [])];
+    if (level === "location") {
+      return {
+        level,
+        node: view.location,
+        label: view.location.location,
+        location: view.location.location,
+        locationKey: view.location.locationKey,
+        locationKeys,
+      };
+    }
+    if (!view.dateGroup) return null;
+    if (level === "date") {
+      return {
+        level,
+        node: view.dateGroup,
+        label: `${formatDate(view.dateGroup.dateKey)} at ${view.location.location}`,
+        location: view.location.location,
+        locationKey: view.location.locationKey,
+        locationKeys,
+        dateKey: view.dateGroup.dateKey,
+      };
+    }
+    const session = sessionDescriptor(view);
+    return session ? { ...session, level: "session", locationKeys, node: view.session } : null;
+  }
+
+  // Said plainly and with the counts, because none of this comes back.
+  function describeDeletion(descriptor) {
+    const checkIns = plural(descriptor.node.entries.length, "check-in");
+    const photoCount = plural(descriptor.node.photos.length, "photo");
+    if (descriptor.level === "location") {
+      const days = plural(descriptor.node.dates.length, "day");
+      return `Permanently delete ${descriptor.label} and everything recorded there — ${days}, ${checkIns} and ${photoCount}? This cannot be undone.`;
+    }
+    if (descriptor.level === "date") {
+      return `Permanently delete ${descriptor.label}, including every time session in it — ${checkIns} and ${photoCount}? This cannot be undone.`;
+    }
+    return `Permanently delete ${descriptor.label} and all of its attendance check-ins and photos? This cannot be undone.`;
+  }
+
+  // What the rail should show once the thing being looked at is gone: the level
+  // above it, which always survives its own children.
+  function selectionAfterDeletion(descriptor) {
+    if (descriptor.level === "location") {
+      return { locationKey: null, dateKey: null, sessionId: "all" };
+    }
+    if (descriptor.level === "date") {
+      return { locationKey: descriptor.locationKey, dateKey: null, sessionId: "all" };
+    }
+    return {
+      locationKey: descriptor.locationKey,
+      dateKey: descriptor.dateKey,
+      sessionId: "all",
+    };
+  }
+
+  // Every session key the deleted scope covered, so a name or truck coordinate
+  // cached against it is forgotten with it.
+  function deletedSessionKeys(descriptor, deleted) {
+    const keys = new Set(deleted.sessionKeys || []);
+    if (descriptor.level === "session") {
+      keys.add(descriptor.key);
+      return keys;
+    }
+    const dateGroups = descriptor.level === "location"
+      ? descriptor.node.dates
+      : [descriptor.node];
+    dateGroups.forEach((dateGroup) => {
+      dateGroup.sessions.forEach((session) => keys.add(session.key));
+    });
+    return keys;
+  }
+
+  async function deleteSelectedScope(level) {
     if (sessionActionBusy) return;
-    const selectedView = resolveSelection(buildScope());
-    const descriptor = requestedSession || sessionDescriptor(selectedView);
-    const view = requestedSession ? findSessionView(requestedSession) : selectedView;
-    if (!descriptor || !view.session) return;
-    const confirmed = window.confirm?.(
-      `Permanently delete ${descriptor.label} and all of its attendance check-ins and photos? This cannot be undone.`,
-    );
-    if (!confirmed) return;
+    const descriptor = scopeDescriptor(resolveSelection(buildScope()), level);
+    if (!descriptor) return;
+    if (!window.confirm?.(describeDeletion(descriptor))) return;
 
     sessionActionBusy = true;
     refreshSessionControls();
     setStatus(`Deleting ${descriptor.label}…`);
     try {
-      const deleted = await cloud.deleteSession(descriptor);
+      const deleted = await cloud.deleteScope({
+        location: descriptor.location,
+        locationKey: descriptor.locationKey,
+        locationKeys: descriptor.locationKeys,
+        dateKey: descriptor.dateKey,
+        sessionId: descriptor.sessionId,
+      });
+      // The scope's own rows are dropped alongside the ids the cloud reports, so
+      // the rail is right even where the two disagree.
       const attendanceIds = new Set([
-        ...view.session.entries.map((entry) => entry.eventId),
+        ...descriptor.node.entries.map((entry) => entry.eventId),
         ...(deleted.attendanceEventIds || []),
       ]);
       const photoIds = new Set([
-        ...view.session.photos.map((photo) => photo.id),
+        ...descriptor.node.photos.map((photo) => photo.id),
         ...(deleted.photoIds || []),
       ]);
       attendance = attendance.filter((entry) => !attendanceIds.has(entry.eventId));
@@ -890,19 +1402,13 @@
         pendingUrl?.then?.((url) => URL.revokeObjectURL(url)).catch?.(() => {});
         photoUrls.delete(photoId);
       });
-      dashboardSessions.delete(descriptor.key);
-      if (
-        selection.locationKey === descriptor.locationKey &&
-        selection.dateKey === descriptor.dateKey &&
-        selection.sessionId === descriptor.sessionId
-      ) {
-        selection.sessionId = "all";
-      }
+      deletedSessionKeys(descriptor, deleted).forEach((key) => dashboardSessions.delete(key));
+      Object.assign(selection, selectionAfterDeletion(descriptor));
       renderDashboard();
       setStatus(
         `Deleted ${descriptor.label}: ${plural(deleted.attendanceDeleted, "check-in")} and ${plural(deleted.photoDeleted, "photo")}.`,
       );
-      telemetry?.event("dashboard.session.deleted", {
+      telemetry?.event(`dashboard.${descriptor.level}.deleted`, {
         checkInCount: deleted.attendanceDeleted,
         photoCount: deleted.photoDeleted,
         status: "success",
@@ -910,8 +1416,11 @@
     } catch (error) {
       setStatus(`${describeError(error)} Deletion may be incomplete; refresh before retrying.`, "error");
       telemetry?.event(
-        "dashboard.session.delete_failed",
-        { errorCode: telemetry.safeErrorCode(error, "session_delete_failed"), status: "failed" },
+        `dashboard.${descriptor.level}.delete_failed`,
+        {
+          errorCode: telemetry.safeErrorCode(error, `${descriptor.level}_delete_failed`),
+          status: "failed",
+        },
         { immediate: true },
       );
     } finally {
@@ -1154,6 +1663,7 @@
     } catch (error) {
       controls.coordinateStatus.textContent = error.message;
       controls.coordinateStatus.dataset.state = "error";
+      controls.coordinateStatus.hidden = false;
       return;
     }
 
@@ -1162,10 +1672,9 @@
     controls.clearButton.disabled = true;
     controls.xInput.disabled = true;
     controls.yInput.disabled = true;
-    controls.coordinateStatus.textContent = options.clear
-      ? "Clearing truck location…"
-      : "Saving truck location…";
+    controls.coordinateStatus.textContent = options.clear ? "Clearing…" : "Saving…";
     controls.coordinateStatus.dataset.state = "loading";
+    controls.coordinateStatus.hidden = false;
     const traceId = telemetry?.createTraceId();
     let completed = false;
 
@@ -1189,6 +1698,7 @@
     } catch (error) {
       controls.coordinateStatus.textContent = describeError(error);
       controls.coordinateStatus.dataset.state = "error";
+      controls.coordinateStatus.hidden = false;
       telemetry?.event(
         "dashboard.session.truck_location.failed",
         {
@@ -1308,6 +1818,10 @@
           : `${visible.length} of ${plural(scoped, "photo")}`,
       );
     }
+    // The gallery and its filter were put away while the rail was unanswered;
+    // drawing a scope's photographs brings them back.
+    toolbar.hidden = false;
+    library.hidden = false;
     loadMoreRow.hidden = photoLoadFailed || !hasMore;
   }
 
@@ -1385,7 +1899,7 @@
       photoLoadFailed = false;
       selection.locationKey = null;
       selection.dateKey = null;
-      selection.sessionId = "all";
+      selection.sessionId = null;
       attendanceWorkerFilter.value = "all";
       updateAttendanceWorkerOptions([]);
       library.replaceChildren();
@@ -1395,6 +1909,23 @@
       attendanceList.replaceChildren();
       scopeBreadcrumb.textContent = "";
       sessionActions.hidden = true;
+      // Nothing is selected at any level once the rail is empty, so nothing can
+      // be deleted from it either.
+      [locationDeleteButton, dateDeleteButton, sessionDeleteButton].forEach((button) =>
+        setDeleteButtonState(button, null),
+      );
+      if (sessionTruckLocation) {
+        sessionTruckLocation.replaceChildren();
+        sessionTruckLocation.hidden = true;
+      }
+      if (datePicker) {
+        datePicker.value = "";
+        datePicker.disabled = true;
+      }
+      if (dateHint) {
+        dateHint.textContent = "";
+        dateHint.dataset.state = "idle";
+      }
       presentWorkerCount.textContent = "0";
       attendanceCheckinCount.textContent = "0";
       attendanceStatus.textContent = "";
@@ -1438,8 +1969,11 @@
   filter.addEventListener("change", renderDashboard);
   attendanceWorkerFilter.addEventListener("change", renderDashboard);
   attendanceRefresh.addEventListener("click", loadAttendance);
+  datePicker?.addEventListener("change", handleDatePicked);
   sessionRenameButton.addEventListener("click", () => openRenameDialog());
-  sessionDeleteButton.addEventListener("click", () => deleteSelectedSession());
+  locationDeleteButton?.addEventListener("click", () => deleteSelectedScope("location"));
+  dateDeleteButton?.addEventListener("click", () => deleteSelectedScope("date"));
+  sessionDeleteButton.addEventListener("click", () => deleteSelectedScope("session"));
   sessionRenameForm.addEventListener("submit", renameSelectedSession);
   sessionRenameCancel.addEventListener("click", closeRenameDialog);
   themeToggle?.addEventListener("click", toggleTheme);

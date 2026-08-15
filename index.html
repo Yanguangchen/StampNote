@@ -14,7 +14,17 @@
     <link rel="manifest" href="manifest.json" />
     <link rel="icon" href="icons/stampnote.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="icons/stampnote-180.png" sizes="180x180" />
-    <link rel="stylesheet" href="styles.css?v=20260815-1" />
+    <link
+      rel="preload"
+      href="vendor/fonts/outfit-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="vendor/fonts/outfit.css" />
+    <link rel="stylesheet" href="sidebar.css" />
+    <link rel="stylesheet" href="styles.css?v=20260816-4" />
+    <script src="sidebar.js" defer></script>
     <script src="observability.js" defer></script>
     <script src="address-service.js" defer></script>
     <script src="stamp.js" defer></script>
@@ -29,14 +39,16 @@
     <script src="auto-capture.js" defer></script>
     <script src="pose-mapping.js" defer></script>
     <script src="photo-cloud.js" defer></script>
-    <script src="firebase.js" defer></script>
+    <script src="firebase.js?v=20260816-2" defer></script>
     <!-- A module, because the vendored MediaPipe runtime is one. It only
          registers a loader; nothing is downloaded until the watch is started. -->
     <script src="pose-model.js" type="module"></script>
-    <script src="app.js?v=20260815-1" defer></script>
-    <script src="orbit.js?v=20260815-1" defer></script>
+    <script src="app.js?v=20260816-4" defer></script>
+    <script src="orbit.js?v=20260816-1" defer></script>
   </head>
   <body>
+    <header class="capture-header" data-sidebar-mount aria-label="Page navigation"></header>
+
     <main class="stage" aria-labelledby="monitor-title">
       <h1 id="monitor-title" class="visually-hidden">StampNote auto capture</h1>
 
@@ -218,7 +230,7 @@
               <path d="m12 3 1.3 4.2L17.5 8.5l-4.2 1.3L12 14l-1.3-4.2-4.2-1.3 4.2-1.3L12 3z" />
               <path d="m18.3 14.2.7 2.3 2.3.7-2.3.7-.7 2.3-.7-2.3-2.3-.7 2.3-.7.7-2.3z" />
             </svg>
-            <span class="hint">Review photos with AI</span>
+            <span class="hint">Review</span>
           </button>
 
           <button
@@ -232,7 +244,7 @@
               <path d="M6.2 21V4.1" />
               <path d="M6.2 5.1h11.9l-2.3 4 2.3 4H6.2z" />
             </svg>
-            <span class="hint">Show AI review bin</span>
+            <span class="hint">Flags</span>
           </button>
 
           <button class="tool tool-small tool-danger" id="ai-review-purge" type="button" hidden>
@@ -242,7 +254,7 @@
               <path d="M5.3 7.4 6.2 19a1.5 1.5 0 0 0 1.5 1.4h3.6A1.5 1.5 0 0 0 12.8 19l.9-11.6" />
               <path d="m18.4 3.4.9 2.8 2.8.9-2.8.9-.9 2.8-.9-2.8-2.8-.9 2.8-.9.9-2.8z" />
             </svg>
-            <span class="hint">Delete AI flags permanently</span>
+            <span class="hint">Delete</span>
           </button>
 
           <span class="reel-actions-divider" aria-hidden="true"></span>
@@ -264,7 +276,7 @@
               <path d="M10.4 10.2v6.6" />
               <path d="M13.6 10.2v6.6" />
             </svg>
-            <span class="hint">Delete every photo</span>
+            <span class="hint">Delete</span>
           </button>
         </div>
       </div>
@@ -282,31 +294,30 @@
             <rect x="8" y="8" width="11.5" height="11.5" rx="2" />
             <path d="m9.2 17.4 3.3-3.3a1.4 1.4 0 0 1 2 0l2.6 2.6" />
           </svg>
-          <span class="hint">Choose</span>
+          <span class="hint">Gallery</span>
         </label>
 
-        <a class="tool" id="worker-onboarding" href="onboarding.html">
-          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <circle cx="9.2" cy="8.1" r="3.1" />
-            <path d="M3.8 19.1c.5-3.4 2.2-5.1 5.4-5.1s4.9 1.7 5.4 5.1" />
-            <path d="M18.3 10.8v6.4M15.1 14h6.4" />
-          </svg>
-          <span class="hint">Enroll worker faces</span>
-        </a>
       </div>
 
-      <button class="record" id="monitor-toggle" type="button" aria-pressed="false">
+      <button
+        class="record"
+        id="monitor-toggle"
+        type="button"
+        aria-label="Start camera"
+        aria-pressed="false"
+      >
         <svg
-          class="icon record-icon"
+          class="icon record-icon record-icon-camera"
           id="monitor-icon-start"
           viewBox="0 0 24 24"
           aria-hidden="true"
           focusable="false"
         >
-          <circle cx="12" cy="12" r="8" />
+          <path d="M4.2 8.1h3l1.5-2.2h6.6l1.5 2.2h3a1.7 1.7 0 0 1 1.7 1.7v8.1a1.7 1.7 0 0 1-1.7 1.7H4.2a1.7 1.7 0 0 1-1.7-1.7V9.8a1.7 1.7 0 0 1 1.7-1.7z" />
+          <circle cx="12" cy="13.5" r="3.5" />
         </svg>
         <svg
-          class="icon record-icon"
+          class="icon record-icon record-icon-stop"
           id="monitor-icon-stop"
           viewBox="0 0 24 24"
           aria-hidden="true"
@@ -315,34 +326,26 @@
         >
           <rect x="7" y="7" width="10" height="10" rx="2.5" />
         </svg>
-        <span class="hint" id="monitor-toggle-name">Start auto capture</span>
+        <span class="hint" id="monitor-toggle-name">Camera</span>
       </button>
 
       <div class="toolbar-group toolbar-group-end">
-        <button class="tool" id="cloud-auth" type="button">
+        <button class="tool" id="cloud-auth" type="button" aria-label="Sign in to account">
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path d="M7.2 18.5h9.7a3.9 3.9 0 0 0 .6-7.8 5.8 5.8 0 0 0-11-1.6 4.8 4.8 0 0 0 .7 9.4z" />
             <path d="M12 12.3v7.8" />
             <path d="m8.9 15.4 3.1-3.1 3.1 3.1" />
           </svg>
-          <span class="hint">Sign in with Google</span>
+          <span class="hint">Account</span>
         </button>
 
-        <a class="tool" id="admin-dashboard" href="admin.html" hidden>
-          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-            <rect x="3.8" y="4" width="16.4" height="16" rx="2" />
-            <path d="M3.8 9.1h16.4M9.2 9.1V20" />
-          </svg>
-          <span class="hint">Open photo dashboard</span>
-        </a>
-
-        <button class="tool" id="captures-save" type="button" disabled>
+        <button class="tool" id="captures-save" type="button" aria-label="Save photos" disabled>
           <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path d="M12 3.4v11.4" />
             <path d="m7.9 10.7 4.1 4.1 4.1-4.1" />
             <path d="M4 16.4v2.2a2.5 2.5 0 0 0 2.5 2.5h11a2.5 2.5 0 0 0 2.5-2.5v-2.2" />
           </svg>
-          <span class="hint">Save to this device</span>
+          <span class="hint">Save</span>
         </button>
       </div>
     </nav>
@@ -358,7 +361,7 @@
             <path d="M4.3 9.1V4.4l4.7.1" />
             <path d="M5 5.2a8.2 8.2 0 1 1-1.1 9.6" />
           </svg>
-          <span class="hint">Restore this photo</span>
+          <span class="hint">Restore</span>
         </button>
 
         <button class="button button-secondary button-icon" id="viewer-share" type="button" hidden>
@@ -367,7 +370,7 @@
             <path d="m7.9 7.3 4.1-4.1 4.1 4.1" />
             <path d="M7.4 10.4h-1a2.5 2.5 0 0 0-2.5 2.5v5.9A2.5 2.5 0 0 0 6.4 21.3h11.2a2.5 2.5 0 0 0 2.5-2.5v-5.9a2.5 2.5 0 0 0-2.5-2.5h-1" />
           </svg>
-          <span class="hint">Share this photo</span>
+          <span class="hint">Share</span>
         </button>
 
         <button class="button button-secondary button-icon" id="viewer-delete" type="button">
@@ -378,7 +381,7 @@
             <path d="M10.4 10.2v6.6" />
             <path d="M13.6 10.2v6.6" />
           </svg>
-          <span class="hint">Delete this photo</span>
+          <span class="hint">Delete</span>
         </button>
 
         <button class="button button-secondary button-icon" id="viewer-close" type="button">

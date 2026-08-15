@@ -5,6 +5,7 @@ const { test } = require("node:test");
 const vm = require("node:vm");
 
 const appPath = resolve(__dirname, "..", "app.js");
+const cloudData = require("../photo-cloud.js");
 
 class FakeElement {
   constructor(tagName = "div") {
@@ -188,7 +189,6 @@ function createAppHarness(options = {}) {
     "ai-review-loader-title",
     "ai-review-loader-detail",
     "cloud-auth",
-    "admin-dashboard",
     "filmstrip",
     "viewer",
     "viewer-image",
@@ -361,7 +361,14 @@ function createAppHarness(options = {}) {
   };
 
   let authCallback;
-  const cloudCalls = { attendance: [], deleted: [], signIn: 0, signOut: 0, uploaded: [] };
+  const cloudCalls = {
+    attendance: [],
+    deleted: [],
+    sessionGps: [],
+    signIn: 0,
+    signOut: 0,
+    uploaded: [],
+  };
   const cloud = options.cloud
     ? {
         async saveAttendance(record) {
@@ -385,6 +392,11 @@ function createAppHarness(options = {}) {
         async uploadReviewedPhoto(record) {
           cloudCalls.uploaded.push(record.id);
           if (options.uploadError) throw options.uploadError;
+        },
+        async recordSessionGpsLocation(session, gpsLocation) {
+          cloudCalls.sessionGps.push({ session, gpsLocation });
+          if (options.sessionGpsError) throw options.sessionGpsError;
+          return { ...session, gpsLocation };
         },
         ...(Array.isArray(options.workerFaces)
           ? {
@@ -584,6 +596,7 @@ function createAppHarness(options = {}) {
     StampNoteAddress: service,
     StampNoteAutoCapture: options.full === false ? null : autoCapture,
     StampNoteFirebase: cloud,
+    StampNotePhotoCloud: cloudData,
     StampNoteFaceIdentity: options.faceEnrollment
       ? {
           createFaceIdentity(configuration) {
@@ -880,7 +893,6 @@ test("capture-library initialization syncs reviewed photos and supports viewer d
   assert.deepEqual(harness.storeCalls.marked, ["capture-1"]);
   assert.equal(record.status, "synced");
   assert.equal(harness.elements["cloud-auth"].dataset.signedIn, "true");
-  assert.equal(harness.elements["admin-dashboard"].hidden, false);
 
   await harness.elements.captures.children[0].dispatch("click");
   assert.equal(harness.elements.viewer.hidden, false);
@@ -1058,6 +1070,31 @@ test("the live monitor starts and stops cleanly, and unsupported cameras fail ob
         event.name === "capture.monitor.failed" && event.fields.errorCode === "camera_unsupported",
     ),
   );
+});
+
+test("recording start stores GPS on the session before any reviewed photo is uploaded", async () => {
+  const harness = createAppHarness({ camera: true, cloud: true });
+  await settle();
+  harness.auth({ email: "owner@example.com", uid: "owner-1" });
+  await settle();
+
+  await harness.elements["monitor-toggle"].dispatch("click");
+  await settle(8);
+
+  assert.equal(harness.controllerState.running, true);
+  assert.equal(harness.cloudCalls.uploaded.length, 0, "no photo batch is required for session GPS");
+  assert.equal(harness.cloudCalls.sessionGps.length, 1);
+  const saved = harness.cloudCalls.sessionGps[0];
+  assert.equal(saved.session.location, "10 Marina Boulevard");
+  assert.match(saved.session.dateKey, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(cloudData.SESSION_DEFINITIONS.some((entry) => entry.id === saved.session.sessionId));
+  assert.ok(saved.session.gpsCapturedAtMs > 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(saved.gpsLocation)), {
+    latitude: 1.2868,
+    longitude: 103.8545,
+    accuracyMeters: 12.5,
+  });
+  assert.ok(harness.events.some((event) => event.name === "session.gps.saved"));
 });
 
 test("initial camera startup uses a prominent loader until the stream is ready", async () => {

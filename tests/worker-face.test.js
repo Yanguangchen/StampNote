@@ -20,6 +20,39 @@ test("worker IDs and face templates are normalized before storage", () => {
   assert.equal(workerFace.normalizeEmbedding([1, 2]), null);
 });
 
+test("a worker ID is issued from the initials, numbered within them", () => {
+  assert.equal(workerFace.workerIdPrefix("Ari Tan"), "AT");
+  // First and last, so the family name survives a middle one.
+  assert.equal(workerFace.workerIdPrefix("Ari Bin Tan"), "AT");
+  // A mononym has no last name to take a letter from, so it lends its second.
+  assert.equal(workerFace.workerIdPrefix("Ari"), "AR");
+  assert.equal(workerFace.workerIdPrefix("ari  tan"), "AT");
+  assert.equal(workerFace.workerIdPrefix("O'Brien Ng"), "ON");
+  // Nothing in the Latin alphabet to read, but an ID still has to be readable.
+  assert.equal(workerFace.workerIdPrefix("陈伟"), "WK");
+  assert.equal(workerFace.workerIdPrefix(""), "WK");
+
+  assert.equal(workerFace.nextWorkerId("Ari Tan", []), "AT-0001");
+  // The point of the number: two people of the same name are two records.
+  assert.equal(workerFace.nextWorkerId("Ari Tan", ["AT-0001"]), "AT-0002");
+  assert.equal(
+    workerFace.nextWorkerId("Ari Tan", ["AT-0001", "AT-0002", "BL-0001"]),
+    "AT-0003",
+    "another prefix's numbering is none of this one's business",
+  );
+  // Counted from the highest issued rather than from how many exist, so a number
+  // that has been written on a badge is not handed to somebody else later.
+  assert.equal(workerFace.nextWorkerId("Ari Tan", ["AT-0003"]), "AT-0004");
+  assert.equal(workerFace.nextWorkerId("Ari Tan", ["at-0001", " AT-0002 "]), "AT-0003");
+  // An ID from before any of this, sitting where the count would have landed.
+  assert.equal(workerFace.nextWorkerId("Ari Tan", ["AT-0002", "AT-0001", "SG-0042"]), "AT-0003");
+  assert.equal(workerFace.nextWorkerId("Ari Tan", ["AT-9999"]), "AT-10000");
+  assert.equal(workerFace.nextWorkerId("Ari Tan", null), "AT-0001");
+  // Every issued ID has to survive the check the save itself makes.
+  assert.equal(workerFace.normalizeWorkerId(workerFace.nextWorkerId("A", [])), "A-0001");
+  assert.equal(workerFace.normalizeWorkerId(workerFace.nextWorkerId("陈伟", [])), "WK-0001");
+});
+
 test("seven face samples form one normalized database template", () => {
   const averaged = workerFace.averageEmbeddings([
     embedding(),

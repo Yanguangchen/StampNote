@@ -13,7 +13,16 @@
     <link rel="manifest" href="manifest.json" />
     <link rel="icon" href="icons/stampnote.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="icons/stampnote-180.png" sizes="180x180" />
-    <link rel="stylesheet" href="admin.css?v=20260815-2" />
+    <link
+      rel="preload"
+      href="vendor/fonts/outfit-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="vendor/fonts/outfit.css" />
+    <link rel="stylesheet" href="sidebar.css" />
+    <link rel="stylesheet" href="admin.css?v=20260816-3" />
     <!-- Applied before the first paint so a saved dark theme never flashes white. -->
     <script>
       try {
@@ -26,12 +35,14 @@
       }
     </script>
     <script src="observability.js" defer></script>
-    <script src="photo-cloud.js?v=20260815-2" defer></script>
-    <script src="firebase.js?v=20260815-2" defer></script>
-    <script src="admin.js?v=20260815-2" defer></script>
+    <script src="photo-cloud.js?v=20260816-1" defer></script>
+    <script src="firebase.js?v=20260816-2" defer></script>
+    <script src="weather-service.js" defer></script>
+    <script src="admin.js?v=20260816-2" defer></script>
+    <script src="sidebar.js" defer></script>
   </head>
   <body>
-    <header class="admin-header">
+    <header class="admin-header" data-sidebar-mount>
       <a class="brand" href="index.html" aria-label="Back to StampNote capture">
         <span class="brand-mark" aria-hidden="true"></span>
         <span>StampNote</span>
@@ -79,25 +90,74 @@
             </button>
           </div>
 
+          <!-- Each step deletes at its own level: the whole site, one of its days,
+               or a single period of that day. The button sits with the column it
+               belongs to and acts on whatever is chosen there, so nothing has to
+               be deleted a session at a time. -->
           <section class="scope-step" aria-labelledby="location-step-title">
-            <h3 class="scope-step-title" id="location-step-title">
-              <span class="scope-step-number" aria-hidden="true">1</span> Location
-            </h3>
+            <div class="scope-step-heading">
+              <h3 class="scope-step-title" id="location-step-title">
+                <span class="scope-step-number" aria-hidden="true">1</span> Location
+              </h3>
+              <button class="button button-danger scope-delete" id="location-delete" type="button" disabled>
+                <svg class="scope-delete-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M4.6 6.6h14.8" />
+                  <path d="M9.6 6.6V4.9a1.3 1.3 0 0 1 1.3-1.3h2.2a1.3 1.3 0 0 1 1.3 1.3v1.7" />
+                  <path d="M6.6 6.6 7.5 19a1.6 1.6 0 0 0 1.6 1.5h5.8a1.6 1.6 0 0 0 1.6-1.5l.9-12.4" />
+                  <path d="M10.4 10.2v6.6" />
+                  <path d="M13.6 10.2v6.6" />
+                </svg>
+                <span class="scope-delete-label">Delete location</span>
+              </button>
+            </div>
             <div class="scope-options" id="location-options"></div>
           </section>
 
-          <section class="scope-step" aria-labelledby="date-step-title">
-            <h3 class="scope-step-title" id="date-step-title">
-              <span class="scope-step-number" aria-hidden="true">2</span> Date
-            </h3>
+          <!-- A step arrives once the step above it has been answered: the day
+               list belongs to a location, and the sessions belong to a day. -->
+          <section class="scope-step" id="date-step" aria-labelledby="date-step-title" hidden>
+            <div class="scope-step-heading">
+              <h3 class="scope-step-title" id="date-step-title">
+                <span class="scope-step-number" aria-hidden="true">2</span> Date
+              </h3>
+              <button class="button button-danger scope-delete" id="date-delete" type="button" disabled>
+                <svg class="scope-delete-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M4.6 6.6h14.8" />
+                  <path d="M9.6 6.6V4.9a1.3 1.3 0 0 1 1.3-1.3h2.2a1.3 1.3 0 0 1 1.3 1.3v1.7" />
+                  <path d="M6.6 6.6 7.5 19a1.6 1.6 0 0 0 1.6 1.5h5.8a1.6 1.6 0 0 0 1.6-1.5l.9-12.4" />
+                  <path d="M10.4 10.2v6.6" />
+                  <path d="M13.6 10.2v6.6" />
+                </svg>
+                <span class="scope-delete-label">Delete day</span>
+              </button>
+            </div>
+            <!-- A site that has reported for a year has a row here for every one
+                 of those days. The calendar reaches any of them in one press, and
+                 the buttons below it stay a short list of the most recent. -->
+            <label class="scope-date-field" for="date-picker">
+              <span>Jump to a date</span>
+              <input type="date" id="date-picker" />
+            </label>
+            <p class="scope-date-hint" id="date-hint" role="status" aria-live="polite"></p>
             <div class="scope-options" id="date-options"></div>
           </section>
 
-          <section class="scope-step" aria-labelledby="session-step-title">
-            <h3 class="scope-step-title" id="session-step-title">
-              <span class="scope-step-number" aria-hidden="true">3</span> Time session
-            </h3>
-            <p class="scope-step-hint">Set the Truck location X and Y inside each session.</p>
+          <section class="scope-step" id="session-step" aria-labelledby="session-step-title" hidden>
+            <div class="scope-step-heading">
+              <h3 class="scope-step-title" id="session-step-title">
+                <span class="scope-step-number" aria-hidden="true">3</span> Time session
+              </h3>
+              <button class="button button-danger scope-delete" id="session-delete" type="button" disabled>
+                <svg class="scope-delete-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M4.6 6.6h14.8" />
+                  <path d="M9.6 6.6V4.9a1.3 1.3 0 0 1 1.3-1.3h2.2a1.3 1.3 0 0 1 1.3 1.3v1.7" />
+                  <path d="M6.6 6.6 7.5 19a1.6 1.6 0 0 0 1.6 1.5h5.8a1.6 1.6 0 0 0 1.6-1.5l.9-12.4" />
+                  <path d="M10.4 10.2v6.6" />
+                  <path d="M13.6 10.2v6.6" />
+                </svg>
+                <span class="scope-delete-label">Delete session</span>
+              </button>
+            </div>
             <div class="scope-options" id="session-options"></div>
           </section>
         </nav>
@@ -105,41 +165,65 @@
         <div class="dashboard-detail">
           <div class="scope-summary">
             <p class="scope-breadcrumb" id="scope-breadcrumb" role="status" aria-live="polite"></p>
+            <!-- Deleting a session lives with the session step in the rail, beside
+                 the two wider deletes, so it is not offered twice over. -->
             <div class="session-actions" id="session-actions" hidden>
               <button class="button button-quiet" id="session-rename" type="button">Rename session</button>
-              <button class="button button-danger" id="session-delete" type="button">Delete session</button>
             </div>
           </div>
 
-          <section class="dashboard-panel attendance-panel" id="attendance-panel" aria-labelledby="attendance-title">
-            <div class="panel-heading attendance-heading">
-              <div>
-                <h2 id="attendance-title">Attendance</h2>
-              </div>
-              <div class="attendance-filter">
-                <label for="attendance-worker-filter">Worker</label>
-                <select id="attendance-worker-filter" disabled>
-                  <option value="all">All workers</option>
-                </select>
-              </div>
-            </div>
+          <!-- Nothing below is drawn until a location, a date and a session have
+               each been chosen: an unscoped page of photographs belongs to no
+               day in particular, and the truck fields belong to no session. -->
+          <p class="scope-guidance" id="scope-guidance" role="status" aria-live="polite"></p>
 
-            <div class="attendance-summary" aria-label="Attendance summary">
-              <div>
-                <strong id="present-worker-count">0</strong>
-                <span>Workers</span>
-              </div>
-              <div>
-                <strong id="attendance-checkin-count">0</strong>
-                <span>Check-ins</span>
-              </div>
-            </div>
+          <!-- Who was there, and where the truck stood: the session's own facts,
+               in a column beside the photographs rather than stacked above them
+               where they pushed the photographs off the bottom of the screen. -->
+          <div class="detail-column" id="detail-column" hidden>
+            <!-- What the sky was doing while this session was worked. Wet or
+                 stormy hours are the usual reason a session ran late. -->
+            <div class="session-weather" id="session-weather" hidden></div>
 
-            <p class="attendance-status" id="attendance-status" role="status" aria-live="polite"></p>
-            <div class="attendance-list" id="attendance-list"></div>
-          </section>
+            <!-- One form for the session being looked at, rather than one inside
+                 every row of the rail. -->
+            <div class="session-truck-location" id="session-truck-location" hidden></div>
 
-          <section class="dashboard-panel photos-panel" aria-labelledby="photos-title">
+            <section class="dashboard-panel attendance-panel" id="attendance-panel" aria-labelledby="attendance-title">
+              <div class="panel-heading attendance-heading">
+                <div>
+                  <h2 id="attendance-title">Attendance</h2>
+                </div>
+                <div class="attendance-filter">
+                  <label for="attendance-worker-filter">Worker</label>
+                  <select id="attendance-worker-filter" disabled>
+                    <option value="all">All workers</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="attendance-summary" aria-label="Attendance summary">
+                <div>
+                  <strong id="present-worker-count">0</strong>
+                  <span>Workers</span>
+                </div>
+                <div>
+                  <strong id="attendance-checkin-count">0</strong>
+                  <span>Check-ins</span>
+                </div>
+              </div>
+
+              <p class="attendance-status" id="attendance-status" role="status" aria-live="polite"></p>
+              <div class="attendance-list" id="attendance-list"></div>
+            </section>
+          </div>
+
+          <section
+            class="dashboard-panel photos-panel"
+            id="photos-panel"
+            aria-labelledby="photos-title"
+            hidden
+          >
             <div class="panel-heading">
               <div>
                 <h2 id="photos-title">Photos</h2>

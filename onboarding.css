@@ -1,36 +1,53 @@
 /* The onboarding page stays deliberately plain: flat surfaces, one accent, and
-   no decoration that competes with the camera view. */
+   no decoration that competes with the camera view. One column, one step at a
+   time, and a single spacing scale so every card edge lines up. */
 :root {
   color-scheme: light;
-  --ink: #17201c;
+  --ink: #101814;
   --on-ink: #fff;
-  --muted: #68726d;
-  --paper: #f5f6f5;
+  /* Muted text still has to clear 4.5:1 on --surface; it is quiet, not faint. */
+  --muted: #4d5854;
+  --paper: #eef0ef;
   --surface: #fff;
   --field: #fff;
-  --line: #d5dad7;
-  --line-strong: #c8ceca;
-  --accent: #176146;
-  --danger: #a6382c;
+  --line: #c3cac6;
+  --line-strong: #9aa4a0;
+  --accent: #0f5136;
+  --danger: #8f2b20;
   --danger-soft: #fbe9e5;
-  --shadow: 0 1px 2px rgba(23, 32, 28, 0.05);
+  --shadow: 0 1px 2px rgba(16, 24, 20, 0.06);
+
+  --gap-xs: 6px;
+  --gap-sm: 10px;
+  --gap-md: 16px;
+  --gap-lg: 24px;
+  --pad-card: 22px;
+  --radius: 14px;
+  --radius-sm: 10px;
+
+  /* One curve for everything that moves: eased in and out, so a change starts
+     and settles gently instead of snapping at either end. */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-fast: 140ms;
+  --motion: 220ms;
+  --motion-slow: 340ms;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --ink: #e8efe9;
-    --on-ink: #0d1512;
-    --muted: #93a09a;
-    --paper: #0d1512;
-    --surface: #151d1a;
-    --field: #101815;
-    --line: #2a3733;
-    --line-strong: #3a4a44;
-    --accent: #46d39f;
-    --danger: #ff8f6b;
-    --danger-soft: rgba(255, 143, 107, 0.14);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --ink: #f0f6f1;
+    --on-ink: #0b1210;
+    --muted: #a9b6b0;
+    --paper: #0b1210;
+    --surface: #161f1b;
+    --field: #0f1714;
+    --line: #35443f;
+    --line-strong: #566661;
+    --accent: #5fe0b0;
+    --danger: #ff9f80;
+    --danger-soft: rgba(255, 143, 107, 0.16);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
   }
 }
 
@@ -43,7 +60,7 @@ body {
   margin: 0;
   background: var(--paper);
   color: var(--ink);
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: "Outfit", system-ui, -apple-system, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -64,138 +81,211 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  min-height: 58px;
-  padding: env(safe-area-inset-top, 0) max(18px, env(safe-area-inset-right, 0)) 0
-    max(18px, env(safe-area-inset-left, 0));
+  gap: var(--gap-md);
+  padding: calc(env(safe-area-inset-top, 0px) + 12px) max(20px, env(safe-area-inset-right, 0px))
+    12px max(20px, env(safe-area-inset-left, 0px));
   border-bottom: 1px solid var(--line);
   background: var(--surface);
-}
-
-.back-link {
-  color: var(--ink);
-  font-size: 13px;
-  font-weight: 650;
-  text-decoration: none;
-}
-
-.back-link:hover {
-  color: var(--accent);
 }
 
 .account-controls {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--gap-sm);
 }
 
 .account-controls p {
   margin: 0;
-  max-width: 28ch;
+  max-width: 26ch;
   overflow: hidden;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .auth-button {
-  min-height: 34px;
-  padding: 6px 12px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
+  min-height: 36px;
+  padding: 7px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--ink);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 650;
+  transition:
+    border-color var(--motion-fast) var(--ease),
+    background var(--motion-fast) var(--ease);
 }
 
 .auth-button:hover {
-  border-color: var(--line-strong);
+  border-color: var(--ink);
 }
 
 .onboarding-main {
-  width: min(820px, calc(100% - 32px));
+  width: min(560px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 34px 0 56px;
+  padding: 32px 0 56px;
 }
 
 .onboarding-main > h1 {
-  margin: 0;
-  font-size: clamp(26px, 5vw, 38px);
-  line-height: 1.1;
-  letter-spacing: -0.035em;
+  margin: 0 0 var(--gap-lg);
+  font-size: clamp(24px, 4.5vw, 32px);
+  line-height: 1.15;
+  letter-spacing: -0.03em;
 }
 
-.page-instruction {
-  margin: 7px 0 26px;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-/* Details on the left, camera on the right: the two halves of one enrollment. */
-.enrollment-grid {
+/* One column, one rhythm: every card is the same width and the same gap apart. */
+.flow {
   display: grid;
-  grid-template-columns: minmax(220px, 290px) minmax(320px, 1fr);
-  gap: 20px;
-  align-items: start;
+  gap: var(--gap-md);
 }
 
-.worker-form,
-.scanner {
-  display: flex;
-  flex-direction: column;
-  padding: 20px;
+.card {
+  padding: var(--pad-card);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius);
   background: var(--surface);
   box-shadow: var(--shadow);
+  animation: card-rise var(--motion-slow) var(--ease) both;
 }
 
-.worker-form > label {
-  margin: 16px 0 6px;
+/* Each card follows the one above it, so the column assembles top to bottom. */
+.flow > .card:nth-child(2) {
+  animation-delay: 60ms;
+}
+
+.flow > .card:nth-child(3) {
+  animation-delay: 120ms;
+}
+
+@keyframes card-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  margin: 0 0 var(--gap-md);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.step-badge {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--on-ink);
   font-size: 12px;
   font-weight: 700;
 }
 
-.worker-form > label:first-child {
-  margin-top: 0;
+/* Step two used to sit here dimmed to six-tenths, which still spent a camera
+   frame's worth of the page saying "not yet". It is now absent until the details
+   it scans against exist, and rises in like any other card when it arrives. */
+
+.field-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--gap-md);
+}
+
+.field {
+  display: grid;
+  gap: var(--gap-xs);
+}
+
+.worker-form label {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 650;
 }
 
 .worker-form input[type="text"] {
   width: 100%;
   min-height: 44px;
-  padding: 9px 12px;
+  padding: 10px 12px;
   border: 1px solid var(--line-strong);
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   background: var(--field);
   color: var(--ink);
   outline: none;
+  transition:
+    border-color var(--motion-fast) var(--ease),
+    box-shadow var(--motion-fast) var(--ease);
 }
 
 .worker-form input[type="text"]::placeholder {
   color: var(--muted);
+  opacity: 1;
 }
 
 .worker-form input[type="text"]:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .worker-form input[type="text"]:invalid:not(:placeholder-shown) {
   border-color: var(--danger);
 }
 
+/* Issued rather than typed, so it reads as a value being shown back rather than
+   a box waiting to be filled: no editable field's border, and no accent ring on
+   focus to suggest one. */
+.worker-form input[readonly] {
+  border-color: var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: default;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.worker-form input[readonly]:not(:placeholder-shown) {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.worker-form input[readonly]:focus {
+  border-color: var(--line-strong);
+  box-shadow: none;
+}
+
+.card-footer {
+  display: grid;
+  gap: var(--gap-sm);
+  margin-top: var(--gap-lg);
+}
+
 .primary-button,
 .secondary-button {
-  min-height: 42px;
-  border-radius: 9px;
+  width: 100%;
+  min-height: 46px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
+  font-size: 15px;
   font-weight: 700;
+  transition:
+    opacity var(--motion-fast) var(--ease),
+    border-color var(--motion-fast) var(--ease),
+    transform var(--motion-fast) var(--ease);
+}
+
+.primary-button:not(:disabled):active,
+.secondary-button:active {
+  transform: scale(0.985);
 }
 
 .primary-button {
-  margin-top: 20px;
   border: 0;
   background: var(--ink);
   color: var(--on-ink);
@@ -207,27 +297,28 @@ a {
 
 .primary-button:disabled {
   cursor: default;
-  opacity: 0.42;
+  opacity: 0.4;
 }
 
 .secondary-button {
-  width: 100%;
-  margin-top: 10px;
-  border: 1px solid var(--line);
+  margin-top: var(--gap-sm);
+  border: 1px solid var(--line-strong);
   background: transparent;
   color: var(--ink);
 }
 
 .secondary-button:hover {
-  border-color: var(--line-strong);
+  border-color: var(--ink);
 }
 
+/* The one live message on the page: everything the operator needs to do next. */
 .form-status {
-  min-height: 34px;
-  margin: 11px 0 0;
+  margin: 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.45;
+  text-align: center;
+  transition: color var(--motion) var(--ease);
 }
 
 .form-status[data-state="error"] {
@@ -242,10 +333,23 @@ a {
   position: relative;
   display: grid;
   place-items: center;
-  min-height: 390px;
   overflow: hidden;
-  border-radius: 10px;
-  background: #101512;
+  aspect-ratio: 4 / 5;
+  max-height: 58vh;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--field);
+  color: var(--ink);
+  transition:
+    background var(--motion) var(--ease),
+    border-color var(--motion) var(--ease),
+    color var(--motion) var(--ease);
+}
+
+/* Only the live camera earns a black frame; idle sits on the page's own paper. */
+.scanner-view:not([data-status="idle"]) {
+  border-color: transparent;
+  background: #0d1210;
   color: #fff;
 }
 
@@ -260,38 +364,35 @@ a {
 
 .scanner-placeholder {
   z-index: 1;
-  max-width: 24ch;
+  max-width: 22ch;
   padding: 24px;
-  color: rgba(255, 255, 255, 0.62);
-  font-size: 12px;
+  color: var(--muted);
+  font-size: 13px;
   line-height: 1.45;
   text-align: center;
 }
 
-.scanner-view[data-status="scanning"] .scanner-placeholder,
-.scanner-view[data-status="saving"] .scanner-placeholder,
-.scanner-view[data-status="complete"] .scanner-placeholder {
+.scanner-view:not([data-status="idle"]) .scanner-placeholder {
   display: none;
 }
 
 .scanner-oval {
   z-index: 2;
-  width: 188px;
-  height: 244px;
-  border: 2px solid rgba(255, 255, 255, 0.72);
+  width: 46%;
+  aspect-ratio: 77 / 100;
+  border: 2px solid var(--line-strong);
   border-radius: 48% 48% 44% 44% / 42% 42% 54% 54%;
-  opacity: 0.3;
-  box-shadow: 0 0 0 999px rgba(4, 8, 6, 0.27);
-  transition: border-color 160ms ease, opacity 160ms ease;
+  transition:
+    border-color var(--motion) var(--ease),
+    box-shadow var(--motion-slow) var(--ease);
 }
 
-.scanner-view[data-status="scanning"] .scanner-oval,
-.scanner-view[data-status="saving"] .scanner-oval,
-.scanner-view[data-status="complete"] .scanner-oval {
-  border-color: #5ee0ae;
-  opacity: 1;
+.scanner-view:not([data-status="idle"]) .scanner-oval {
+  border-color: #6ff0be;
+  box-shadow: 0 0 0 999px rgba(4, 8, 6, 0.42);
 }
 
+/* Guidance belongs to the live view; idle would only repeat the placeholder. */
 .scanner-instruction {
   position: absolute;
   right: 12px;
@@ -299,72 +400,138 @@ a {
   left: 12px;
   z-index: 3;
   margin: 0;
-  padding: 8px 10px;
-  border-radius: 8px;
-  background: rgba(6, 10, 8, 0.8);
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(5, 9, 7, 0.86);
   color: #fff;
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.4;
   text-align: center;
+  animation: fade-in var(--motion) var(--ease) both;
 }
 
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.scanner-view[data-status="idle"] .scanner-instruction {
+  display: none;
+}
+
+/* The counter matters only once a scan is running. */
 .scan-progress {
-  display: flex;
+  display: none;
   align-items: center;
-  gap: 10px;
-  padding-top: 14px;
-  color: var(--muted);
-  font-size: 11px;
+  gap: var(--gap-sm);
+  padding-top: var(--gap-md);
+  color: var(--ink);
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
+  animation: fade-in var(--motion) var(--ease) both;
+}
+
+.scanner:has(.scanner-view:not([data-status="idle"])) .scan-progress {
+  display: flex;
 }
 
 .scan-progress progress {
   flex: 1;
-  height: 6px;
+  height: 8px;
   border: 0;
   border-radius: 999px;
   accent-color: var(--accent);
 }
 
 .privacy-note {
-  margin: 12px 0 0;
+  margin: var(--gap-xs) 2px 0;
   color: var(--muted);
-  font-size: 11px;
-  line-height: 1.45;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
-.roster {
-  margin-top: 34px;
-  padding: 20px;
+/* The heading is the control: the title, and the one button that opens it. */
+.roster-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+}
+
+.roster-heading .card-title {
+  margin: 0;
+}
+
+.roster-toggle {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
   border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    border-color var(--motion-fast) var(--ease),
+    color var(--motion-fast) var(--ease);
 }
 
-.roster h2 {
-  margin: 0 0 12px;
-  font-size: 17px;
-  letter-spacing: -0.02em;
+.roster-toggle:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+/* Two borders on a rotated square. This page carries no icon set, and one
+   disclosure arrow is not reason enough to start one. */
+.roster-chevron {
+  width: 8px;
+  height: 8px;
+  margin-top: -2px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  border-radius: 0 0 2px 0;
+  transform: rotate(45deg);
+  transition:
+    transform var(--motion) var(--ease),
+    margin-top var(--motion) var(--ease);
+}
+
+.roster-toggle[aria-expanded="true"] .roster-chevron {
+  margin-top: 2px;
+  transform: rotate(225deg);
+}
+
+.roster-body {
+  margin-top: var(--gap-md);
+  animation: fade-in var(--motion) var(--ease) both;
 }
 
 .roster-empty {
   margin: 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .roster-list {
   display: grid;
 }
 
+.roster-list:not(:empty) {
+  margin-top: calc(var(--gap-xs) * -1);
+}
+
 .worker-row {
   display: grid;
-  grid-template-columns: 40px 1fr auto;
-  gap: 12px;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: var(--gap-sm);
   align-items: center;
-  min-height: 52px;
-  padding: 10px 0;
+  min-height: 56px;
+  padding: var(--gap-sm) 0;
   border-top: 1px solid var(--line);
+  animation: fade-in var(--motion) var(--ease) both;
 }
 
 .worker-row:first-child {
@@ -379,9 +546,10 @@ a {
   place-items: center;
   border-radius: 12px;
   background: var(--field);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 780;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
 }
 
 .worker-avatar img {
@@ -396,27 +564,30 @@ a {
 }
 
 .worker-name {
-  font-size: 13px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 650;
 }
 
 .worker-id {
   margin-top: 2px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
 .delete-worker {
-  min-height: 34px;
-  padding: 6px 10px;
-  border: 1px solid transparent;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
   border-radius: 8px;
   background: transparent;
   color: var(--danger);
   cursor: pointer;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 13px;
+  font-weight: 650;
+  transition:
+    border-color var(--motion-fast) var(--ease),
+    background var(--motion-fast) var(--ease);
 }
 
 .delete-worker:hover {
@@ -445,9 +616,9 @@ a {
   outline-offset: 3px;
 }
 
-@media (max-width: 680px) {
-  .onboarding-header {
-    min-height: 54px;
+@media (max-width: 560px) {
+  :root {
+    --pad-card: 16px;
   }
 
   .account-controls p {
@@ -455,31 +626,142 @@ a {
   }
 
   .onboarding-main {
-    width: min(100% - 24px, 520px);
-    padding: 26px 0 42px;
+    width: calc(100% - 24px);
+    padding: 24px 0 40px;
   }
 
-  .page-instruction {
-    margin-bottom: 20px;
-  }
-
-  .enrollment-grid {
-    grid-template-columns: 1fr;
-    gap: 16px;
-  }
-
-  .worker-form,
-  .scanner,
-  .roster {
-    padding: 16px;
-  }
-
-  .roster {
-    margin-top: 24px;
+  .field-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--gap-md);
   }
 
   .scanner-view {
-    min-height: min(460px, 58vh);
+    aspect-ratio: 3 / 4;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Turning the phone
+   --------------------------------------------------------------------------- */
+
+/* Landscape on a phone is all width and no height, and it is how the phone is
+   held while a worker is scanned. The column splits: details and roster take
+   the width, and the camera keeps a column of its own, sized off the viewport
+   height so it never pushes the button below the fold. */
+@media (orientation: landscape) and (max-height: 560px) {
+  :root {
+    --pad-card: 14px;
+    --gap-lg: 16px;
+  }
+
+  .onboarding-header {
+    padding: calc(env(safe-area-inset-top, 0px) + 8px)
+      calc(env(safe-area-inset-right, 0px) + 16px) 8px
+      calc(env(safe-area-inset-left, 0px) + 16px);
+  }
+
+  .account-controls p {
+    display: none;
+  }
+
+  .onboarding-main {
+    width: 100%;
+    max-width: 1000px;
+    padding: 12px calc(env(safe-area-inset-right, 0px) + 16px)
+      calc(env(safe-area-inset-bottom, 0px) + 20px)
+      calc(env(safe-area-inset-left, 0px) + 16px);
+  }
+
+  .onboarding-main > h1 {
+    margin-bottom: 12px;
+    font-size: 19px;
+  }
+
+  /* The camera column runs the full height of the page; the steps stack beside
+     it in reading order. */
+  .flow {
+    grid-template-columns: minmax(0, 1fr) minmax(190px, 250px);
+    gap: 12px;
+    align-items: start;
+  }
+
+  /* Before step two is revealed there is no camera to give a column to, and a
+     reserved 190px of nothing is worse here than anywhere: this is the layout
+     for a screen with no height to spare. */
+  .flow:has(.scanner[hidden]) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .worker-form,
+  .roster,
+  .privacy-note {
+    grid-column: 1;
+  }
+
+  .scanner {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+  }
+
+  .card-title {
+    margin-bottom: 10px;
+    font-size: 14px;
+  }
+
+  .card-footer {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+    align-items: center;
+    margin-top: 14px;
+  }
+
+  /* Before the first character is typed the footer holds only its status line,
+     which should read across the card rather than in a button-shaped column. */
+  .card-footer:has(.primary-button[hidden]) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .form-status {
+    text-align: left;
+  }
+
+  .primary-button,
+  .secondary-button {
+    min-height: 42px;
+    font-size: 14px;
+  }
+
+  /* Height drives the preview here, not width: whatever the viewport has left
+     after the header and the card's own chrome. */
+  .scanner-view {
+    width: auto;
+    max-width: 100%;
+    height: calc(100dvh - 196px);
+    min-height: 150px;
+    max-height: none;
+    aspect-ratio: 3 / 4;
+    margin: 0 auto;
+  }
+
+  .scanner-oval {
+    width: auto;
+    height: 68%;
+    aspect-ratio: 77 / 100;
+  }
+
+  .scanner-instruction {
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+    padding: 7px 9px;
+    font-size: 12px;
+  }
+
+  .scan-progress {
+    padding-top: 10px;
+  }
+
+  .privacy-note {
+    margin-top: 0;
   }
 }
 
@@ -489,5 +771,8 @@ a {
   *::after {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
   }
 }

@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en" data-surface="coordinates">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f3f5f1" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d1512" media="(prefers-color-scheme: dark)" />
+    <title>Geographic Surveillence · StampNote</title>
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="icons/stampnote.svg" type="image/svg+xml" />
+    <link
+      rel="preload"
+      href="vendor/fonts/outfit-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <!-- The surveillance console reads in mono, so its face is preloaded the way
+         Outfit is: this page's body text depends on it, not just its numbers. -->
+    <link
+      rel="preload"
+      href="vendor/fonts/jetbrains-mono-latin-wght-normal.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="vendor/fonts/outfit.css" />
+    <link rel="stylesheet" href="vendor/fonts/jetbrains-mono.css" />
+    <link rel="stylesheet" href="sidebar.css" />
+    <link rel="stylesheet" href="admin.css?v=20260816-2" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="coordinates.css?v=20260816-5" />
+    <script>
+      try {
+        const saved = localStorage.getItem("stampnote-theme");
+        if (saved === "dark" || saved === "light") {
+          document.documentElement.dataset.theme = saved;
+        }
+      } catch (error) {
+        /* A blocked storage jar leaves the operating-system theme in charge. */
+      }
+    </script>
+    <script src="observability.js" defer></script>
+    <script src="photo-cloud.js?v=20260816-1" defer></script>
+    <script src="firebase.js?v=20260816-2" defer></script>
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+      defer
+    ></script>
+    <script src="coordinates.js?v=20260816-4" defer></script>
+    <script src="sidebar.js" defer></script>
+  </head>
+  <body>
+    <header class="admin-header" data-sidebar-mount>
+      <a class="brand" href="index.html" aria-label="Back to StampNote capture">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>StampNote</span>
+      </a>
+      <div class="account-actions">
+        <span class="account-name" id="coordinate-account-name"></span>
+        <button class="button button-quiet" id="coordinate-sign-out" type="button" hidden>
+          Sign out
+        </button>
+      </div>
+    </header>
+
+    <main class="coordinates-main">
+      <section class="coordinates-intro" aria-labelledby="coordinates-title">
+        <h1 id="coordinates-title">Geographic Surveillence</h1>
+      </section>
+
+      <p class="dashboard-status" id="coordinate-status" role="status" aria-live="polite"></p>
+
+      <section class="auth-gate" id="coordinate-auth-gate" aria-labelledby="coordinate-auth-title">
+        <div class="auth-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false">
+            <path d="M7.2 18.5h9.7a3.9 3.9 0 0 0 .6-7.8 5.8 5.8 0 0 0-11-1.6 4.8 4.8 0 0 0 .7 9.4z" />
+          </svg>
+        </div>
+        <h2 id="coordinate-auth-title">Sign in to view Geographic Surveillence</h2>
+        <button class="button button-primary" id="coordinate-sign-in" type="button">
+          Continue with Google
+        </button>
+      </section>
+
+      <section class="coordinate-workspace" id="coordinate-workspace" hidden>
+        <!-- The filters are the exception rather than the rule: most visits read
+             the list as it comes. The bar stays folded away behind its own
+             button until someone actually wants to narrow the list. -->
+        <div class="coordinate-search-row">
+          <button
+            class="button button-quiet coordinate-search-toggle"
+            id="coordinate-search-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="coordinate-toolbar"
+          >
+            <span class="coordinate-search-icon" aria-hidden="true">⌕</span>
+            <span id="coordinate-search-label">Search</span>
+          </button>
+        </div>
+
+        <div class="coordinate-toolbar" id="coordinate-toolbar" aria-label="Coordinate filters" hidden>
+          <label>
+            <span>Date</span>
+            <input id="coordinate-date-filter" type="date" />
+          </label>
+          <label>
+            <span>Location</span>
+            <select id="coordinate-location-filter">
+              <option value="all">All locations</option>
+            </select>
+          </label>
+          <label>
+            <span>Date order</span>
+            <select id="coordinate-sort-order">
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+            </select>
+          </label>
+          <button class="button button-quiet" id="coordinate-clear-filters" type="button">
+            Clear filters
+          </button>
+          <button class="button button-quiet" id="coordinate-refresh" type="button">
+            Refresh
+          </button>
+        </div>
+
+        <output class="coordinate-result-count" id="coordinate-result-count">0 sessions</output>
+
+        <div
+          class="coordinate-session-list"
+          id="coordinate-session-list"
+          aria-label="Recorded sessions"
+        ></div>
+        <p class="coordinate-empty" id="coordinate-empty" hidden>
+          No sessions match these filters.
+        </p>
+
+        <!-- A stable machine-readable index for RPA and agent clients. Each
+             visible session card also carries its own data-session-record. -->
+        <script id="coordinate-data" type="application/json">[]</script>
+      </section>
+    </main>
+
+    <dialog class="coordinate-map-dialog" id="coordinate-map-dialog" aria-labelledby="coordinate-map-title">
+      <section class="coordinate-map-card">
+        <header>
+          <div>
+            <p>Position comparison</p>
+            <h2 id="coordinate-map-title">GPS reference and truck</h2>
+          </div>
+          <button
+            class="coordinate-map-close"
+            id="coordinate-map-close"
+            type="button"
+            aria-label="Close position map"
+          >
+            ×
+          </button>
+        </header>
+        <p class="coordinate-map-summary" id="coordinate-map-summary"></p>
+        <div class="coordinate-map-legend" aria-label="Map marker legend">
+          <span><i data-marker="gps"></i>GPS reference</span>
+          <span><i data-marker="truck"></i>Truck position</span>
+          <span><i data-marker="line"></i>Measured difference</span>
+        </div>
+        <div
+          class="coordinate-map-canvas"
+          id="coordinate-map-canvas"
+          aria-label="Map comparing GPS reference and truck position"
+        ></div>
+        <p class="coordinate-map-error" id="coordinate-map-error" role="status" hidden></p>
+      </section>
+    </dialog>
+  </body>
+</html>

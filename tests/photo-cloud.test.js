@@ -243,3 +243,116 @@ test("location and date fallbacks are stable for malformed legacy records", () =
   );
   assert.equal(legacy.uniquePeopleSeen, null);
 });
+
+// A metre of latitude is about 1/111320 of a degree, which is close enough for
+// placing two fixtures a known distance apart.
+function nearby(base, metresNorth) {
+  return { latitude: base.latitude + metresNorth / 111320, longitude: base.longitude };
+}
+
+const PARBURY = { latitude: 1.2868, longitude: 103.8545 };
+
+function fix(location, gpsLocation) {
+  return { location, gpsLocation: gpsLocation ? { ...gpsLocation, accuracyMeters: 20 } : null };
+}
+
+test("addresses a GPS error apart are read as one site", () => {
+  // The same yard, photographed either side of a fifty metre error: the
+  // reverse geocoder answered with the house across the road.
+  const index = cloud.createSiteIndex([
+    fix("34 Parbury Avenue", PARBURY),
+    fix("34 Parbury Avenue", nearby(PARBURY, 8)),
+    fix("34 Parbury Avenue", nearby(PARBURY, -6)),
+    fix("32 Parbury Avenue", nearby(PARBURY, 48)),
+  ]);
+
+  const site = index.siteFor("32 Parbury Avenue");
+  // The better-evidenced address names the site; the other is kept as an alias
+  // so the merge can be seen and checked.
+  assert.equal(site.location, "34 Parbury Avenue");
+  assert.deepEqual([...site.aliases], ["32 Parbury Avenue"]);
+  assert.equal(site.locationKey, cloud.createLocationKey("34 Parbury Avenue"));
+  assert.deepEqual(
+    [...site.aliasKeys],
+    [cloud.createLocationKey("32 Parbury Avenue")],
+  );
+  // Both spellings land on the same site, so the rail draws one row.
+  assert.equal(index.siteFor("34 Parbury Avenue").locationKey, site.locationKey);
+  assert.equal(index.radiusMeters, cloud.SITE_MERGE_RADIUS_M);
+});
+
+test("worker photo metadata keeps its capture source and weather snapshot", () => {
+  const metadata = cloud.createPhotoMetadata(
+    record({
+      trigger: "worker",
+      source: "camera",
+      aiReview: null,
+      weatherStatus: "recorded",
+      weather: {
+        severity: "dry",
+        condition: "Partly cloudy",
+        precipitationMm: 0,
+        maxGustKph: 20.2,
+        temperatureC: 30.4,
+        hours: 1,
+        recordedAtMs: 1786635912000,
+      },
+    }),
+    "worker-user",
+  );
+
+  assert.equal(metadata.trigger, "worker");
+  assert.equal(metadata.source, "camera");
+  assert.equal(metadata.weatherStatus, "recorded");
+  assert.deepEqual(metadata.weather, {
+    severity: "dry",
+    condition: "Partly cloudy",
+    precipitationMm: 0,
+    maxGustKph: 20,
+    temperatureC: 30,
+    wetHours: 0,
+    hours: 1,
+    lostHours: null,
+    impactPercent: null,
+    provisional: false,
+    recordedAtMs: 1786635912000,
+  });
+  assert.equal(metadata.aiReview, null);
+});
+
+test("a site keeps its own row when the next one is genuinely elsewhere", () => {
+  const index = cloud.createSiteIndex([
+    fix("34 Parbury Avenue", PARBURY),
+    fix("2 Alexandra Road", nearby(PARBURY, 400)),
+  ]);
+
+  assert.equal(index.siteFor("2 Alexandra Road").location, "2 Alexandra Road");
+  assert.deepEqual([...index.siteFor("2 Alexandra Road").aliases], []);
+  assert.deepEqual([...index.siteFor("34 Parbury Avenue").aliases], []);
+});
+
+test("the merge radius is the caller's to set, and the unplaceable stand alone", () => {
+  const records = [
+    fix("34 Parbury Avenue", PARBURY),
+    fix("32 Parbury Avenue", nearby(PARBURY, 48)),
+  ];
+  // Tightened below the error, the two addresses part again.
+  assert.deepEqual(
+    [...cloud.createSiteIndex(records, { radiusMeters: 20 }).siteFor("32 Parbury Avenue").aliases],
+    [],
+  );
+
+  // An address nobody has a fix for is never guessed into a neighbour, and an
+  // address this index never saw is simply itself.
+  const index = cloud.createSiteIndex([
+    fix("34 Parbury Avenue", PARBURY),
+    fix("Depot yard", null),
+    fix("", PARBURY),
+  ]);
+  assert.equal(index.siteFor("Depot yard").location, "Depot yard");
+  assert.deepEqual([...index.siteFor("34 Parbury Avenue").aliases], []);
+  assert.equal(index.siteFor("Somewhere new").location, "Somewhere new");
+  assert.deepEqual([...index.siteFor("Somewhere new").aliasKeys], []);
+  // "Unknown location" is not a place, so it never absorbs a real address.
+  assert.deepEqual([...index.siteFor(cloud.UNKNOWN_LOCATION).aliases], []);
+});

@@ -16,6 +16,7 @@
   }
 
   const tools = [...toolbar.querySelectorAll(".tool")];
+  const darkScheme = window.matchMedia("(prefers-color-scheme: dark)");
 
   // How far from the ring a pointer counts as "arriving at it". Generous
   // enough that the tool stops before the pointer reaches it, rather than the
@@ -48,9 +49,10 @@
   function syncStage() {
     const idle = isIdle();
     document.body.dataset.stage = idle ? "idle" : "live";
-    // The opening screen is white, so the phone's status bar should be too —
-    // otherwise a dark bar sits on top of a light page.
-    themeColour?.setAttribute("content", idle ? "#f6f7f6" : "#0d1512");
+    // The phone's status bar follows the idle palette. A live camera always
+    // keeps the dark shell regardless of the system preference.
+    const idleThemeColour = darkScheme.matches ? "#0d1512" : "#f6f7f6";
+    themeColour?.setAttribute("content", idle ? idleThemeColour : "#0d1512");
     if (!idle) {
       toolbar.dataset.orbitPaused = "false";
       // The first press ends the opening screen for this visit: from here the
@@ -117,6 +119,11 @@
   window.addEventListener("resize", () => {
     ring = null;
   });
+  if (typeof darkScheme.addEventListener === "function") {
+    darkScheme.addEventListener("change", syncStage);
+  } else {
+    darkScheme.addListener?.(syncStage);
+  }
   window.addEventListener("pointermove", trackPointer, { passive: true });
   // A touch has no hover, so a tap anywhere near the ring holds it still too.
   window.addEventListener("pointerdown", trackPointer, { passive: true });
