@@ -10,6 +10,7 @@
   const telemetry = window.StampNoteObservability;
   const facialRecognition = window.StampNoteFaceIdentity;
   const personIdentity = window.StampNotePersonTracker;
+  const frameScaling = window.StampNoteFrameScaler;
   const triage = window.StampNoteTriage;
   const autoCapture = window.StampNoteAutoCapture;
   const addressField = document.querySelector("#address-field");
@@ -485,6 +486,7 @@
   let painter = null;
   let faceHintAt = 0;
   let facePending = false;
+  let frameScaler = null;
   let aiReviewLock = false;
   let aiReviewRunning = false;
   let automaticAiReviewEnabled = readCache(AI_REVIEW_CONSENT_KEY) === "yes";
@@ -1029,10 +1031,16 @@
     return Boolean(stream) && monitorVideo.readyState >= 2 && Boolean(monitorVideo.videoWidth);
   }
 
-  // The trained model reads the video element itself, at whatever resolution the
-  // camera is giving; only the built-in detector needs the downscaled copy.
+  // The camera is opened at photo resolution, which is what captureImage below
+  // saves, but no model looks at a frame that large — each one shrinks it first.
+  // Shrinking it once here, into a canvas they all share, is the difference
+  // between three full-frame resizes on a tick and one. The photograph is still
+  // taken from the video itself, so nothing that is kept loses detail.
   function sampleVideo() {
-    return frameIsReady() ? monitorVideo : null;
+    if (!frameIsReady()) {
+      return null;
+    }
+    return frameScaler ? frameScaler.scale(monitorVideo) : monitorVideo;
   }
 
   function sampleFrame() {
@@ -2483,6 +2491,9 @@
       return;
     }
     modelDetector = detector.kind === "model" ? detector : null;
+    // Only the trained model is handed whole frames; the built-in fallback asks
+    // for its own small copy and has nothing to gain from this.
+    frameScaler = detector.wantsVideo ? frameScaling?.createFrameScaler() || null : null;
 
     // The face hint only ever propped up the built-in detector's head cue; the
     // trained model has no use for it.
@@ -2597,6 +2608,8 @@
     controller = null;
     faceDetector = null;
     faceHint = null;
+    frameScaler?.release?.();
+    frameScaler = null;
 
     releaseWakeLock();
 

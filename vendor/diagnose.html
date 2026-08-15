@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>StampNote machine diagnostic</title>
+    <style>
+      body { font: 13px ui-monospace, SFMono-Regular, monospace; margin: 16px; background: #0f1214; color: #dfe4e2; }
+      pre { white-space: pre-wrap; line-height: 1.5; }
+      video { width: 240px; float: right; border-radius: 8px; }
+      h1 { font-size: 15px; }
+      #hint { color: #ffd479; font-size: 14px; margin: 8px 0 14px; }
+    </style>
+  </head>
+  <body>
+    <video id="feed" playsinline muted autoplay></video>
+    <h1>StampNote machine diagnostic</h1>
+    <p id="hint">Allow the camera, then <strong>sit in front of it</strong> and stay there until it says done (~2 min).</p>
+    <pre id="out">starting…</pre>
+
+    <script type="module">
+      import { FaceLandmarker, FilesetResolver, PoseLandmarker } from "/vendor/mediapipe/vision_bundle.mjs";
+
+      const BASE = "/vendor/mediapipe";
+      const out = document.querySelector("#out");
+      const hint = document.querySelector("#hint");
+      const lines = [];
+      const log = (t = "") => {
+        lines.push(t);
+        out.textContent = lines.join("\n");
+        window.__report = lines.join("\n");
+      };
+      const row = (label, value) => log(`  ${String(label).padEnd(38)} ${value}`);
+
+      function stats(samples) {
+        const sorted = [...samples].sort((a, b) => a - b);
+        const mean = sorted.reduce((t, v) => t + v, 0) / sorted.length;
+        return {
+          mean,
+          p50: sorted[Math.floor(sorted.length / 2)],
+          max: sorted[sorted.length - 1],
+          text: `mean ${mean.toFixed(1).padStart(6)}ms  p50 ${sorted[Math.floor(sorted.length / 2)].toFixed(1).padStart(6)}ms  max ${sorted[sorted.length - 1].toFixed(1).padStart(6)}ms`,
+        };
+      }
+
+      function timeSync(label, runs, fn) {
+        for (let i = 0; i < 5; i += 1) fn();
+        const samples = [];
+        for (let i = 0; i < runs; i += 1) {
+          const t0 = performance.now();
+          fn();
+          samples.push(performance.now() - t0);
+        }
+        const s = stats(samples);
+        row(label, s.text);
+        return s.mean;
+      }
+
+      async function timeAsync(label, runs, fn) {
+        for (let i = 0; i < 3; i += 1) await fn();
+        const samples = [];
+        for (let i = 0; i < runs; i += 1) {
+          const t0 = performance.now();
+          await fn();
+          samples.push(performance.now() - t0);
+        }
+        const s = stats(samples);
+        row(label, s.text);
+        return s.mean;
+      }
+
+      // ---------- pure CPU, no GPU, no camera: is this machine's core slow? ----------
+      function cpuScore() {
+        // Fixed integer + float workload. Lower is faster. Comparable between
+        // machines because it touches nothing but the JS engine.
+        const started = performance.now();
+        let acc = 0;
+        for (let round = 0; round < 40; round += 1) {
+          for (let i = 1; i < 200000; i += 1) {
+            acc += Math.sqrt(i) * 1.0000001;
+            acc ^= (acc | 0) >>> 3;
+          }
+        }
+        return { ms: performance.now() - started, acc };
+      }
+
+      function memoryScore() {
+        // Bulk memcpy, which is what a frame copy on the CPU costs.
+        const source = new Uint8ClampedArray(1920 * 1080 * 4);
+        const target = new Uint8ClampedArray(source.length);
+        const started = performance.now();
+        for (let i = 0; i < 20; i += 1) target.set(source);
+        return performance.now() - started;
+      }
+
+      function makeFaceCanvas(width, height) {
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const c = canvas.getContext("2d");
+        c.fillStyle = "#243039";
+        c.fillRect(0, 0, width, height);
+        const r = height * 0.3;
+        const cx = width / 2;
+        const cy = height / 2;
+        c.fillStyle = "#c9a184";
+        c.beginPath();
+        c.ellipse(cx, cy, r * 0.76, r, 0, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = "#2b2119";
+        [-1, 1].forEach((s) => {
+          c.beginPath();
+          c.ellipse(cx + s * r * 0.3, cy - r * 0.22, r * 0.1, r * 0.062, 0, 0, Math.PI * 2);
+          c.fill();
+        });
+        c.beginPath();
+        c.ellipse(cx, cy + r * 0.4, r * 0.19, r * 0.078, 0, 0, Math.PI * 2);
+        c.fill();
+        c.strokeStyle = "#7a5a44";
+        c.lineWidth = r * 0.05;
+        c.beginPath();
+        c.moveTo(cx, cy - r * 0.12);
+        c.lineTo(cx, cy + r * 0.18);
+        c.stroke();
+        return canvas;
+      }
+
+      function frameMeter() {
+        let frames = 0;
+        let worst = 0;
+        let long = 0;
+        let last = performance.now();
+        let running = true;
+        (function tick(t) {
+          if (!running) return;
+          const gap = t - last;
+          last = t;
+          frames += 1;
+          if (gap > worst) worst = gap;
+          if (gap > 50) long += 1;
+          requestAnimationFrame(tick);
+        })(performance.now());
+        return (ms) => {
+          running = false;
+          return { fps: (frames / ms) * 1000, worst, long };
+        };
+      }
+
+      async function tickLoop(label, durationMs, work) {
+        for (let i = 0; i < 5; i += 1) {
+          await work(performance.now());
+          await new Promise((r) => setTimeout(r, 30));
+        }
+        const stop = frameMeter();
+        const started = performance.now();
+        const ticks = [];
+        while (performance.now() - started < durationMs) {
+          const t0 = performance.now();
+          await work(t0);
+          const spent = performance.now() - t0;
+          ticks.push(spent);
+          await new Promise((r) => setTimeout(r, Math.max(0, 250 - spent)));
+        }
+        const m = stop(performance.now() - started);
+        const s = stats(ticks);
+        row(
+          label,
+          `tick ${s.mean.toFixed(0).padStart(3)}ms  busy ${((s.mean / 250) * 100).toFixed(0).padStart(2)}%  ui ${m.fps.toFixed(0).padStart(2)}fps  worst ${m.worst.toFixed(0).padStart(4)}ms  janky ${m.long}`,
+        );
+      }
+
+      async function make(factory, options) {
+        try {
+          const task = await factory({ ...options, baseOptions: { ...options.baseOptions, delegate: "GPU" } });
+          return { task, delegate: "GPU" };
+        } catch (error) {
+          return { task: await factory(options), delegate: `CPU(${error?.message || error})` };
+        }
+      }
+
+      async function main() {
+        // ---------------- machine ----------------
+        log("=== MACHINE ===");
+        const gl0 = document.createElement("canvas").getContext("webgl2");
+        const dbg = gl0?.getExtension("WEBGL_debug_renderer_info");
+        row("platform", navigator.platform || "?");
+        row("cores (hardwareConcurrency)", navigator.hardwareConcurrency);
+        row("deviceMemory (GB)", navigator.deviceMemory ?? "not reported");
+        row("devicePixelRatio", window.devicePixelRatio);
+        row("gpu", dbg ? gl0.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : "unknown");
+        try {
+          const hints = await navigator.userAgentData?.getHighEntropyValues([
+            "architecture", "bitness", "platformVersion", "model",
+          ]);
+          if (hints) row("arch", `${hints.architecture || "?"} ${hints.bitness || ""} ${hints.platformVersion || ""}`.trim());
+        } catch {}
+        row("userAgent", navigator.userAgent.slice(0, 90));
+        log();
+
+        // ---------------- raw CPU ----------------
+        log("=== RAW CPU (no GPU, no camera) — lower is faster ===");
+        const cpu = cpuScore();
+        row("single-core JS workload", `${cpu.ms.toFixed(0)}ms`);
+        row("bulk memcpy, 20x 8MB frame", `${memoryScore().toFixed(0)}ms`);
+        log();
+
+        // ---------------- camera ----------------
+        log("=== CAMERA ===");
+        const video = document.querySelector("#feed");
+        let haveCamera = false;
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+            audio: false,
+          });
+          video.srcObject = stream;
+          await video.play();
+          const track = stream.getVideoTracks()[0];
+          const s = track.getSettings();
+          haveCamera = true;
+          row("camera", `${s.width}x${s.height} @${s.frameRate}fps`);
+          row("label", track.label || "(hidden)");
+        } catch (error) {
+          row("camera", `UNAVAILABLE (${error?.name})`);
+        }
+        await new Promise((r) => setTimeout(r, 700));
+        log();
+
+        // ---------------- frame transfer ----------------
+        // The suspected difference between a laptop with unified memory and a
+        // desktop with a card on the far end of a PCIe bus.
+        log("=== FRAME TRANSFER (the unified-memory vs discrete-GPU question) ===");
+        const synthetic = makeFaceCanvas(1920, 1080);
+        const gl = document.createElement("canvas").getContext("webgl2");
+        const texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+
+        const upload = (source) => {
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+          gl.finish();
+        };
+        if (haveCamera && video.videoWidth) {
+          timeSync("upload live <video> to GL texture", 25, () => upload(video));
+        }
+        timeSync("upload 1080p canvas to GL texture", 25, () => upload(synthetic));
+
+        const readCanvas = document.createElement("canvas");
+        readCanvas.width = 192;
+        readCanvas.height = 144;
+        const readContext = readCanvas.getContext("2d", { willReadFrequently: true });
+        if (haveCamera && video.videoWidth) {
+          timeSync("draw video -> 192x144 + getImageData", 25, () => {
+            readContext.drawImage(video, 0, 0, 192, 144);
+            return readContext.getImageData(0, 0, 192, 144);
+          });
+          timeSync("draw video -> 150x150 crop (cpu canvas)", 25, () => {
+            const c = document.createElement("canvas");
+            c.width = 150;
+            c.height = 150;
+            const ctx = c.getContext("2d", { willReadFrequently: true });
+            ctx.drawImage(video, 0, 0, 150, 150);
+            return c;
+          });
+          timeSync("draw video -> 150x150 crop (gpu canvas)", 25, () => {
+            const c = document.createElement("canvas");
+            c.width = 150;
+            c.height = 150;
+            c.getContext("2d").drawImage(video, 0, 0, 150, 150);
+            return c;
+          });
+        }
+        const pixels = new Uint8Array(256 * 256 * 4);
+        timeSync("GPU readback, readPixels 256x256", 25, () => {
+          gl.readPixels(0, 0, 256, 256, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        });
+        log();
+
+        // ---------------- models ----------------
+        log("=== MODELS ===");
+        const fileset = await FilesetResolver.forVisionTasks(`${BASE}/wasm`);
+        let t0 = performance.now();
+        const face = await make((o) => FaceLandmarker.createFromOptions(fileset, o), {
+          baseOptions: { modelAssetPath: `${BASE}/models/face_landmarker.task` },
+          runningMode: "IMAGE",
+          numFaces: 4,
+          minFaceDetectionConfidence: 0.65,
+        });
+        row("face landmarker build", `${(performance.now() - t0).toFixed(0)}ms   delegate=${face.delegate}`);
+        t0 = performance.now();
+        const pose = await make((o) => PoseLandmarker.createFromOptions(fileset, o), {
+          baseOptions: { modelAssetPath: `${BASE}/models/pose_landmarker_lite.task` },
+          runningMode: "IMAGE",
+          numPoses: 4,
+        });
+        row("pose landmarker build", `${(performance.now() - t0).toFixed(0)}ms   delegate=${pose.delegate}`);
+
+        t0 = performance.now();
+        const faceapi = await import("/vendor/face-api/face-api.esm.js");
+        const api = faceapi.default || faceapi;
+        await api.tf.setBackend("webgl");
+        await api.tf.ready();
+        await api.nets.faceRecognitionNet.loadFromUri("/vendor/face-api/model");
+        row("face-api build", `${(performance.now() - t0).toFixed(0)}ms   backend=${api.tf.getBackend()}`);
+        log();
+
+        // ---------------- compute, camera not involved ----------------
+        log("=== COMPUTE ONLY (synthetic face, no camera in the path) ===");
+        const syntheticFaces = face.task.detect(synthetic)?.faceLandmarks?.length || 0;
+        row("synthetic face detected", syntheticFaces > 0 ? "yes" : "NO (numbers below are a floor)");
+        timeSync("faceLandmarker on 1080p canvas", 20, () => face.task.detect(synthetic));
+        const synthetic960 = makeFaceCanvas(960, 540);
+        timeSync("faceLandmarker on 960 canvas", 20, () => face.task.detect(synthetic960));
+        timeSync("poseLandmarker on 1080p canvas", 20, () => pose.task.detect(synthetic));
+
+        const crop = document.createElement("canvas");
+        crop.width = 150;
+        crop.height = 150;
+        crop.getContext("2d").drawImage(synthetic, 0, 0, 150, 150);
+        await timeAsync("computeFaceDescriptor (150x150)", 12, () =>
+          api.nets.faceRecognitionNet.computeFaceDescriptor(crop),
+        );
+        log();
+
+        // ---------------- the real thing ----------------
+        if (haveCamera && video.videoWidth) {
+          log("=== REAL CAMERA ===");
+          hint.textContent = "Please look at the camera now — measuring with your face in frame.";
+          // Wait for a face, since the landmark pass is most of the cost and it
+          // only runs when there is one.
+          let seen = 0;
+          const waitStart = performance.now();
+          while (performance.now() - waitStart < 20000) {
+            seen = face.task.detect(video)?.faceLandmarks?.length || 0;
+            if (seen > 0) break;
+            await new Promise((r) => setTimeout(r, 250));
+          }
+          row("face in frame", seen > 0 ? "YES" : "no — sit in front of the camera and re-run");
+
+          timeSync("faceLandmarker on live video", 20, () => face.task.detect(video));
+          const scaleCanvas = document.createElement("canvas");
+          scaleCanvas.width = 960;
+          scaleCanvas.height = Math.round((video.videoHeight * 960) / video.videoWidth);
+          const scaleContext = scaleCanvas.getContext("2d", { alpha: false });
+          const shared = () => {
+            scaleContext.drawImage(video, 0, 0, scaleCanvas.width, scaleCanvas.height);
+            return scaleCanvas;
+          };
+          timeSync("downscale video -> 960 canvas", 30, shared);
+          timeSync("faceLandmarker on shared 960 canvas", 20, () => face.task.detect(shared()));
+          log();
+
+          log("=== TICK LOOPS ON THE REAL CAMERA (250ms cadence, 6s each) ===");
+          let last = 0;
+          await tickLoop("onboarding, video 1080p (old)", 6000, async (t) => {
+            face.task.detect(video);
+            if (t - last >= 900) {
+              last = t;
+              const c = document.createElement("canvas");
+              c.width = 150;
+              c.height = 150;
+              c.getContext("2d", { willReadFrequently: true }).drawImage(video, 0, 0, 150, 150);
+              await api.nets.faceRecognitionNet.computeFaceDescriptor(c);
+            }
+          });
+          last = 0;
+          await tickLoop("onboarding, shared 960 (new)", 6000, async (t) => {
+            const frame = shared();
+            face.task.detect(frame);
+            if (t - last >= 900) {
+              last = t;
+              const c = document.createElement("canvas");
+              c.width = 150;
+              c.height = 150;
+              c.getContext("2d").drawImage(frame, 0, 0, 150, 150);
+              await api.nets.faceRecognitionNet.computeFaceDescriptor(c);
+            }
+          });
+          last = 0;
+          await tickLoop("gate, pose+face 1080p (old)", 6000, async (t) => {
+            pose.task.detect(video);
+            face.task.detect(video);
+            face.task.detect(video);
+            readContext.drawImage(video, 0, 0, 192, 144);
+            readContext.getImageData(0, 0, 192, 144);
+            if (t - last >= 1000) {
+              last = t;
+              const c = document.createElement("canvas");
+              c.width = 150;
+              c.height = 150;
+              c.getContext("2d", { willReadFrequently: true }).drawImage(video, 0, 0, 150, 150);
+              await api.nets.faceRecognitionNet.computeFaceDescriptor(c);
+            }
+          });
+          last = 0;
+          await tickLoop("gate, pose+face shared 960 (new)", 6000, async (t) => {
+            const frame = shared();
+            pose.task.detect(frame);
+            face.task.detect(frame);
+            readContext.drawImage(frame, 0, 0, 192, 144);
+            readContext.getImageData(0, 0, 192, 144);
+            if (t - last >= 1000) {
+              last = t;
+              const c = document.createElement("canvas");
+              c.width = 150;
+              c.height = 150;
+              c.getContext("2d").drawImage(frame, 0, 0, 150, 150);
+              await api.nets.faceRecognitionNet.computeFaceDescriptor(c);
+            }
+          });
+        }
+
+        log();
+        log("=== done — copy everything above ===");
+        hint.textContent = "Done. Copy the whole report and send it over.";
+        window.__done = true;
+      }
+
+      main().catch((error) => {
+        log(`FAILED: ${error?.stack || error}`);
+        hint.textContent = "It failed — copy the report anyway.";
+        window.__done = true;
+      });
+    </script>
+  </body>
+</html>

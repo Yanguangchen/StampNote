@@ -43,8 +43,10 @@ test("enrollment stores a representative face gallery and can delete it", () => 
   assert.match(app, /cloud\.saveWorkerFace\(/);
   assert.match(app, /cloud\.deleteWorkerFace\(/);
   assert.match(app, /facingMode:\s*"user"/);
-  assert.match(app, /FACE_CAMERA_WIDTH\s*=\s*1920/);
-  assert.match(app, /FACE_CAMERA_HEIGHT\s*=\s*1080/);
+  // Nothing keeps a frame at photo resolution here, so the camera is asked only
+  // for what the face model and the badge-sized portrait can use.
+  assert.match(app, /FACE_CAMERA_WIDTH\s*=\s*1280/);
+  assert.match(app, /FACE_CAMERA_HEIGHT\s*=\s*720/);
   assert.match(app, /enrollmentSamples:\s*ONBOARDING_SAMPLES/);
   assert.match(app, /body\?\.enrollmentAccepted\s*===\s*true/);
   assert.match(app, /loadFaceScanner\(\)/);
@@ -52,11 +54,15 @@ test("enrollment stores a representative face gallery and can delete it", () => 
   // The one frame that is kept is a badge-sized square, taken from an accepted
   // sample and sent with the enrollment; nothing else is rasterized.
   assert.match(app, /PROFILE_PHOTO_EDGE\s*=\s*256/);
-  assert.match(app, /canvas\.toDataURL\("image\/jpeg", PROFILE_PHOTO_QUALITY\)/);
-  assert.match(app, /profilePhoto = captureProfilePhoto\(\) \|\| profilePhoto/);
-  assert.match(app, /profilePhoto,/);
+  assert.match(app, /profileCanvas\.toDataURL\("image\/jpeg", PROFILE_PHOTO_QUALITY\)/);
+  assert.match(app, /captureProfileFrame\(\);/);
+  assert.match(app, /profilePhoto: encodeProfilePhoto\(\)/);
+  // Encoding it is worth a scan's worth of ticks, so it happens once, when the
+  // enrollment is saved, rather than on every accepted sample.
+  assert.equal(app.match(/toDataURL/g).length, 1);
+  assert.match(app, /async function saveEnrollment\(\)[\s\S]*?encodeProfilePhoto\(\)/);
   // A cancelled scan keeps nothing.
-  assert.match(app, /profilePhoto = null;/);
+  assert.match(app, /profileReady = false;/);
 });
 
 test("the recording page links directly to worker onboarding", () => {

@@ -324,7 +324,15 @@
           looking = true;
 
           try {
-            const detection = detector.detect(frame, { faces: getFaces() });
+            // While the opening scan is running the faces come from the
+            // focused landmarker below, so the detector is asked for the body
+            // alone and nothing measures a face twice on one tick.
+            const scanning =
+              enrollmentRequired && !state.activityStarted && Boolean(enrollmentDetector?.detect);
+            const detection = detector.detect(frame, {
+              faces: getFaces(),
+              poseOnly: scanning,
+            });
             const tracked = tracker.update(detection, timestamp);
 
             state.present = tracked.present;
@@ -353,10 +361,9 @@
             // little torso to create a body. During the opening scan, use the
             // focused face-only landmarker so recognition does not depend on a
             // visible shoulder or hip. Normal activity returns to pose bodies.
-            const enrollmentBodies =
-              enrollmentRequired && !state.activityStarted && enrollmentDetector?.detect
-                ? enrollmentDetector.detect(frame)?.bodies || []
-                : trackableBodies;
+            const enrollmentBodies = scanning
+              ? enrollmentDetector.detect(frame)?.bodies || []
+              : trackableBodies;
             // The tracker samples a tiny local colour histogram from this frame
             // so a person can recover their session ID after leaving the view.
             const identityBodies = faceIdentity?.describe

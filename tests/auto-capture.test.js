@@ -23,11 +23,14 @@ function createHarness(options = {}) {
     gpsLocation: { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 12.5 },
     captureFails: false,
     detectionFails: 0,
+    detectOptions: [],
     saved,
   };
 
   const detector = {
-    detect: () => {
+    detect: (frame, detectOptions) => {
+      harness.detectOptions.push(detectOptions);
+
       if (harness.detectionFails > 0) {
         harness.detectionFails -= 1;
         throw new Error("GPU context was lost");
@@ -148,6 +151,41 @@ test("the opening scan uses the focused face detector even without a visible pos
 
   assert.equal(focusedScans, 2);
   assert.equal(harness.controller.getState().activityStarted, true);
+});
+
+test("the opening scan asks the detector for the body alone, not a second face", async () => {
+  const harness = createHarness({
+    faceIdentity: createEnrollmentIdentity(2),
+    enrollmentDetector: {
+      detect: () => ({ bodies: [{ face: { eyeLeft: [], eyeRight: [] } }] }),
+      reset() {},
+    },
+  });
+  harness.present = true;
+  harness.controller.start();
+
+  // Two scanning ticks: the faces come from the focused landmarker, so the
+  // detector must not measure one of its own and have it thrown away.
+  await harness.controller.tick();
+  await harness.controller.tick();
+  assert.deepEqual(
+    harness.detectOptions.map((entry) => entry.poseOnly),
+    [true, true],
+  );
+  assert.equal(harness.controller.getState().activityStarted, true);
+
+  // Once the scan hands over, the full set of parts is wanted again.
+  await harness.controller.tick();
+  assert.equal(harness.detectOptions.at(-1).poseOnly, false);
+});
+
+test("without a focused scanner the detector is still asked for everything", async () => {
+  const harness = createHarness({ faceIdentity: createEnrollmentIdentity(2) });
+  harness.present = true;
+  harness.controller.start();
+
+  await harness.controller.tick();
+  assert.equal(harness.detectOptions.at(-1).poseOnly, false);
 });
 
 test("face enrollment can be skipped without trapping the activity", async () => {

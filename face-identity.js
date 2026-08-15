@@ -66,7 +66,11 @@
     const canvas = documentRef.createElement("canvas");
     canvas.width = settings.cropSize;
     canvas.height = settings.cropSize;
-    const context = canvas.getContext?.("2d", { willReadFrequently: true });
+    // The crop is only ever drawn to and then uploaded to the recognition
+    // network as a texture; its pixels are never read back here. Asking for the
+    // readback-friendly canvas moved it off the GPU and made every sample pull
+    // the whole camera frame through the CPU to fill 150 pixels square.
+    const context = canvas.getContext?.("2d");
     if (!context) return null;
 
     const desiredCenter = { x: settings.cropSize * 0.5, y: settings.cropSize * 0.4 };

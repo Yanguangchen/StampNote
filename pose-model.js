@@ -50,6 +50,16 @@ const FACE_CONNECTIONS = Object.freeze({
   lips: FaceLandmarker.FACE_LANDMARKS_LIPS,
 });
 
+// The frame handed in is the video element on its own, or the shared
+// downscaled copy the models read instead of each shrinking the video
+// themselves. A canvas reports its size as plain width and height.
+function sizeOf(source) {
+  return {
+    width: Number(source?.videoWidth || source?.width || 0),
+    height: Number(source?.videoHeight || source?.height || 0),
+  };
+}
+
 function createAdapter(landmarker) {
   const mapping = window.StampNotePoseMapping;
   let objects = null;
@@ -60,6 +70,12 @@ function createAdapter(landmarker) {
   // its previous answer rather than blinking out of the picture.
   const ran = { face: 0, hands: 0, objects: 0 };
   const cached = { faces: [], hands: [], vehicles: [], person: 0 };
+  // Built on the first tick that wants more than a body, so the opening scan
+  // does not share its thread with a download and a shader compile.
+  let wantOptional = null;
+  // Set the moment the shared face model is asked for, not when it arrives, so
+  // closing early still hands back the reference the loader took out.
+  let faceHeld = false;
 
   return {
     // The model reads the video element directly, at whatever resolution the
@@ -80,19 +96,52 @@ function createAdapter(landmarker) {
       hands = detector;
     },
 
-    detect(video) {
-      if (!video?.videoWidth) {
+    onFirstFullTick(build) {
+      wantOptional = build;
+    },
+
+    claimFace() {
+      faceHeld = true;
+    },
+
+    detect(video, options = {}) {
+      const { width } = sizeOf(video);
+      if (!width) {
         return mapping.buildCrowd([], []);
       }
 
+      // The opening face scan reads its faces from the focused landmarker in
+      // pose-model's `loadFaceScanner`, and takes no photographs, so a face,
+      // a pair of hands and a parked car asked for here would all be measured
+      // and then thrown away. Skipping them is the difference between one
+      // model on the scanning tick and four.
+      const poseOnly = Boolean(options.poseOnly);
       const now = performance.now();
       const pose = landmarker.detect(video);
       const poses = pose?.landmarks || [];
 
+      if (poseOnly) {
+        cached.faces = [];
+        cached.hands = [];
+        // Asked again as soon as the scan hands over, rather than waiting out
+        // a cadence measured from before it started.
+        ran.face = 0;
+        ran.hands = 0;
+        ran.objects = 0;
+        return mapping.buildCrowd(poses, cached.vehicles, { person: cached.person });
+      }
+
+      if (wantOptional) {
+        const build = wantOptional;
+        wantOptional = null;
+        build();
+      }
+
       if (objects && now - ran.objects >= CADENCE.objects) {
         const seen = objects.detect(video);
+        const { height } = sizeOf(video);
 
-        cached.vehicles = mapping.readVehicles(seen, video.videoWidth, video.videoHeight);
+        cached.vehicles = mapping.readVehicles(seen, width, height);
         cached.person = mapping.readPeople(seen);
         ran.objects = now;
       }
@@ -136,8 +185,15 @@ function createAdapter(landmarker) {
     close() {
       landmarker?.close?.();
       objects?.close?.();
-      faces?.close?.();
       hands?.close?.();
+      // The face model is shared with the opening scan, so it is handed back
+      // rather than closed outright.
+      faces = null;
+      if (faceHeld) {
+        faceHeld = false;
+        releaseFaceLandmarker();
+      }
+      wantOptional = null;
     },
   };
 }
@@ -171,11 +227,19 @@ async function createLandmarker(fileset) {
   }
 }
 
+// The recording overlay and the opening scan both want face landmarks, and
+// with the scan asking the detector for the body alone they never want them on
+// the same tick. One model serves both, so the four megabytes are fetched,
+// compiled and given a GPU context once instead of twice.
+//
+// Where the two configurations differed, the stricter one wins: the scan is
+// what decides whose name goes on an attendance record, and a face MediaPipe is
+// unsure of made a poor outline for the overlay anyway.
 async function createFaceScanner(fileset) {
   const options = {
     baseOptions: { modelAssetPath: `${BASE}/models/face_landmarker.task` },
     runningMode: "IMAGE",
-    numFaces: 2,
+    numFaces: MAX_PEOPLE,
     outputFaceBlendshapes: false,
     outputFacialTransformationMatrixes: false,
     minFaceDetectionConfidence: 0.65,
@@ -192,6 +256,51 @@ async function createFaceScanner(fileset) {
   }
 }
 
+// Resolving the fileset reads and compiles the eleven-megabyte vision runtime.
+// Both entry points need it, and onboarding needs only this one.
+let filesetPromise = null;
+
+function visionFileset() {
+  if (!filesetPromise) {
+    filesetPromise = FilesetResolver.forVisionTasks(`${BASE}/wasm`).catch((error) => {
+      filesetPromise = null;
+      throw error;
+    });
+  }
+  return filesetPromise;
+}
+
+// Whoever asks for the shared face model last is the one who closes it, so the
+// scan handing over does not take the overlay's landmarks with it.
+let facePromise = null;
+let faceHolders = 0;
+
+function acquireFaceLandmarker() {
+  faceHolders += 1;
+  if (!facePromise) {
+    facePromise = visionFileset()
+      .then(createFaceScanner)
+      .catch((error) => {
+        facePromise = null;
+        faceHolders = 0;
+        throw error;
+      });
+  }
+  return facePromise;
+}
+
+function releaseFaceLandmarker() {
+  faceHolders = Math.max(0, faceHolders - 1);
+  if (faceHolders > 0) return;
+
+  const pending = facePromise;
+  facePromise = null;
+  // A camera stopped while the model was still on its way still has to hand
+  // back the GPU context, so it is closed when it lands rather than left with
+  // nothing able to reach it.
+  pending?.then((model) => model?.close?.()).catch(() => {});
+}
+
 // Enrollment has to work with a face filling the screen, when a pose model may
 // not see enough shoulders or hips to report a body. This focused adapter runs
 // only the face landmarker and returns the same face-outline shape used by the
@@ -200,18 +309,21 @@ async function loadFaceScanner() {
   if (!window.StampNotePoseMapping) {
     throw new Error("The pose mapping is missing.");
   }
-  const fileset = await FilesetResolver.forVisionTasks(`${BASE}/wasm`);
-  const scanner = await createFaceScanner(fileset);
+  const scanner = await acquireFaceLandmarker();
+  let held = true;
   return {
     detect(video) {
-      if (!video?.videoWidth) return { bodies: [] };
+      if (!sizeOf(video).width) return { bodies: [] };
       const faces = (scanner.detect(video)?.faceLandmarks || [])
         .map((face) => window.StampNotePoseMapping.toFaceOutlines(face, FACE_CONNECTIONS))
         .filter(Boolean);
       return { bodies: faces.map((face) => ({ face })) };
     },
     close() {
-      scanner.close?.();
+      // The recording overlay may still be holding the same model.
+      if (!held) return;
+      held = false;
+      releaseFaceLandmarker();
     },
   };
 }
@@ -224,51 +336,50 @@ async function load() {
     throw new Error("The pose mapping is missing.");
   }
 
-  const fileset = await FilesetResolver.forVisionTasks(`${BASE}/wasm`);
+  const fileset = await visionFileset();
   const adapter = createAdapter(await createLandmarker(fileset));
 
-  // Asked at a lower bar than the mapping accepts, so the mapping is the one
-  // place a threshold lives and `person` can be read without being drawn.
-  ObjectDetector.createFromOptions(fileset, {
-    baseOptions: { modelAssetPath: `${BASE}/models/efficientdet_lite0.tflite` },
-    runningMode: "IMAGE",
-    scoreThreshold: 0.3,
-    maxResults: 8,
-  })
-    .then((detector) => adapter.attachObjectDetector(detector))
-    .catch(() => {
-      // People are still tracked; nothing simply gets labelled a vehicle.
-    });
-
-  FaceLandmarker.createFromOptions(fileset, {
-    baseOptions: { modelAssetPath: `${BASE}/models/face_landmarker.task` },
-    runningMode: "IMAGE",
-    numFaces: MAX_PEOPLE,
-    outputFaceBlendshapes: false,
-    outputFacialTransformationMatrixes: false,
-    minFaceDetectionConfidence: 0.6,
-    minFacePresenceConfidence: 0.6,
-    minTrackingConfidence: 0.6,
-  })
+  // The same model the opening scan reads, rather than a second copy of it.
+  adapter.claimFace();
+  acquireFaceLandmarker()
     .then((detector) => adapter.attachFaceLandmarker(detector))
     .catch(() => {
       // The body is still rigged; there is simply no face drawn on it.
     });
 
-  // The pose model reports a wrist and three coarse hand points; fingers come
-  // only from here. Another seven and a half megabytes, so it follows the others
-  // in rather than holding the watch up.
-  HandLandmarker.createFromOptions(fileset, {
-    baseOptions: { modelAssetPath: `${BASE}/models/hand_landmarker.task` },
-    runningMode: "IMAGE",
-    numHands: MAX_HANDS,
-    minHandDetectionConfidence: 0.5,
-    minHandPresenceConfidence: 0.5,
-  })
-    .then((detector) => adapter.attachHandLandmarker(detector))
-    .catch(() => {
-      // Arms still reach the wrist; there are simply no fingers on the end.
-    });
+  // Twelve megabytes between them, and the opening scan asks for neither. They
+  // are built the first time a tick actually wants them, so fetching and
+  // compiling them is not competing with the scan for the one thread that has
+  // to stay responsive while somebody is standing at the camera.
+  adapter.onFirstFullTick(() => {
+    // Asked at a lower bar than the mapping accepts, so the mapping is the one
+    // place a threshold lives and `person` can be read without being drawn.
+    ObjectDetector.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: `${BASE}/models/efficientdet_lite0.tflite` },
+      runningMode: "IMAGE",
+      scoreThreshold: 0.3,
+      maxResults: 8,
+    })
+      .then((detector) => adapter.attachObjectDetector(detector))
+      .catch(() => {
+        // People are still tracked; nothing simply gets labelled a vehicle.
+      });
+
+    // The pose model reports a wrist and three coarse hand points; fingers come
+    // only from here. Another seven and a half megabytes, so it follows the
+    // others in rather than holding the watch up.
+    HandLandmarker.createFromOptions(fileset, {
+      baseOptions: { modelAssetPath: `${BASE}/models/hand_landmarker.task` },
+      runningMode: "IMAGE",
+      numHands: MAX_HANDS,
+      minHandDetectionConfidence: 0.5,
+      minHandPresenceConfidence: 0.5,
+    })
+      .then((detector) => adapter.attachHandLandmarker(detector))
+      .catch(() => {
+        // Arms still reach the wrist; there are simply no fingers on the end.
+      });
+  });
 
   return adapter;
 }

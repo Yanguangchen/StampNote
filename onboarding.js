@@ -4,6 +4,7 @@
   const cloud = window.StampNoteFirebase;
   const workerFace = window.StampNoteWorkerFace;
   const faceIdentity = window.StampNoteFaceIdentity;
+  const frameScaling = window.StampNoteFrameScaler;
   const form = document.querySelector("#worker-form");
   const workerId = document.querySelector("#worker-id");
   const workerName = document.querySelector("#worker-name");
@@ -25,8 +26,11 @@
   // on one blink, expression, or moment of motion.
   const ONBOARDING_SAMPLES = 7;
   const ONBOARDING_SAMPLE_MS = 900;
-  const FACE_CAMERA_WIDTH = 1920;
-  const FACE_CAMERA_HEIGHT = 1080;
+  // Enrollment keeps no photograph beyond a badge-sized portrait, so the camera
+  // is asked only for what the face model and that portrait can use. A larger
+  // frame would be shrunk again before anything looked at it.
+  const FACE_CAMERA_WIDTH = 1280;
+  const FACE_CAMERA_HEIGHT = 720;
 
   // The portrait is a badge-sized square, not a photograph: enough to tell two
   // workers apart in a roster, small enough to sit inside the worker document.
@@ -34,7 +38,8 @@
   const PROFILE_PHOTO_QUALITY = 0.72;
 
   let user = null;
-  let profilePhoto = null;
+  let profileCanvas = null;
+  let profileReady = false;
   let stream = null;
   let scanner = null;
   let recognizer = null;
@@ -42,6 +47,7 @@
   let scanning = false;
   let saving = false;
   let samples = [];
+  let scaler = null;
 
   function setStatus(message, state = "idle") {
     status.textContent = message;
@@ -80,23 +86,26 @@
 
   // Taken from the live frame at the moment a sample is accepted, so the face
   // is the one the scan just measured: centred, lit, and looking at the camera.
-  function captureProfilePhoto() {
+  // Only the pixels are kept while scanning; the JPEG is encoded once, at the
+  // end, rather than seven times over on the ticks that can least afford it.
+  function captureProfileFrame() {
     const width = video.videoWidth;
     const height = video.videoHeight;
-    if (!width || !height) return null;
+    if (!width || !height) return;
 
     try {
       const edge = Math.min(width, height);
-      const canvas = document.createElement("canvas");
-      canvas.width = PROFILE_PHOTO_EDGE;
-      canvas.height = PROFILE_PHOTO_EDGE;
-      const context = canvas.getContext("2d");
-      if (!context) return null;
+      if (!profileCanvas) {
+        profileCanvas = document.createElement("canvas");
+        profileCanvas.width = PROFILE_PHOTO_EDGE;
+        profileCanvas.height = PROFILE_PHOTO_EDGE;
+      }
+      const context = profileCanvas.getContext("2d");
+      if (!context) return;
 
       // The preview is mirrored, so the portrait is mirrored to match: the
       // worker gets back the face they were just looking at.
-      context.translate(PROFILE_PHOTO_EDGE, 0);
-      context.scale(-1, 1);
+      context.setTransform(-1, 0, 0, 1, PROFILE_PHOTO_EDGE, 0);
       context.drawImage(
         video,
         (width - edge) / 2,
@@ -108,9 +117,18 @@
         PROFILE_PHOTO_EDGE,
         PROFILE_PHOTO_EDGE,
       );
-      return canvas.toDataURL("image/jpeg", PROFILE_PHOTO_QUALITY);
+      context.setTransform(1, 0, 0, 1, 0, 0);
+      profileReady = true;
     } catch {
       // A portrait is a nicety; enrollment carries on without one.
+    }
+  }
+
+  function encodeProfilePhoto() {
+    if (!profileReady || !profileCanvas) return null;
+    try {
+      return profileCanvas.toDataURL("image/jpeg", PROFILE_PHOTO_QUALITY);
+    } catch {
       return null;
     }
   }
@@ -124,6 +142,8 @@
     scanner = null;
     recognizer?.reset?.();
     recognizer = null;
+    scaler?.release?.();
+    scaler = null;
     stream?.getTracks().forEach((track) => track.stop());
     stream = null;
     video.srcObject = null;
@@ -220,7 +240,7 @@
         embedding,
         embeddings: samples,
         sampleCount: samples.length,
-        profilePhoto,
+        profilePhoto: encodeProfilePhoto(),
       });
       releaseScanner("complete");
       progress.max = ONBOARDING_SAMPLES;
@@ -244,9 +264,14 @@
   async function scanOnce() {
     if (!scanning || saving || !scanner || !recognizer) return;
 
+    const started = performance.now();
     try {
-      const detection = scanner.detect(video);
-      const described = await recognizer.describe(detection?.bodies || [], video, Date.now());
+      // The landmarker and the recognition crop read the same shrunken copy of
+      // the frame, so the camera's full resolution is drawn down once a tick
+      // instead of being resized separately by each of them.
+      const frame = scaler ? scaler.scale(video) : video;
+      const detection = scanner.detect(frame);
+      const described = await recognizer.describe(detection?.bodies || [], frame, Date.now());
       const accepted = described.find(
         (body) => body?.faceEmbedding && body?.enrollmentAccepted === true,
       );
@@ -254,7 +279,7 @@
         samples.push(accepted.faceEmbedding);
         // Keep the most recent accepted frame: by the last sample the worker has
         // settled, so the newest one is usually the best portrait.
-        profilePhoto = captureProfilePhoto() || profilePhoto;
+        captureProfileFrame();
       }
       const scanState = recognizer.enrollmentState();
       updateProgress({ ...scanState, samples: samples.length });
@@ -266,7 +291,12 @@
       instruction.textContent = "The camera paused for a moment. Hold still while it retries.";
     }
 
-    if (scanning) timer = window.setTimeout(scanOnce, 250);
+    // A scan that took longer than its own interval is given that much room
+    // again, so a slow device spaces the work out rather than leaving the page
+    // no time of its own between ticks.
+    if (scanning) {
+      timer = window.setTimeout(scanOnce, Math.max(250, performance.now() - started));
+    }
   }
 
   async function startScan() {
@@ -298,7 +328,7 @@
     workerId.value = normalizedId;
     workerName.value = normalizedName;
     samples = [];
-    profilePhoto = null;
+    profileReady = false;
     startButton.disabled = true;
     cancelButton.hidden = false;
     scannerView.dataset.status = "scanning";
@@ -317,6 +347,7 @@
       });
       video.srcObject = stream;
       await video.play();
+      scaler = frameScaling?.createFrameScaler() || null;
       [scanner, recognizer] = await Promise.all([
         window.StampNoteModel.loadFaceScanner(),
         Promise.resolve(
@@ -354,7 +385,7 @@
     releaseScanner("idle");
     samples = [];
     // A cancelled scan leaves nothing behind, portrait included.
-    profilePhoto = null;
+    profileReady = false;
     updateProgress({ status: "no_face", samples: 0, total: ONBOARDING_SAMPLES });
     instruction.textContent = "Your face should fill the oval.";
     setStatus("Face scan cancelled. No template was saved.");
