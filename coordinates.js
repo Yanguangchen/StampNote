@@ -128,6 +128,7 @@
           attendance: [],
           sessionGpsReadings: [],
           truckLocation: { x: null, y: null },
+          weather: null,
           firstAtMs: null,
           lastAtMs: null,
         });
@@ -170,6 +171,7 @@
       const normalized = data.cleanTruckLocation(saved?.truckLocation);
       session.sessionLabel = String(saved?.label || "").trim() || session.sessionLabel;
       session.truckLocation = normalized;
+      session.weather = data.cleanSessionWeather(saved?.weather) || session.weather;
       session.savedSessionKey = String(saved?.key || "") || null;
       if (data.normalizeGpsLocation(saved?.gpsLocation)) {
         const capturedAtMs = Number(saved?.gpsCapturedAtMs) || 0;
@@ -291,6 +293,7 @@
       gpsReadings: session.readings.map((reading) => ({ ...reading })),
       reference: session.reference ? { ...session.reference } : null,
       truckLocation: { ...comparison.truckLocation },
+      weather: session.weather ? { ...session.weather } : null,
       comparison: {
         status: comparison.status,
         distanceMeters: comparison.distanceMeters,
@@ -320,6 +323,7 @@
 
   const cloud = globalScope.StampNoteFirebase;
   const data = globalScope.StampNoteCloudData;
+  const weather = globalScope.StampNoteWeather;
   const telemetry = globalScope.StampNoteObservability;
   const signInButton = document.querySelector("#coordinate-sign-in");
   const signOutButton = document.querySelector("#coordinate-sign-out");
@@ -455,9 +459,51 @@
       headRow.append(heading);
     });
     head.append(headRow);
-    const body = document.createElement("tbody");
+    const referenceBody = document.createElement("tbody");
+    const secondaryBody = document.createElement("tbody");
+    const indexedReadings = session.readings.map((reading, index) => ({ reading, index }));
+    const referenceEntry =
+      indexedReadings.find((entry) => entry.reading.reference) || indexedReadings[0];
+    const secondaryEntries = indexedReadings.filter((entry) => entry !== referenceEntry);
+    let secondaryVisible = false;
+    let expandButton = null;
 
-    session.readings.forEach((reading, index) => {
+    referenceBody.className = "coordinate-readings-reference";
+    secondaryBody.className = "coordinate-readings-secondary";
+    secondaryBody.id = `coordinate-secondary-readings-${session.key}`;
+    secondaryBody.dataset.rpaSecondaryReadings = "true";
+    secondaryBody.hidden = true;
+    host.dataset.allReadingsVisible = "false";
+
+    if (secondaryEntries.length > 0) {
+      const icon = document.createElement("span");
+      expandButton = document.createElement("button");
+      expandButton.className = "coordinate-readings-expand";
+      expandButton.type = "button";
+      expandButton.dataset.rpaAction = "toggleOtherCoordinates";
+      expandButton.setAttribute("aria-controls", secondaryBody.id);
+      expandButton.setAttribute("aria-expanded", "false");
+      icon.className = "coordinate-readings-expand-icon";
+      icon.setAttribute("aria-hidden", "true");
+      icon.textContent = "⌄";
+      expandButton.append(icon);
+
+      function setSecondaryVisible(visible) {
+        secondaryVisible = visible;
+        secondaryBody.hidden = !visible;
+        host.dataset.allReadingsVisible = String(visible);
+        expandButton.setAttribute("aria-expanded", String(visible));
+        const action = visible ? "Hide" : "Show";
+        const description = `${action} ${plural(secondaryEntries.length, "other GPS reading")}`;
+        expandButton.setAttribute("aria-label", description);
+        expandButton.setAttribute("title", description);
+      }
+
+      expandButton.addEventListener("click", () => setSecondaryVisible(!secondaryVisible));
+      setSecondaryVisible(false);
+    }
+
+    function createReadingRow(reading, index) {
       const row = document.createElement("tr");
       row.dataset.rpaGpsReading = "true";
       row.dataset.readingIndex = String(index);
@@ -475,16 +521,25 @@
       }
       const referenceCell = document.createElement("td");
       if (reading.reference) {
+        const use = document.createElement("div");
         const label = document.createElement("span");
+        use.className = "coordinate-reading-use";
         label.className = "coordinate-reference-label";
         label.textContent = "Reference";
-        referenceCell.append(label);
+        use.append(label);
+        if (expandButton) use.append(expandButton);
+        referenceCell.append(use);
       }
       row.append(referenceCell);
-      body.append(row);
-    });
+      return row;
+    }
 
-    table.append(head, body);
+    referenceBody.append(createReadingRow(referenceEntry.reading, referenceEntry.index));
+    secondaryEntries.forEach(({ reading, index }) => {
+      secondaryBody.append(createReadingRow(reading, index));
+    });
+    table.append(head, referenceBody);
+    if (secondaryEntries.length > 0) table.append(secondaryBody);
     host.append(table);
     return host;
   }
@@ -505,14 +560,14 @@
     return value;
   }
 
-  function comparisonMessage(session, comparison) {
+  function comparisonMessage(comparison) {
     switch (comparison.status) {
       case "within_threshold":
         return `Within threshold · ${comparison.distanceMeters} m from the GPS reference; limit ${MATCH_THRESHOLD_METERS} m.`;
       case "outside_threshold":
         return `Flag for review · ${comparison.distanceMeters} m from the GPS reference exceeds the ${MATCH_THRESHOLD_METERS} m limit.`;
       case "insufficient_accuracy":
-        return `Flag for review · GPS uncertainty is ±${session.reference.accuracyMeters} m, above the ${MAX_GPS_ACCURACY_METERS} m quality limit.`;
+        return "Photo and truck location discrepancy.";
       case "gps_unavailable":
         return "Flag for review · this session has no automatic GPS reference.";
       case "incomplete":
@@ -615,6 +670,13 @@
         weight: 3,
       })
       .addTo(positionMap);
+    // The line is the whole point of the map, so it says how long it is rather
+    // than leaving the reader to find the same figure in the summary above.
+    differenceLine.bindTooltip?.(`${comparison.distanceMeters} m`, {
+      permanent: true,
+      direction: "center",
+      className: "coordinate-map-distance",
+    });
     positionMap.fitBounds(differenceLine.getBounds(), { maxZoom: 19, padding: [48, 48] });
     positionMap.invalidateSize?.();
     globalScope.setTimeout?.(() => positionMap?.invalidateSize?.(), 0);
@@ -707,13 +769,16 @@
       } catch (error) {
         comparisonOutput.textContent = error.message;
         comparisonOutput.dataset.state = "error";
+        comparisonOutput.dataset.comparisonStatus = "invalid";
+        comparisonOutput.dataset.reviewRequired = "false";
         mapButton.disabled = true;
         mapButton.title = "Enter valid truck coordinates before opening the map.";
         return null;
       }
       const comparison = compareSessionToTruck(session, truckLocation, data);
-      comparisonOutput.textContent = comparisonMessage(session, comparison);
+      comparisonOutput.textContent = comparisonMessage(comparison);
       comparisonOutput.dataset.state = comparison.state;
+      comparisonOutput.dataset.comparisonStatus = comparison.status;
       comparisonOutput.dataset.reviewRequired = String(comparison.flaggedForReview);
       card.dataset.reviewRequired = String(comparison.flaggedForReview);
       card.dataset.reviewReason = comparison.reviewReason || "";
@@ -808,10 +873,21 @@
     const content = options.time ? document.createElement("time") : document.createElement("strong");
     name.textContent = label;
     content.textContent = value;
+
     if (options.datetime) content.setAttribute("datetime", options.datetime);
     if (options.rpaField) {
       content.dataset.rpaField = options.rpaField;
       content.dataset.value = options.rawValue ?? value;
+    }
+    // The glyph is decorative and sits beside the value rather than inside it,
+    // so the value an agent reads is exactly the statement and nothing else.
+    if (options.icon) {
+      const glyph = document.createElement("span");
+      glyph.className = "coordinate-weather-icon";
+      glyph.setAttribute("aria-hidden", "true");
+      glyph.textContent = options.icon;
+      field.append(name, glyph, content);
+      return field;
     }
     field.append(name, content);
     return field;
@@ -821,9 +897,12 @@
     const card = document.createElement("article");
     const heading = document.createElement("header");
     const controls = document.createElement("div");
-    const count = document.createElement("span");
     const toggle = document.createElement("button");
     const body = document.createElement("div");
+    const bodyClip = document.createElement("div");
+    const bodyInner = document.createElement("div");
+    let coordinatesVisible = false;
+    let collapseTimer = null;
 
     card.className = "coordinate-session";
     card.dataset.sessionKey = session.key;
@@ -848,9 +927,18 @@
         rawValue: session.location,
       }),
     );
-    count.className = "coordinate-reading-count";
-    count.dataset.state = session.readings.length > 0 ? "available" : "empty";
-    count.textContent = plural(session.readings.length, "GPS reading");
+    // Written down against the session when the dashboard read the day, and
+    // said here in the same few words: what it was, and what it cost.
+    const weatherSummary = weather?.restoreSessionWeather(session.weather);
+    if (weatherSummary) {
+      heading.append(
+        headingField("Weather", weather.describeSessionWeather(weatherSummary), {
+          icon: weather.weatherIcon(weatherSummary),
+          rpaField: "weather",
+          rawValue: weatherSummary.severity,
+        }),
+      );
+    }
     controls.className = "coordinate-session-controls";
     toggle.className = "coordinate-visibility-toggle";
     toggle.type = "button";
@@ -858,20 +946,78 @@
     toggle.textContent = "Show coordinates";
     body.className = "coordinate-session-body";
     body.id = `coordinate-session-body-${session.key}`;
+    body.dataset.collapsed = "true";
+    body.inert = true;
     body.hidden = true;
+    body.setAttribute("aria-hidden", "true");
+    bodyClip.className = "coordinate-session-body-clip";
+    bodyInner.className = "coordinate-session-body-inner";
     toggle.setAttribute("aria-controls", body.id);
     toggle.setAttribute("aria-expanded", "false");
     card.dataset.coordinatesVisible = "false";
-    toggle.addEventListener("click", () => {
-      const visible = body.hidden;
-      body.hidden = !visible;
+
+    function finishCollapse() {
+      if (!coordinatesVisible && body.dataset.collapsed === "true") {
+        body.hidden = true;
+      }
+      collapseTimer = null;
+    }
+
+    function setCoordinatesVisible(visible) {
+      coordinatesVisible = visible;
       toggle.textContent = visible ? "Hide coordinates" : "Show coordinates";
       toggle.setAttribute("aria-expanded", String(visible));
       card.dataset.coordinatesVisible = String(visible);
+      body.inert = !visible;
+      body.setAttribute("aria-hidden", String(!visible));
+
+      const reducedMotion =
+        globalScope.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+      const canAnimate =
+        !reducedMotion &&
+        typeof globalScope.requestAnimationFrame === "function" &&
+        typeof body.getBoundingClientRect === "function";
+
+      if (collapseTimer !== null) {
+        globalScope.clearTimeout?.(collapseTimer);
+        collapseTimer = null;
+      }
+
+      if (!canAnimate) {
+        body.dataset.collapsed = String(!visible);
+        body.hidden = !visible;
+        return;
+      }
+
+      if (visible) {
+        body.hidden = false;
+        // Commit the zero-row state before expanding it. Without this layout
+        // read, removing `hidden` and opening in the same frame would jump.
+        body.dataset.collapsed = "true";
+        body.getBoundingClientRect();
+        globalScope.requestAnimationFrame(() => {
+          if (coordinatesVisible) body.dataset.collapsed = "false";
+        });
+        return;
+      }
+
+      body.dataset.collapsed = "true";
+      // `transitionend` is the normal path; the timer covers backgrounded tabs
+      // and engines that drop transition events while throttling rendering.
+      collapseTimer = globalScope.setTimeout?.(finishCollapse, 440) ?? null;
+    }
+
+    body.addEventListener("transitionend", (event) => {
+      if (event.target === body && event.propertyName === "grid-template-rows") {
+        finishCollapse();
+      }
     });
-    controls.append(count, toggle);
+    toggle.addEventListener("click", () => setCoordinatesVisible(!coordinatesVisible));
+    controls.append(toggle);
     heading.append(controls);
-    body.append(createReadingTable(session), createTruckForm(session, card));
+    bodyInner.append(createReadingTable(session), createTruckForm(session, card));
+    bodyClip.append(bodyInner);
+    body.append(bodyClip);
     card.append(heading, body);
     return card;
   }

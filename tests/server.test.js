@@ -89,7 +89,7 @@ test("the local server exposes public assets and every API boundary without expo
 
     const workerPhotos = await fetch(`${origin}/worker-photos.html`);
     assert.equal(workerPhotos.status, 200);
-    assert.match(await workerPhotos.text(), /Take a photo/);
+    assert.match(await workerPhotos.text(), /Take photo/);
     assert.equal((await fetch(`${origin}/worker-photos.css`)).status, 200);
     assert.equal((await fetch(`${origin}/worker-photos.js`)).status, 200);
 

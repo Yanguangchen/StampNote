@@ -22,7 +22,7 @@
     />
     <link rel="stylesheet" href="vendor/fonts/outfit.css" />
     <link rel="stylesheet" href="sidebar.css" />
-    <link rel="stylesheet" href="admin.css?v=20260816-3" />
+    <link rel="stylesheet" href="admin.css?v=20260816-4" />
     <!-- Applied before the first paint so a saved dark theme never flashes white. -->
     <script>
       try {
@@ -38,7 +38,7 @@
     <script src="photo-cloud.js?v=20260816-1" defer></script>
     <script src="firebase.js?v=20260816-2" defer></script>
     <script src="weather-service.js" defer></script>
-    <script src="admin.js?v=20260816-2" defer></script>
+    <script src="admin.js?v=20260816-3" defer></script>
     <script src="sidebar.js" defer></script>
   </head>
   <body>
@@ -120,25 +120,44 @@
               <h3 class="scope-step-title" id="date-step-title">
                 <span class="scope-step-number" aria-hidden="true">2</span> Date
               </h3>
-              <button class="button button-danger scope-delete" id="date-delete" type="button" disabled>
-                <svg class="scope-delete-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                  <path d="M4.6 6.6h14.8" />
-                  <path d="M9.6 6.6V4.9a1.3 1.3 0 0 1 1.3-1.3h2.2a1.3 1.3 0 0 1 1.3 1.3v1.7" />
-                  <path d="M6.6 6.6 7.5 19a1.6 1.6 0 0 0 1.6 1.5h5.8a1.6 1.6 0 0 0 1.6-1.5l.9-12.4" />
-                  <path d="M10.4 10.2v6.6" />
-                  <path d="M13.6 10.2v6.6" />
-                </svg>
-                <span class="scope-delete-label">Delete day</span>
-              </button>
+              <div class="scope-step-tools">
+                <button
+                  class="button button-quiet scope-search"
+                  id="date-search-toggle"
+                  type="button"
+                  title="Jump to a date"
+                  aria-expanded="false"
+                  aria-controls="date-search"
+                >
+                  <svg class="scope-search-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <circle cx="10.7" cy="10.7" r="6.1" />
+                    <path d="m15.2 15.2 4.3 4.3" />
+                  </svg>
+                  <span class="scope-search-label" id="date-search-label">Jump to a date</span>
+                </button>
+                <button class="button button-danger scope-delete" id="date-delete" type="button" disabled>
+                  <svg class="scope-delete-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path d="M4.6 6.6h14.8" />
+                    <path d="M9.6 6.6V4.9a1.3 1.3 0 0 1 1.3-1.3h2.2a1.3 1.3 0 0 1 1.3 1.3v1.7" />
+                    <path d="M6.6 6.6 7.5 19a1.6 1.6 0 0 0 1.6 1.5h5.8a1.6 1.6 0 0 0 1.6-1.5l.9-12.4" />
+                    <path d="M10.4 10.2v6.6" />
+                    <path d="M13.6 10.2v6.6" />
+                  </svg>
+                  <span class="scope-delete-label">Delete day</span>
+                </button>
+              </div>
             </div>
             <!-- A site that has reported for a year has a row here for every one
-                 of those days. The calendar reaches any of them in one press, and
-                 the buttons below it stay a short list of the most recent. -->
-            <label class="scope-date-field" for="date-picker">
-              <span>Jump to a date</span>
-              <input type="date" id="date-picker" />
-            </label>
-            <p class="scope-date-hint" id="date-hint" role="status" aria-live="polite"></p>
+                 of those days. Nearly every visit wants one of the recent buttons
+                 below, so the calendar that reaches the rest waits behind its own
+                 button rather than standing above them asking to be filled in. -->
+            <div class="scope-date-search" id="date-search" hidden>
+              <label class="scope-date-field" for="date-picker">
+                <span>Jump to a date</span>
+                <input type="date" id="date-picker" />
+              </label>
+              <p class="scope-date-hint" id="date-hint" role="status" aria-live="polite"></p>
+            </div>
             <div class="scope-options" id="date-options"></div>
           </section>
 
@@ -175,12 +194,18 @@
           <!-- Nothing below is drawn until a location, a date and a session have
                each been chosen: an unscoped page of photographs belongs to no
                day in particular, and the truck fields belong to no session. -->
-          <p class="scope-guidance" id="scope-guidance" role="status" aria-live="polite"></p>
+          <p class="scope-guidance" id="scope-guidance" role="status" aria-live="polite" hidden></p>
 
-          <!-- Who was there, and where the truck stood: the session's own facts,
-               in a column beside the photographs rather than stacked above them
-               where they pushed the photographs off the bottom of the screen. -->
-          <div class="detail-column" id="detail-column" hidden>
+          <!-- The sky and the truck's coordinates: two short facts about the
+               session, as a pair of matched tiles across the top of the pane.
+               They sit above the attendance/photographs split rather than inside
+               the narrow left column, because a longitude carried to fourteen
+               decimal places needs about 147px and half of that column is 184px
+               — the two coordinates would not fit shoulder to shoulder there.
+               Either tile can be absent — a session with no reading, a day with
+               no truck — and the one that remains takes the width rather than
+               leaving a hole beside it. -->
+          <div class="session-facts" id="session-facts" hidden>
             <!-- What the sky was doing while this session was worked. Wet or
                  stormy hours are the usual reason a session ran late. -->
             <div class="session-weather" id="session-weather" hidden></div>
@@ -188,7 +213,12 @@
             <!-- One form for the session being looked at, rather than one inside
                  every row of the rail. -->
             <div class="session-truck-location" id="session-truck-location" hidden></div>
+          </div>
 
+          <!-- Who was there, in a column beside the photographs rather than
+               stacked above them where it pushed them off the bottom of the
+               screen. -->
+          <div class="detail-column" id="detail-column" hidden>
             <section class="dashboard-panel attendance-panel" id="attendance-panel" aria-labelledby="attendance-title">
               <div class="panel-heading attendance-heading">
                 <div>

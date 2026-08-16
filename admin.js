@@ -33,6 +33,9 @@
   const dateOptions = document.querySelector("#date-options");
   const datePicker = document.querySelector("#date-picker");
   const dateHint = document.querySelector("#date-hint");
+  const dateSearch = document.querySelector("#date-search");
+  const dateSearchToggle = document.querySelector("#date-search-toggle");
+  const dateSearchLabel = document.querySelector("#date-search-label");
   const sessionOptions = document.querySelector("#session-options");
   const scopeBreadcrumb = document.querySelector("#scope-breadcrumb");
   const sessionActions = document.querySelector("#session-actions");
@@ -51,6 +54,7 @@
   const dateStep = document.querySelector("#date-step");
   const sessionStep = document.querySelector("#session-step");
   const detailColumn = document.querySelector("#detail-column");
+  const sessionFacts = document.querySelector("#session-facts");
   const photosPanel = document.querySelector("#photos-panel");
   const scopeGuidanceLine = document.querySelector("#scope-guidance");
   const attendanceStatus = document.querySelector("#attendance-status");
@@ -435,7 +439,10 @@
 
   function scopeGuidance(view, scope) {
     if (scope.length === 0) return "No site has reported attendance or photos yet.";
-    if (!view.location) return "Pick a location to see its photos and attendance.";
+    // Step one needs no sentence. The location list is numbered, and at this point
+    // it is the only thing on the page — a panel underneath it saying to pick a
+    // location was describing the one choice already on offer.
+    if (!view.location) return "";
     if (!view.dateGroup) return "Now pick a date.";
     return "Now pick a time session, or the whole day.";
   }
@@ -1048,6 +1055,18 @@
     dateHint.dataset.state = "idle";
   }
 
+  // Opening it moves focus into the field, because the press was a request for
+  // the calendar rather than for a wider step.
+  function setDateSearchOpen(open) {
+    if (!dateSearch) return;
+    dateSearch.hidden = !open;
+    dateSearchToggle?.setAttribute?.("aria-expanded", String(Boolean(open)));
+    const label = open ? "Hide the date jump" : "Jump to a date";
+    dateSearchToggle?.setAttribute?.("title", label);
+    if (dateSearchLabel) dateSearchLabel.textContent = label;
+    if (open) datePicker?.focus?.();
+  }
+
   function handleDatePicked() {
     const chosen = String(datePicker?.value || "");
     if (!chosen) return;
@@ -1161,11 +1180,15 @@
   // chosen session, so none of them is drawn until the rail has been answered.
   function renderDetailReveal(view, scope) {
     const chosen = isScopeChosen(view);
+    if (sessionFacts) sessionFacts.hidden = !chosen;
     if (detailColumn) detailColumn.hidden = !chosen;
     if (photosPanel) photosPanel.hidden = !chosen;
     if (scopeGuidanceLine) {
-      scopeGuidanceLine.hidden = chosen;
-      scopeGuidanceLine.textContent = chosen ? "" : scopeGuidance(view, scope);
+      // Drawn only when it has something to say, so the dashed frame never
+      // stands empty where a sentence used to be.
+      const guidance = chosen ? "" : scopeGuidance(view, scope);
+      scopeGuidanceLine.hidden = !guidance;
+      scopeGuidanceLine.textContent = guidance;
     }
     return chosen;
   }
@@ -1970,6 +1993,10 @@
   attendanceWorkerFilter.addEventListener("change", renderDashboard);
   attendanceRefresh.addEventListener("click", loadAttendance);
   datePicker?.addEventListener("change", handleDatePicked);
+  dateSearchToggle?.addEventListener("click", () => setDateSearchOpen(dateSearch?.hidden));
+  // Closed is the starting state, set here rather than left to the markup so the
+  // button's expanded flag and its name cannot drift from what is on screen.
+  setDateSearchOpen(false);
   sessionRenameButton.addEventListener("click", () => openRenameDialog());
   locationDeleteButton?.addEventListener("click", () => deleteSelectedScope("location"));
   dateDeleteButton?.addEventListener("click", () => deleteSelectedScope("date"));

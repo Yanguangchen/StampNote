@@ -8,6 +8,7 @@ const vm = require("node:vm");
 
 const coordinates = require("../coordinates.js");
 const data = require("../photo-cloud.js");
+const weatherService = require("../weather-service.js");
 
 const root = resolve(__dirname, "..");
 const html = readFileSync(resolve(root, "coordinates.html"), "utf8");
@@ -71,6 +72,18 @@ class FakeElement {
     this.listeners.get("close")?.({ target: this });
   }
 
+  getBoundingClientRect() {
+    return { width: 800, height: 400 };
+  }
+
+  focus() {
+    this.focused = true;
+  }
+
+  getAttribute(name) {
+    return this.attributes.has(name) ? this.attributes.get(name) : null;
+  }
+
   setAttribute(name, value) {
     this.attributes.set(name, String(value));
   }
@@ -80,7 +93,7 @@ function descendants(element) {
   return [element, ...element.children.flatMap(descendants)];
 }
 
-function createPageHarness(pagePhotos, savedSessions = []) {
+function createPageHarness(pagePhotos, savedSessions = [], options = {}) {
   const ids = [
     "coordinate-sign-in",
     "coordinate-sign-out",
@@ -122,20 +135,28 @@ function createPageHarness(pagePhotos, savedSessions = []) {
   let authCallback;
   const cloud = {
     async getPhotosPage() {
+      if (options.loadError) throw options.loadError;
       return { photos: pagePhotos, after: null, hasMore: false };
     },
     async getAttendance() {
-      return [];
+      return options.attendance || [];
     },
     async getDashboardSessions() {
       return savedSessions;
     },
     async updateSessionTruckLocation(session, truckLocation) {
+      if (options.saveError) throw options.saveError;
       calls.updates.push({ session, truckLocation });
       return { ...session, truckLocation };
     },
-    async signIn() {},
-    async signOut() {},
+    async signIn() {
+      calls.signIn = (calls.signIn || 0) + 1;
+      if (options.signInError) throw options.signInError;
+    },
+    async signOut() {
+      calls.signOut = (calls.signOut || 0) + 1;
+      if (options.signOutError) throw options.signOutError;
+    },
     subscribeAuth(callback) {
       authCallback = callback;
       return () => {};
@@ -152,7 +173,7 @@ function createPageHarness(pagePhotos, savedSessions = []) {
   function mapLayer(kind, value, options) {
     const layer = {
       addTo(map) {
-        calls[kind].push({ map, options, value });
+        calls[kind].push({ map, options, value, layer });
         return layer;
       },
       bindTooltip(label, tooltipOptions) {
@@ -199,16 +220,21 @@ function createPageHarness(pagePhotos, savedSessions = []) {
   const context = {
     console,
     document,
-    L: leaflet,
     setTimeout(callback) {
       callback();
     },
+    requestAnimationFrame(callback) {
+      callback();
+      return 1;
+    },
     StampNoteCloudData: data,
-    StampNoteFirebase: cloud,
+    StampNoteFirebase: options.cloud === false ? null : cloud,
+    StampNoteWeather: weatherService,
     StampNoteObservability: { configure() {} },
   };
+  if (options.leaflet !== false) context.L = leaflet;
   vm.createContext(context);
-  vm.runInContext(source, context, { filename: "coordinates.js" });
+  vm.runInContext(source, context, { filename: resolve(root, "coordinates.js") });
   return {
     auth(user, error = null) {
       authCallback(user, error);
@@ -238,9 +264,24 @@ test("the dedicated page exposes all-session filters, GPS records and truck inpu
   assert.match(source, /row\.dataset\.rpaGpsReading = "true"/);
   assert.match(source, /input\.dataset\.rpaField = field/);
   assert.match(source, /toggle\.dataset\.rpaAction = "toggleSessionCoordinates"/);
+  assert.match(source, /expandButton\.dataset\.rpaAction = "toggleOtherCoordinates"/);
   assert.match(source, /mapButton\.dataset\.rpaAction = "comparePositionsOnMap"/);
   assert.match(source, /cloud\.updateSessionTruckLocation\(/);
-  assert.match(css, /\.coordinate-session-body\s*\{[^}]*grid-template-columns:/);
+  assert.match(
+    source,
+    /case "insufficient_accuracy":\s*return "Photo and truck location discrepancy\.";/,
+  );
+  assert.match(
+    css,
+    /\.coordinate-comparison\[data-comparison-status="insufficient_accuracy"\]::before\s*\{[^}]*content: "⚑";/,
+  );
+  assert.match(css, /\.coordinate-session-body-inner\s*\{[^}]*grid-template-columns:/);
+  assert.match(css, /\.coordinate-session-body\s*\{[^}]*grid-template-rows: 1fr;/);
+  assert.match(
+    css,
+    /\.coordinate-session-body\[data-collapsed="true"\]\s*\{[^}]*grid-template-rows: 0fr;/,
+  );
+  assert.match(css, /prefers-reduced-motion: reduce[\s\S]*\.coordinate-session-body/);
   assert.match(
     server,
     /"coordinates\.html",\s*\n\s*"coordinates\.css",\s*\n\s*"coordinates\.js",/,
@@ -286,6 +327,9 @@ test("the console is set in a vendored monospace face and dressed as an instrume
   assert.match(css, /body::before\s*\{[\s\S]*?position: fixed;[\s\S]*?var\(--console-grid\) 1px/);
   assert.match(css, /body::before\s*\{[\s\S]*?inset: 0;/);
   assert.match(css, /body::before\s*\{[\s\S]*?pointer-events: none;/);
+  assert.match(css, /body::before\s*\{[\s\S]*?animation: coordinate-grid-drift 28s linear infinite;/);
+  assert.match(css, /@keyframes coordinate-grid-drift\s*\{[\s\S]*?background-position: 34px 0, 0 34px;/);
+  assert.match(css, /prefers-reduced-motion: reduce[\s\S]*?body::before\s*\{\s*animation: none;/);
   assert.match(css, /\.coordinates-main\s*\{\s*position: relative;\s*z-index: 1;\s*\}/);
   assert.doesNotMatch(css, /z-index: -1/);
 
@@ -299,7 +343,7 @@ test("the console is set in a vendored monospace face and dressed as an instrume
   assert.match(css, /animation: console-cursor 1\.1s steps\(1\) 4;/);
   assert.match(
     css,
-    /prefers-reduced-motion: reduce\)\s*\{\s*\.coordinates-intro h1::after\s*\{\s*animation: none;/,
+    /prefers-reduced-motion: reduce[\s\S]*?body::before\s*\{\s*animation: none;[\s\S]*?\.coordinates-intro h1::after\s*\{\s*animation: none;/,
   );
 
   // Drawn, not typed, so the heading is still called exactly what it says.
@@ -337,6 +381,28 @@ test("the page renders every reading beside one session form and saves that sess
   assert.equal(body.hidden, false);
   assert.equal(toggle.textContent, "Hide coordinates");
   assert.equal(toggle.attributes.get("aria-expanded"), "true");
+
+  const readingRows = descendants(card).filter(
+    (entry) => entry.dataset.rpaGpsReading === "true",
+  );
+  const referenceRow = readingRows.find((entry) => entry.dataset.reference === "true");
+  const secondaryRows = descendants(card).find(
+    (entry) => entry.dataset.rpaSecondaryReadings === "true",
+  );
+  const expandReadings = descendants(card).find(
+    (entry) => entry.dataset.rpaAction === "toggleOtherCoordinates",
+  );
+  assert.ok(referenceRow, "the chosen reference is rendered first and remains visible");
+  assert.equal(referenceRow.hidden, false);
+  assert.equal(secondaryRows.children.length, 1);
+  assert.equal(secondaryRows.hidden, true, "non-reference readings start concealed");
+  assert.equal(expandReadings.attributes.get("aria-expanded"), "false");
+  await expandReadings.dispatch("click");
+  assert.equal(secondaryRows.hidden, false);
+  assert.equal(expandReadings.attributes.get("aria-expanded"), "true");
+  await expandReadings.dispatch("click");
+  assert.equal(secondaryRows.hidden, true);
+
   await toggle.dispatch("click");
   assert.equal(body.hidden, true);
   assert.equal(
@@ -369,6 +435,15 @@ test("the page renders every reading beside one session form and saves that sess
   ]);
   assert.match(harness.elements["coordinate-map-summary"].textContent, /Within threshold/);
   assert.notEqual(harness.elements["coordinate-map-canvas"].dataset.distanceMeters, "0");
+  // The line between the two markers says how long it is, on the line itself.
+  const distanceLabel = harness.calls.polylines[0].layer.tooltip;
+  assert.equal(
+    distanceLabel.label,
+    `${harness.elements["coordinate-map-canvas"].dataset.distanceMeters} m`,
+  );
+  assert.match(distanceLabel.label, /^\d+(\.\d+)? m$/);
+  assert.equal(distanceLabel.options.permanent, true);
+  assert.equal(distanceLabel.options.direction, "center");
   await harness.elements["coordinate-map-close"].dispatch("click");
   assert.equal(harness.elements["coordinate-map-dialog"].open, false);
 
@@ -398,6 +473,33 @@ test("the page renders every reading beside one session form and saves that sess
   assert.equal(flaggedIndex[0].comparison.reviewReason, "distance_exceeds_threshold");
 });
 
+test("inaccurate GPS uses the concise location-discrepancy flag treatment", async () => {
+  const harness = createPageHarness([
+    photo(
+      "inaccurate",
+      "2026-08-14T13:10:00.000Z",
+      { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 79 },
+    ),
+  ]);
+  harness.auth({ uid: "user-1", email: "owner@example.com" });
+  await settle();
+
+  const card = harness.elements["coordinate-session-list"].children[0];
+  const [xInput, yInput] = descendants(card).filter((entry) => entry.dataset.coordinateAxis);
+  const comparison = descendants(card).find(
+    (entry) => entry.className === "coordinate-comparison",
+  );
+  xInput.value = "103.8545";
+  yInput.value = "1.2868";
+  await xInput.dispatch("input");
+  await yInput.dispatch("input");
+
+  assert.equal(comparison.textContent, "Photo and truck location discrepancy.");
+  assert.equal(comparison.dataset.comparisonStatus, "insufficient_accuracy");
+  assert.equal(comparison.dataset.reviewRequired, "true");
+  assert.equal(card.dataset.reviewReason, "insufficient_gps_accuracy");
+});
+
 test("a fresh session displays its start GPS before any photo is uploaded", async () => {
   const savedSession = {
     key: data.createSessionKey({
@@ -419,6 +521,11 @@ test("a fresh session displays its start GPS before any photo is uploaded", asyn
   const rows = descendants(card).filter((entry) => entry.dataset.rpaGpsReading === "true");
   assert.equal(rows.length, 1);
   assert.equal(rows[0].dataset.sourceType, "session_start");
+  assert.equal(
+    descendants(card).some((entry) => entry.dataset.rpaAction === "toggleOtherCoordinates"),
+    false,
+    "a lone reference does not need an expand control",
+  );
   assert.equal(JSON.parse(rows[0].dataset.gpsRecord).longitude, 103.8545);
   assert.ok(descendants(card).some((entry) => entry.textContent === "Session start"));
   assert.ok(
@@ -426,6 +533,97 @@ test("a fresh session displays its start GPS before any photo is uploaded", asyn
       (entry) => entry.textContent === "No automatic GPS coordinates were recorded in this session.",
     ),
   );
+});
+
+test("a session states the weather it was worked in, briefly", async () => {
+  const savedSession = {
+    key: data.createSessionKey({
+      location: "10 Marina Bay",
+      dateKey: "2026-08-14",
+      sessionId: "afternoon",
+    }),
+    location: "10 Marina Bay",
+    dateKey: "2026-08-14",
+    sessionId: "afternoon",
+    gpsLocation: { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 12.5 },
+    gpsCapturedAtMs: Date.parse("2026-08-14T13:00:00.000Z"),
+    // Written down by the dashboard when it read that day; this page only
+    // reads it back.
+    weather: {
+      severity: "damp",
+      condition: "Drizzle",
+      precipitationMm: 0.6,
+      maxGustKph: 18,
+      temperatureC: 28,
+      wetHours: 2,
+      hours: 5,
+      lostHours: 0.3,
+      impactPercent: 6,
+      provisional: false,
+      recordedAtMs: Date.parse("2026-08-15T02:00:00.000Z"),
+    },
+  };
+  const harness = createPageHarness([], [savedSession]);
+  harness.auth({ uid: "user-1", email: "owner@example.com" });
+  await settle();
+
+  const card = harness.elements["coordinate-session-list"].children[0];
+  const field = descendants(card).find((entry) => entry.dataset.rpaField === "weather");
+  assert.ok(field, "the session says what the weather was");
+  // The same few words the dashboard uses, and nothing more.
+  assert.equal(field.textContent, "Drizzle, low impact");
+  assert.equal(field.dataset.value, "damp");
+  assert.ok(descendants(card).some((entry) => entry.className === "coordinate-weather-icon"));
+
+  // And it travels with the machine-readable record for the agents.
+  const record = JSON.parse(card.dataset.sessionRecord);
+  assert.equal(record.weather.severity, "damp");
+  assert.equal(record.weather.impactPercent, 6);
+});
+
+test("the heading row holds any number of fields without displacing its controls", () => {
+  // A fixed column count could only ever hold the fields it was written for:
+  // adding the weather pushed the controls onto a row of their own and the
+  // minimum widths past the card. The row wraps instead.
+  assert.match(css, /\.coordinate-session-heading\s*\{[^}]*flex-wrap:\s*wrap/);
+  assert.doesNotMatch(css, /\.coordinate-session-heading\s*\{[^}]*grid-template-columns/);
+  assert.match(
+    css,
+    /\.coordinate-session-heading \.coordinate-session-controls\s*\{[^}]*margin-left:\s*auto/,
+  );
+
+  // The reading tally is gone: the readings themselves are one press away and
+  // counting them was never what the card was for.
+  assert.doesNotMatch(source, /coordinate-reading-count/);
+  assert.doesNotMatch(source, /plural\(session\.readings\.length/);
+  assert.doesNotMatch(css, /coordinate-reading-count/);
+});
+
+test("a session with no recorded weather says nothing about it", async () => {
+  const harness = createPageHarness([], [
+    {
+      key: data.createSessionKey({
+        location: "10 Marina Bay",
+        dateKey: "2026-08-14",
+        sessionId: "afternoon",
+      }),
+      location: "10 Marina Bay",
+      dateKey: "2026-08-14",
+      sessionId: "afternoon",
+      gpsLocation: { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 12.5 },
+      gpsCapturedAtMs: Date.parse("2026-08-14T13:00:00.000Z"),
+    },
+  ]);
+  harness.auth({ uid: "user-1", email: "owner@example.com" });
+  await settle();
+
+  const card = harness.elements["coordinate-session-list"].children[0];
+  // No reading is not the same as a fine day, so the field is absent entirely.
+  assert.equal(
+    descendants(card).some((entry) => entry.dataset.rpaField === "weather"),
+    false,
+  );
+  assert.equal(JSON.parse(card.dataset.sessionRecord).weather, null);
 });
 
 test("sessions retain every GPS reading and choose the best reference deterministically", () => {
@@ -573,4 +771,126 @@ test("comparison keeps the 25 metre threshold separate from GPS uncertainty", ()
   assert.equal(record.comparison.distanceThresholdMeters, 25);
   assert.equal(record.comparison.maximumGpsAccuracyMeters, 20);
   assert.equal(record.comparison.flaggedForReview, false);
+});
+
+test("the search bar, filters and a missing map library stay recoverable", async () => {
+  const harness = createPageHarness(
+    [
+      photo(
+        "marina",
+        "2026-08-14T13:10:00.000Z",
+        { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 12 },
+      ),
+      photo(
+        "orchard",
+        "2026-08-13T09:10:00.000Z",
+        { latitude: 1.3048, longitude: 103.8318, accuracyMeters: 10 },
+        "Orchard Road",
+      ),
+    ],
+    [],
+    { leaflet: false },
+  );
+  harness.auth({ uid: "user-1", email: "owner@example.com" });
+  await settle();
+
+  assert.equal(harness.elements["coordinate-session-list"].children.length, 2);
+  assert.match(harness.elements["coordinate-result-count"].textContent, /2 sessions/);
+
+  const search = harness.elements["coordinate-search-toggle"];
+  await search.dispatch("click");
+  assert.equal(harness.elements["coordinate-toolbar"].hidden, false);
+  assert.equal(search.getAttribute("aria-expanded"), "true");
+  assert.equal(harness.elements["coordinate-date-filter"].focused, true);
+
+  harness.elements["coordinate-location-filter"].value = data.createLocationKey("Orchard Road");
+  await harness.elements["coordinate-location-filter"].dispatch("change");
+  assert.equal(harness.elements["coordinate-session-list"].children.length, 1);
+  assert.equal(search.dataset.active, "true");
+
+  await harness.elements["coordinate-clear-filters"].dispatch("click");
+  assert.equal(harness.elements["coordinate-session-list"].children.length, 2);
+  assert.equal(harness.elements["coordinate-toolbar"].hidden, true);
+  assert.equal(search.focused, true);
+
+  const card = harness.elements["coordinate-session-list"].children[0];
+  const [xInput, yInput] = descendants(card).filter((entry) => entry.dataset.coordinateAxis);
+  const comparison = descendants(card).find((entry) => entry.className === "coordinate-comparison");
+  const mapButton = descendants(card).find(
+    (entry) => entry.dataset.rpaAction === "comparePositionsOnMap",
+  );
+  xInput.value = "200";
+  yInput.value = "1.2868";
+  await xInput.dispatch("input");
+  assert.match(comparison.textContent, /longitude between -180 and 180/);
+  assert.equal(comparison.dataset.comparisonStatus, "invalid");
+  assert.equal(mapButton.disabled, true);
+
+  xInput.value = "103.8545";
+  yInput.value = "1.2868";
+  await xInput.dispatch("input");
+  await yInput.dispatch("input");
+  await mapButton.dispatch("click");
+  assert.equal(harness.elements["coordinate-map-dialog"].open, true);
+  assert.match(
+    harness.elements["coordinate-map-error"].textContent,
+    /map library could not load/i,
+  );
+  assert.equal(harness.elements["coordinate-map-error"].hidden, false);
+});
+
+test("attendance without GPS still lists the session, and load errors stay on the page", async () => {
+  const empty = createPageHarness(
+    [],
+    [],
+    {
+      attendance: [
+        {
+          location: "10 Marina Bay",
+          dateKey: "2026-08-14",
+          checkedInAtMs: Date.parse("2026-08-14T13:10:00.000Z"),
+        },
+      ],
+    },
+  );
+  empty.auth({ uid: "user-1", email: "owner@example.com" });
+  await settle();
+  const card = empty.elements["coordinate-session-list"].children[0];
+  assert.ok(
+    descendants(card).some(
+      (entry) =>
+        entry.textContent === "No automatic GPS coordinates were recorded in this session.",
+    ),
+  );
+  const [xInput, yInput] = descendants(card).filter((entry) => entry.dataset.coordinateAxis);
+  const comparison = descendants(card).find((entry) => entry.className === "coordinate-comparison");
+  xInput.value = "103.8545";
+  yInput.value = "1.2868";
+  await xInput.dispatch("input");
+  await yInput.dispatch("input");
+  assert.match(comparison.textContent, /no automatic GPS reference/);
+
+  const failed = createPageHarness([], [], {
+    loadError: Object.assign(new Error("rules refused the read"), { code: "permission-denied" }),
+  });
+  failed.auth({ uid: "user-1", email: "owner@example.com" });
+  await settle();
+  assert.match(failed.elements["coordinate-status"].textContent, /Firebase denied access/);
+  assert.equal(failed.elements["coordinate-status"].dataset.state, "error");
+  assert.equal(failed.elements["coordinate-session-list"].children.length, 0);
+
+  const blocked = createPageHarness([], [], { cloud: false });
+  assert.match(
+    blocked.elements["coordinate-status"].textContent,
+    /could not initialize/i,
+  );
+  assert.equal(blocked.elements["coordinate-sign-in"].disabled, true);
+
+  const signIn = createPageHarness([], [], {
+    signInError: new Error("Popup closed."),
+  });
+  await signIn.elements["coordinate-sign-in"].dispatch("click");
+  await settle();
+  assert.match(signIn.elements["coordinate-status"].textContent, /Popup closed/);
+  assert.equal(signIn.calls.signIn, 1);
 });

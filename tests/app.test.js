@@ -95,12 +95,15 @@ class FakeCanvas extends FakeElement {
     super("canvas");
     this.height = 0;
     this.width = 0;
+    this.clientHeight = 360;
+    this.clientWidth = 640;
     this.calls = [];
     const calls = this.calls;
     this.context = new Proxy(
       {
         getImageData: () => ({ data: new Uint8ClampedArray(4), width: 1, height: 1 }),
         measureText: (text) => ({ width: String(text).length * 6 }),
+        roundRect() {},
       },
       {
         get(target, property) {
@@ -825,6 +828,22 @@ function createAppHarness(options = {}) {
       return trackStopped;
     },
     windowListeners,
+    flushFrames(count = 1) {
+      for (let index = 0; index < count; index += 1) {
+        const frame = animationFrames.find((entry) => !entry.cancelled && !entry.ran);
+        if (!frame) return;
+        frame.ran = true;
+        frame.callback();
+      }
+    },
+    flushTimers() {
+      timers
+        .filter((timer) => !timer.cancelled)
+        .forEach((timer) => {
+          timer.cancelled = true;
+          timer.callback();
+        });
+    },
   };
 }
 
@@ -1244,4 +1263,130 @@ test("recording loads enrolled faces and records each matched worker once", asyn
   assert.ok(confirmationTimer, "the matched identity remains prominent before fading");
   confirmationTimer.callback();
   assert.equal(harness.elements["face-enrollment"].hidden, true);
+});
+
+test("the live overlay paints vehicles, bones, a face and a fallback head", async () => {
+  const harness = createAppHarness({ camera: true });
+  await settle();
+  await harness.elements["monitor-toggle"].dispatch("click");
+  await settle(8);
+
+  const point = (x, y) => ({ x, y });
+  harness.captureConfiguration.onUpdate({
+    present: true,
+    vehicle: { present: true, box: { x: 0.05, y: 0.4, width: 0.35, height: 0.3 } },
+    bodies: [
+      {
+        box: { x: 0.45, y: 0.15, width: 0.2, height: 0.6 },
+        workerId: "WORKER-7",
+        keypoints: {
+          head: point(0.55, 0.18),
+          neck: point(0.55, 0.26),
+          torso: point(0.55, 0.42),
+          shoulderLeft: point(0.48, 0.3),
+          shoulderRight: point(0.62, 0.3),
+          elbowLeft: point(0.46, 0.4),
+          elbowRight: point(0.64, 0.4),
+          wristLeft: point(0.45, 0.5),
+          wristRight: point(0.65, 0.5),
+          hipLeft: point(0.5, 0.55),
+          hipRight: point(0.6, 0.55),
+          kneeLeft: point(0.5, 0.68),
+          kneeRight: point(0.6, 0.68),
+          ankleLeft: point(0.5, 0.8),
+          ankleRight: point(0.6, 0.8),
+        },
+        face: {
+          oval: [[point(0.53, 0.17), point(0.57, 0.17)]],
+        },
+        hands: [
+          {
+            segments: [[point(0.45, 0.5), point(0.44, 0.52)]],
+            points: [point(0.44, 0.52)],
+          },
+        ],
+      },
+      {
+        box: { x: 0.72, y: 0.2, width: 0.16, height: 0.5 },
+        keypoints: {
+          head: point(0.8, 0.22),
+          neck: point(0.8, 0.3),
+          torso: point(0.8, 0.44),
+        },
+      },
+    ],
+  });
+  harness.flushFrames(1);
+
+  const overlay = harness.elements["pose-overlay"];
+  assert.ok(overlay.calls.some((call) => call.method === "clearRect"));
+  assert.ok(
+    overlay.calls.some((call) => call.method === "fillText" && call.args[0] === "VEHICLE"),
+    "a recognised vehicle is labelled",
+  );
+  assert.ok(
+    overlay.calls.some((call) => call.method === "fillText" && call.args[0] === "WORKER-7"),
+    "a matched worker is labelled on their box",
+  );
+  assert.ok(overlay.calls.some((call) => call.method === "arc"), "joints and a fallback head are drawn");
+  assert.ok(overlay.calls.some((call) => call.method === "lineTo"), "bones are stroked between joints");
+
+  harness.captureConfiguration.onUpdate({ present: false, error: "Detector stalled." });
+  assert.match(harness.elements["monitor-status"].textContent, /Detector stalled/);
+  assert.ok(harness.events.some((event) => event.name === "tracking.failed"));
+  harness.captureConfiguration.onUpdate({ present: false });
+  assert.ok(harness.events.some((event) => event.name === "tracking.recovered"));
+});
+
+test("the AI review bin can be emptied and kept photos can be saved as downloads", async () => {
+  const kept = {
+    aiReview: { action: "keep", confidence: 0.97, reason: "Clear scene.", recommendation: "keep" },
+    blob: new Blob(["keep"], { type: "image/jpeg" }),
+    capturedAt: "2026-08-13T12:00:00.000Z",
+    id: "keep-1",
+    name: "keep-1.jpg",
+    poseDetected: true,
+    status: "local",
+    trigger: "schedule",
+    type: "image/jpeg",
+  };
+  const flagged = {
+    aiReview: { action: "discard", confidence: 0.88, reason: "Blur.", recommendation: "discard" },
+    blob: new Blob(["flag"], { type: "image/jpeg" }),
+    capturedAt: "2026-08-13T12:01:00.000Z",
+    id: "flag-1",
+    name: "flag-1.jpg",
+    poseDetected: false,
+    status: "local",
+    trigger: "schedule",
+    type: "image/jpeg",
+  };
+  const harness = createAppHarness({ records: [kept, flagged] });
+  await settle();
+  assert.equal(harness.elements["ai-review-bin"].hidden, false);
+  assert.equal(harness.elements["ai-review-purge"].hidden, true);
+
+  await harness.elements["ai-review-bin"].dispatch("click");
+  await settle();
+  assert.equal(harness.elements["ai-review-purge"].hidden, false);
+  assert.equal(harness.elements.captures.childElementCount, 1);
+
+  await harness.elements["ai-review-purge"].dispatch("click");
+  await settle();
+  assert.equal(harness.confirmCalls, 1);
+  assert.equal(harness.records.some((record) => record.id === "flag-1"), false);
+  assert.match(harness.elements["monitor-status"].textContent, /AI review bin emptied/);
+
+  const before = harness.timers.length;
+  await harness.elements["captures-save"].dispatch("click");
+  await settle();
+  harness.timers.slice(before).forEach((timer) => {
+    if (!timer.cancelled) timer.callback();
+  });
+  await settle();
+  assert.ok(
+    harness.objectUrls.some((entry) => entry.blob?.name === "keep-1.jpg"),
+    "kept photos download when no folder is armed",
+  );
+  assert.match(harness.elements["monitor-status"].textContent, /Saved 1 photo/);
 });

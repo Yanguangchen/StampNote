@@ -156,8 +156,26 @@
   color: inherit;
 }
 
+.sidebar-tools {
+  display: grid;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid var(--line, #d5dad7);
+}
+
+.sidebar-tools .theme-toggle {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.sidebar-tools .theme-toggle-label {
+  display: inline;
+}
+
 .sidebar-toggle:focus-visible,
-.sidebar-link:focus-visible {
+.sidebar-link:focus-visible,
+.sidebar-tools .theme-toggle:focus-visible {
   outline: 2px solid var(--accent, #176146);
   outline-offset: 2px;
 }

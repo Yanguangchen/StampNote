@@ -84,6 +84,9 @@
     takeInput.disabled = active;
     chooseInput.disabled = active;
     sendButton.disabled = active || staged.length === 0;
+    // Nothing staged, nothing to send: the screen stays two buttons until a
+    // photo has actually been chosen.
+    sendButton.hidden = staged.length === 0;
     actionArea.setAttribute("aria-busy", String(active));
   }
 

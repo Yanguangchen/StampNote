@@ -28,6 +28,17 @@
     "dashboard.load.completed",
     "dashboard.load.failed",
     "dashboard.image.failed",
+    "dashboard.location.deleted",
+    "dashboard.location.delete_failed",
+    "dashboard.date.deleted",
+    "dashboard.date.delete_failed",
+    "dashboard.session.renamed",
+    "dashboard.session.rename_failed",
+    "dashboard.session.deleted",
+    "dashboard.session.delete_failed",
+    "dashboard.theme.changed",
+    "session.gps.saved",
+    "session.gps.save_failed",
     "attendance.load.completed",
     "attendance.load.failed",
     "health.checked",
@@ -49,11 +60,14 @@
     "sampleCount",
     "checkInCount",
     "workerCount",
+    "accuracyMeters",
   ]);
   const BOOLEAN_FIELDS = new Set(["automatic", "online", "persistent"]);
   const ENUM_FIELDS = Object.freeze({
     status: new Set(["ok", "degraded", "success", "failed", "signed_in", "signed_out"]),
     trigger: new Set(["schedule", "gesture"]),
+    theme: new Set(["light", "dark", "system"]),
+    sessionId: new Set(["morning", "afternoon", "evening"]),
     metricName: new Set(["CLS", "INP", "LCP", "FCP", "TTFB", "long_tasks"]),
     metricRating: new Set(["good", "needs_improvement", "poor", "unknown"]),
   });

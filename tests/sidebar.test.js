@@ -78,7 +78,7 @@ function descendants(element) {
   return [element, ...element.children.flatMap(descendants)];
 }
 
-function createSidebarHarness(pathname) {
+function createSidebarHarness(pathname, options = {}) {
   const mount = new FakeElement("header");
   const body = new FakeElement("body");
   const documentListeners = new Map();
@@ -92,6 +92,7 @@ function createSidebarHarness(pathname) {
       return new FakeElement(tagName);
     },
     querySelector(selector) {
+      if (selector === "#theme-toggle") return options.themeToggle || null;
       return selector === "[data-sidebar-mount]" ? mount : null;
     },
   };
@@ -185,6 +186,20 @@ test("the drawer lists every page and marks the one being viewed", () => {
   assert.equal(createSidebarHarness("/coordinates").links[3].getAttribute("aria-current"), "page");
   assert.equal(createSidebarHarness("/worker-photos").links[1].getAttribute("aria-current"), "page");
   assert.equal(createSidebarHarness("/").links[0].getAttribute("aria-current"), "page");
+});
+
+test("the dashboard theme toggle is placed in the left drawer", () => {
+  const themeToggle = new FakeElement("button");
+  themeToggle.id = "theme-toggle";
+  themeToggle.className = "button button-quiet theme-toggle";
+  const { drawer } = createSidebarHarness("/admin.html", { themeToggle });
+  const tools = descendants(drawer).find((node) => node.className === "sidebar-tools");
+
+  assert.ok(tools);
+  assert.equal(tools.children.at(-1), themeToggle);
+  assert.equal(tools.children[0].textContent, "Appearance");
+  assert.match(sidebarCss, /\.sidebar-tools\s*\{[^}]*margin-top: auto;/);
+  assert.match(sidebarCss, /\.sidebar-tools \.theme-toggle\s*\{[^}]*width: 100%;/);
 });
 
 test("opening the drawer moves focus into it and closing brings focus back", () => {

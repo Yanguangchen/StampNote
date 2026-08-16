@@ -210,11 +210,12 @@ input {
 /* The page title and the scope line both said what the session rail already
    shows, so neither is drawn any more. They stay in the document for the
    heading outline and for the polite announcement a rail selection would
-   otherwise make silently. A delete's name is here for the same reason: the
-   button shows a glyph, but it is still called something. */
+   otherwise make silently. The icon buttons' names are here for the same reason:
+   they show a glyph, but they are still called something. */
 .intro,
 .scope-breadcrumb,
-.scope-delete-label {
+.scope-delete-label,
+.scope-search-label {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -515,7 +516,17 @@ input {
 /* Quiet until it is reached for: destructive, but it sits above a list the eye
    is meant to be reading. A glyph rather than a word, because three columns each
    spelling out their own delete competed with the choices underneath them. */
-.scope-delete {
+/* Both of a step's controls sit together at the far end, so the row reads as a
+   title and then the things that can be done to it. */
+.scope-step-tools {
+  display: flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+}
+
+.scope-delete,
+.scope-search {
   display: grid;
   flex: none;
   place-items: center;
@@ -529,7 +540,8 @@ input {
   color: var(--muted);
 }
 
-.scope-delete-icon {
+.scope-delete-icon,
+.scope-search-icon {
   width: 15px;
   height: 15px;
   fill: none;
@@ -537,6 +549,29 @@ input {
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 1.6;
+}
+
+/* Lit while the calendar is open, so a step showing a field explains itself. */
+.scope-search:hover,
+.scope-search:focus-visible,
+.scope-search[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.scope-date-search {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.scope-date-search[hidden] {
+  display: none;
+}
+
+.scope-date-search:not([hidden]) {
+  animation: detail-reveal var(--motion) var(--ease) both;
 }
 
 .scope-delete:hover:not(:disabled),
@@ -690,10 +725,47 @@ input {
   --weather-line: var(--danger);
 }
 
+/* The session's two short facts as matched tiles: same width, same height, one
+   row. Flex rather than two grid columns so that when only one of them has
+   anything to say it takes the whole row instead of sitting beside a reserved
+   empty column — and so that a viewport too narrow to seat both wraps them
+   rather than crushing them.
+
+   Equal basis and equal grow on both children is what makes the pair match; the
+   basis is 260px because below that the truck tile cannot seat two coordinates
+   across, and wrapping to one tile per row is the better answer there. */
+.session-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.session-facts > .session-weather,
+.session-facts > .session-truck-location {
+  flex: 1 1 260px;
+}
+
+.session-facts[hidden] {
+  display: none;
+}
+
+/* A session with neither a reading nor a truck draws no band at all, rather than
+   an empty row holding the pane's gap open above the attendance. */
+.session-facts:not(:has(> :not([hidden]))) {
+  display: none;
+}
+
 /* What the sky was doing while this session was worked: a glyph and a short
-   statement, rather than a paragraph a reader has to work through. */
+   statement, rather than a paragraph a reader has to work through.
+
+   The tile is as tall as the truck fields beside it, and the statement has far
+   less to say than they do, so its two lines are pinned to the top and bottom of
+   that height rather than bunched at the top over an empty half. */
 .session-weather {
   display: grid;
+  align-content: space-between;
   gap: 6px;
   padding: 12px 14px;
   border: 1px solid var(--line);
@@ -709,7 +781,7 @@ input {
 
 .weather-icon {
   flex: none;
-  font-size: 20px;
+  font-size: 36px;
   line-height: 1;
 }
 
@@ -725,7 +797,7 @@ input {
   min-width: 0;
   overflow: hidden;
   color: var(--ink);
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 680;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -735,12 +807,12 @@ input {
 .weather-delay {
   flex: none;
   margin-left: auto;
-  padding: 3px 9px;
+  padding: 4px 10px;
   border: 1px solid var(--danger-line);
   border-radius: 999px;
   background: var(--danger-soft);
   color: var(--danger);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -748,20 +820,25 @@ input {
 .weather-figures {
   margin: 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
 
 /* The coordinates for the session being looked at, beside the breadcrumb naming
    it, rather than repeated inside every row of the rail. */
 .session-truck-location {
+  display: grid;
   min-width: 0;
 }
 
+/* Padding, border and radius match the weather tile exactly, because the two are
+   read as a pair and a 2px difference in inset is visible when they are side by
+   side. The form fills the wrapper so both tiles end at the same line. */
 .truck-location-form {
   display: grid;
+  align-content: space-between;
   gap: 8px;
-  padding: 10px;
+  padding: 12px 14px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface-solid);
@@ -854,34 +931,6 @@ input {
   min-width: 0;
 }
 
-/* Beyond this width there is room for the roster to sit beside the photographs.
-   Stacked, the attendance panel spent 1313px to show a number and a word — its
-   two summary tiles were 623px each — and pushed the photographs to y=1161 on a
-   900px screen, so the main content of the page began below the fold. */
-@media (min-width: 1100px) {
-  .dashboard-detail {
-    grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
-    align-items: start;
-  }
-
-  /* The breadcrumb names the session both columns belong to. */
-  .scope-summary {
-    grid-column: 1 / -1;
-  }
-
-  /* A heading and its filter no longer fit shoulder to shoulder in a column this
-     narrow, so they stack and the select takes the full width. */
-  .attendance-heading {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .attendance-filter {
-    max-width: none;
-  }
-}
-
 /* With the breadcrumb gone this row is just the session's own actions, so it
    collapses to nothing rather than holding a line's worth of empty space. */
 .scope-summary:has(.session-actions[hidden]) {
@@ -901,6 +950,7 @@ input {
 
 /* Each panel arrives once its scope is chosen rather than blinking into place,
    and a rail step does the same when the step above it is answered. */
+.session-facts:not([hidden]),
 .detail-column:not([hidden]),
 .photos-panel:not([hidden]),
 .scope-guidance:not([hidden]),
@@ -992,6 +1042,44 @@ input {
 
 .attendance-filter select:disabled {
   opacity: 0.55;
+}
+
+/* Beyond this width there is room for the roster to sit beside the photographs.
+   Stacked, the attendance panel spent 1313px to show a number and a word — its
+   two summary tiles were 623px each — and pushed the photographs to y=1161 on a
+   900px screen, so the main content of the page began below the fold.
+
+   This block sits below the rules it revises rather than above them. A media
+   query adds no specificity, so declared earlier it simply lost: the column
+   direction here took effect while `align-items: end` above did not, and end
+   alignment down a column is the right-hand edge — which is where the heading
+   and its filter ended up. */
+@media (min-width: 1100px) {
+  .dashboard-detail {
+    grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  /* The breadcrumb names the session both columns belong to, and the two fact
+     tiles are a band across the top of the same pane. Half of the left column is
+     184px; a longitude carried to fourteen decimal places wants about 147px, so
+     seating two of them across means taking the whole width. */
+  .scope-summary,
+  .session-facts {
+    grid-column: 1 / -1;
+  }
+
+  /* A heading and its filter no longer fit shoulder to shoulder in a column this
+     narrow, so they stack and the select takes the full width. */
+  .attendance-heading {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .attendance-filter {
+    max-width: none;
+  }
 }
 
 .attendance-summary {

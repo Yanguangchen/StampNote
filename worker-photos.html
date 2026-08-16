@@ -36,24 +36,22 @@
     </header>
 
     <main class="photo-main">
-      <section class="intro" aria-labelledby="worker-photo-title">
-        <p class="eyebrow">No recording needed</p>
-        <h1 id="worker-photo-title">Add a site photo</h1>
-        <p class="intro-copy">
-          Take one now or choose existing photos. StampNote automatically attaches the current GPS,
-          address, time, and weather to every photo.
-        </p>
-      </section>
+      <!-- The page should still have a heading, and the buttons below are named
+           by it, but a phone screen with two buttons on it does not need to be
+           told what it is. -->
+      <h1 class="visually-hidden" id="worker-photo-title">Add a site photo</h1>
 
-      <section class="action-card" aria-labelledby="photo-action-title">
-        <h2 id="photo-action-title">Choose how to add it</h2>
+      <!-- Two buttons, and nothing else until there is something to send. What
+           the stamp attaches is better learned from the first photo than from a
+           paragraph above the button. -->
+      <section class="action-card" aria-labelledby="worker-photo-title">
         <div class="photo-actions" id="photo-actions">
           <label class="photo-action primary-action" for="take-photo">
-            <span class="action-icon" aria-hidden="true">＋</span>
-            <span>
-              <strong>Take a photo</strong>
-              <small>Open the rear camera</small>
-            </span>
+            <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="M4.2 8.1h3l1.5-2.2h6.6l1.5 2.2h3a1.7 1.7 0 0 1 1.7 1.7v8.1a1.7 1.7 0 0 1-1.7 1.7H4.2a1.7 1.7 0 0 1-1.7-1.7V9.8a1.7 1.7 0 0 1 1.7-1.7z" />
+              <circle cx="12" cy="13.5" r="3.5" />
+            </svg>
+            <strong>Take photo</strong>
           </label>
           <input
             class="visually-hidden-input"
@@ -64,11 +62,12 @@
           />
 
           <label class="photo-action" for="choose-photos">
-            <span class="action-icon library-icon" aria-hidden="true">▧</span>
-            <span>
-              <strong>Choose from library</strong>
-              <small>Select one or several</small>
-            </span>
+            <svg class="action-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <rect x="3.2" y="5.2" width="17.6" height="13.6" rx="2.2" />
+              <circle cx="8.6" cy="10" r="1.6" />
+              <path d="m4.4 17.2 4.5-4.4 3 2.9 3.2-3.4 4.5 4.9" />
+            </svg>
+            <strong>Choose from gallery</strong>
           </label>
           <input
             class="visually-hidden-input"

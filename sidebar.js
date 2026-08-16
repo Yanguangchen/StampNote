@@ -75,6 +75,20 @@
   nav.append(...links);
   sidebar.append(heading, nav);
 
+  // Appearance belongs with the app-level navigation rather than the account
+  // controls. Reusing the existing button keeps the dashboard's theme state,
+  // telemetry and click handler intact when it is moved into the drawer.
+  const themeToggle = document.querySelector("#theme-toggle");
+  if (themeToggle) {
+    const tools = document.createElement("div");
+    const toolsHeading = document.createElement("p");
+    tools.className = "sidebar-tools";
+    toolsHeading.className = "sidebar-heading";
+    toolsHeading.textContent = "Appearance";
+    tools.append(toolsHeading, themeToggle);
+    sidebar.append(tools);
+  }
+
   function setOpen(open) {
     sidebar.dataset.open = String(open);
     scrim.dataset.open = String(open);

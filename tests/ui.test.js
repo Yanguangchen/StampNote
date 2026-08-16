@@ -959,9 +959,16 @@ test("the shutter is centred and saving sits in the bottom right corner", () => 
   assert.ok(html.indexOf('id="monitor-toggle"') > html.indexOf('<div class="toolbar-group">'));
   assert.ok(html.indexOf('id="monitor-toggle"') < html.indexOf('toolbar-group-end'));
 
-  // The stopped glyph is the familiar solid red recording circle.
+  // A camera's shutter, not a recorder's: a bright ring around a bright disc,
+  // with the glyph as ink on the disc rather than a red light in a dark well.
   assert.match(css, /--record:\s*#ff3b30/);
-  assert.match(css, /\.record\s*\{[^}]*color:\s*var\(--record\)/);
+  assert.match(css, /\.record\s*\{[^}]*border:\s*2px solid rgba\(255, 255, 255/);
+  assert.match(css, /\.record::before\s*\{[^}]*background:\s*linear-gradient\(180deg, #fff/);
+  // Watching, the disc is the red one stops.
+  assert.match(
+    css,
+    /\.record\[data-running="true"\]::before\s*\{[^}]*background:\s*linear-gradient\(180deg, #ff5d54/,
+  );
   assert.match(css, /\.record\s*\{[^}]*linear-gradient/);
   assert.match(css, /\.record\s*\{[^}]*box-shadow:/);
   assert.match(css, /\.record::before\s*\{[^}]*inset:\s*6px/);

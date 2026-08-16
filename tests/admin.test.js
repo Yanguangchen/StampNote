@@ -174,12 +174,16 @@ function createAdminHarness(options = {}) {
     "date-options",
     "date-picker",
     "date-hint",
+    "date-search",
+    "date-search-toggle",
+    "date-search-label",
     "session-options",
     "scope-breadcrumb",
     "scope-guidance",
     "date-step",
     "session-step",
     "detail-column",
+    "session-facts",
     "photos-panel",
     "session-actions",
     "session-truck-location",
@@ -533,8 +537,10 @@ test("photos and daily attendance share one dashboard without status or access-c
       new RegExp(`id="${level}-delete"[\\s\\S]*?<span class="scope-delete-label">Delete `),
     );
   });
-  assert.match(adminCss, /\.scope-delete\s*\{[^}]*width:\s*26px/);
-  assert.match(adminCss, /\.scope-delete-icon\s*\{[^}]*stroke:\s*currentColor/);
+  // Geometry shared with the date step's search button, so a step's controls are
+  // the same size whatever they do.
+  assert.match(adminCss, /\.scope-delete,\s*\.scope-search\s*\{[^}]*width:\s*26px/);
+  assert.match(adminCss, /\.scope-delete-icon,\s*\.scope-search-icon\s*\{[^}]*stroke:\s*currentColor/);
   assert.match(adminHtml, /id="session-truck-location"/);
   assert.match(adminHtml, /id="session-rename-dialog"/);
   assert.match(adminCss, /\.dashboard-workspace\s*\{[^}]*grid-template-columns:/);
@@ -549,7 +555,54 @@ test("photos and daily attendance share one dashboard without status or access-c
     adminCss,
     /@media \(min-width: 1100px\)\s*\{[\s\S]*?\.dashboard-detail\s*\{[^}]*grid-template-columns:/,
   );
+
+  // In that narrow column the heading stacks above its filter, which only holds
+  // if these rules are read after the ones they revise. A media query carries no
+  // extra specificity, so declared earlier the column direction applied while the
+  // stretch did not — and stretching cancelled leaves `align-items: end`, which
+  // down a column is the right-hand edge.
+  const desktopBlock = adminCss.indexOf("@media (min-width: 1100px)");
+  assert.ok(desktopBlock > 0, "the desktop layout block exists");
+  assert.ok(
+    desktopBlock > adminCss.indexOf(".attendance-heading {"),
+    "the desktop overrides are declared after the attendance heading they revise",
+  );
+  assert.ok(
+    desktopBlock > adminCss.indexOf(".attendance-filter {"),
+    "the desktop overrides are declared after the attendance filter they revise",
+  );
+
   assert.match(adminCss, /\.session-truck-location\s*\{/);
+
+  // The sky and the truck's coordinates read across one row as matched tiles.
+  // Flex rather than two grid columns, so a session with only one of them gives
+  // that one the full width instead of leaving a reserved column empty beside it;
+  // equal basis and equal grow on both is what makes the pair match.
+  assert.match(
+    adminHtml,
+    /<div class="session-facts" id="session-facts" hidden>[\s\S]*?id="session-weather"[\s\S]*?id="session-truck-location"[\s\S]*?<\/div>/,
+  );
+  assert.match(adminCss, /\.session-facts\s*\{[^}]*display: flex/);
+  assert.match(adminCss, /\.session-facts\s*\{[^}]*flex-wrap: wrap/);
+  assert.match(adminCss, /\.session-facts\s*\{[^}]*align-items: stretch/);
+  assert.match(
+    adminCss,
+    /\.session-facts > \.session-weather,\s*\n\.session-facts > \.session-truck-location\s*\{[^}]*flex: 1 1 260px/,
+  );
+  // Half of the 380px column will not seat a longitude beside a latitude, so the
+  // band takes the whole pane instead and the coordinates stay side by side.
+  assert.match(
+    adminCss,
+    /@media \(min-width: 1100px\)\s*\{[\s\S]*?\.scope-summary,\s*\n\s*\.session-facts\s*\{[^}]*grid-column: 1 \/ -1/,
+  );
+  assert.match(adminCss, /\.truck-location-form fieldset\s*\{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  // Matched tiles means matched insets and a shared bottom edge, with the shorter
+  // of the two spreading its lines rather than bunching them at the top.
+  assert.match(adminCss, /\.session-weather\s*\{[^}]*align-content: space-between/);
+  assert.match(adminCss, /\.truck-location-form\s*\{[^}]*align-content: space-between/);
+  assert.match(adminCss, /\.session-weather\s*\{[^}]*padding: 12px 14px/);
+  assert.match(adminCss, /\.truck-location-form\s*\{[^}]*padding: 12px 14px/);
+  assert.match(adminCss, /\.session-truck-location\s*\{[^}]*display: grid/);
   assert.match(adminCss, /\.scope-date-field\s*\{/);
   assert.match(adminCss, /\.dashboard-panel\s*\{[^}]*backdrop-filter:\s*var\(--blur\)/);
   assert.match(adminCss, /--blur:\s*blur\(/);
@@ -584,10 +637,12 @@ test("the selected session carries its Truck location, rename and delete in the 
 
   const truckHost = harness.elements["session-truck-location"];
 
-  // Nothing below the rail exists until the rail has been answered.
+  // Nothing below the rail exists until the rail has been answered, and step one
+  // is left to speak for itself rather than being narrated underneath.
   assert.equal(harness.elements["detail-column"].hidden, true);
   assert.equal(harness.elements["photos-panel"].hidden, true);
-  assert.match(harness.elements["scope-guidance"].textContent, /Pick a location/);
+  assert.equal(harness.elements["scope-guidance"].hidden, true);
+  assert.equal(harness.elements["scope-guidance"].textContent, "");
 
   await chooseScope(harness, { location: 1, date: 1 });
   const sessionOptions = harness.elements["session-options"];
@@ -1018,7 +1073,10 @@ test("the rail and the detail side are revealed one answered step at a time", as
   assert.equal(harness.elements["session-step"].hidden, true);
   assert.equal(harness.elements["detail-column"].hidden, true);
   assert.equal(harness.elements["photos-panel"].hidden, true);
-  assert.match(harness.elements["scope-guidance"].textContent, /Pick a location/);
+  // The guidance frame stays away entirely rather than telling the reader to use
+  // the only list on the page.
+  assert.equal(harness.elements["scope-guidance"].hidden, true);
+  assert.equal(harness.elements["scope-guidance"].textContent, "");
 
   await scopeOptions(harness.elements["location-options"])[1].dispatch("click");
   await settle();
@@ -1031,6 +1089,7 @@ test("the rail and the detail side are revealed one answered step at a time", as
   await settle();
   assert.equal(harness.elements["session-step"].hidden, false);
   assert.equal(harness.elements["detail-column"].hidden, true);
+  assert.equal(harness.elements["session-facts"].hidden, true);
   assert.equal(harness.elements["photos-panel"].hidden, true);
   assert.match(harness.elements["scope-guidance"].textContent, /pick a time session/i);
 
@@ -1038,6 +1097,9 @@ test("the rail and the detail side are revealed one answered step at a time", as
   await scopeOptions(harness.elements["session-options"])[0].dispatch("click");
   await settle();
   assert.equal(harness.elements["detail-column"].hidden, false);
+  // The band of facts sits outside the roster's column now, so it is revealed on
+  // its own account rather than carried in with it.
+  assert.equal(harness.elements["session-facts"].hidden, false);
   assert.equal(harness.elements["photos-panel"].hidden, false);
   assert.equal(harness.elements["scope-guidance"].hidden, true);
   assert.equal(harness.elements["scope-guidance"].textContent, "");
@@ -1048,6 +1110,7 @@ test("the rail and the detail side are revealed one answered step at a time", as
   await settle();
   assert.equal(harness.elements["session-step"].hidden, true);
   assert.equal(harness.elements["detail-column"].hidden, true);
+  assert.equal(harness.elements["session-facts"].hidden, true);
   assert.equal(harness.elements["photos-panel"].hidden, true);
   assert.equal(harness.elements["photo-library"].children.length, 0);
 });
@@ -1124,6 +1187,40 @@ test("a month of history keeps the date step short and still reaches any day", a
   assert.match(harness.elements["date-hint"].textContent, /No check-ins or photos on/);
   assert.equal(harness.elements["date-hint"].dataset.state, "error");
   assert.match(harness.elements["scope-breadcrumb"].textContent, /June 3, 2026/);
+});
+
+test("the calendar waits behind a search button rather than standing over the day list", async () => {
+  const harness = createAdminHarness();
+  await settle();
+  harness.auth({ uid: "user-1", email: "owner@example.com" });
+  await settle();
+
+  const search = harness.elements["date-search"];
+  const toggle = harness.elements["date-search-toggle"];
+
+  // Most visits take one of the recent buttons, so the field that reaches the
+  // rest is not drawn until it is asked for.
+  assert.equal(search.hidden, true);
+  assert.equal(toggle.attributes.get("aria-expanded"), "false");
+  assert.equal(harness.elements["date-search-label"].textContent, "Jump to a date");
+
+  await toggle.dispatch("click");
+  await settle();
+  assert.equal(search.hidden, false);
+  assert.equal(toggle.attributes.get("aria-expanded"), "true");
+  assert.equal(harness.elements["date-search-label"].textContent, "Hide the date jump");
+
+  await toggle.dispatch("click");
+  await settle();
+  assert.equal(search.hidden, true);
+  assert.equal(toggle.attributes.get("aria-expanded"), "false");
+  assert.equal(harness.elements["date-search-label"].textContent, "Jump to a date");
+
+  // The button is named and the calendar it opens is the thing it points at.
+  assert.match(adminHtml, /id="date-search-toggle"[\s\S]*?aria-controls="date-search"/);
+  assert.match(adminHtml, /<div class="scope-date-search" id="date-search" hidden>/);
+  assert.match(adminCss, /\.scope-search\[aria-expanded="true"\]/);
+  assert.match(adminCss, /\.scope-search-label\s*\{[\s\S]*?clip: rect\(0, 0, 0, 0\)/);
 });
 
 test("the dashboard signs in, renders and filters photos, paginates, and opens the viewer", async () => {

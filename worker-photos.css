@@ -35,7 +35,11 @@
 }
 
 body {
-  min-height: 100vh;
+  /* The page is two buttons, so it sits in the middle of the screen rather
+     than clinging to the top with a screen's worth of paper below it. */
+  display: flex;
+  min-height: 100dvh;
+  flex-direction: column;
   margin: 0;
   background: var(--paper);
   color: var(--ink);
@@ -104,47 +108,35 @@ a {
 }
 
 .photo-main {
-  width: min(760px, calc(100% - 32px));
+  display: grid;
+  width: min(460px, calc(100% - 32px));
+  flex: 1;
+  align-content: center;
+  justify-items: center;
   margin: 0 auto;
-  padding: 48px 0 72px;
+  padding: 32px 0 48px;
 }
 
-.intro {
-  max-width: 650px;
-  margin-bottom: 24px;
+/* Kept for the heading outline and for the buttons it names, but never drawn:
+   two buttons on a phone screen do not need to be told what they are. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
-.eyebrow {
-  margin: 0 0 6px;
-  color: var(--accent);
-  font-size: 12px;
-  font-weight: 750;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
-}
-
-h1,
-h2,
 p {
   text-wrap: pretty;
 }
 
-h1 {
-  margin: 0;
-  font-size: clamp(34px, 7vw, 54px);
-  line-height: 1;
-  letter-spacing: -0.045em;
-}
-
-.intro-copy {
-  max-width: 60ch;
-  margin: 16px 0 0;
-  color: var(--muted);
-  font-size: 17px;
-  line-height: 1.55;
-}
-
 .action-card {
+  width: 100%;
   padding: 22px;
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -152,36 +144,41 @@ h1 {
   box-shadow: var(--shadow);
 }
 
-.action-card > h2 {
-  margin: 0;
-  font-size: 18px;
-  letter-spacing: -0.02em;
-}
-
+/* Two buttons, side by side on a phone held either way. Each is an icon and
+   its name — a target for a gloved thumb rather than a row of prose. */
 .photo-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  margin-top: 16px;
 }
 
 .photo-action {
   display: flex;
-  min-height: 104px;
+  min-height: 132px;
+  flex-direction: column;
   align-items: center;
-  gap: 14px;
-  padding: 18px;
+  justify-content: center;
+  gap: 12px;
+  padding: 18px 14px;
   border: 1px solid var(--line-strong);
   border-radius: 14px;
   background: var(--field);
   color: var(--ink);
   cursor: pointer;
-  transition: border-color 140ms ease, transform 140ms ease, background 140ms ease;
+  text-align: center;
+  transition:
+    border-color 140ms ease,
+    transform 140ms ease,
+    background 140ms ease;
 }
 
 .photo-action:hover {
   border-color: var(--accent);
   transform: translateY(-1px);
+}
+
+.photo-action:active {
+  transform: scale(0.99);
 }
 
 .photo-action.primary-action {
@@ -190,37 +187,20 @@ h1 {
   color: var(--on-accent);
 }
 
-.photo-action strong,
-.photo-action small {
-  display: block;
-}
-
 .photo-action strong {
-  font-size: 16px;
-}
-
-.photo-action small {
-  margin-top: 4px;
-  color: inherit;
-  font-size: 13px;
-  opacity: 0.76;
+  font-size: 15px;
+  font-weight: 650;
 }
 
 .action-icon {
-  display: grid;
   flex: 0 0 auto;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border: 1px solid currentColor;
-  border-radius: 50%;
-  font-size: 25px;
-  font-weight: 350;
-  line-height: 1;
-}
-
-.library-icon {
-  font-size: 22px;
+  width: 34px;
+  height: 34px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .visually-hidden-input {
@@ -242,10 +222,12 @@ h1 {
 
 .save-status {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
+  justify-content: center;
   gap: 9px;
   min-height: 22px;
   margin-top: 16px;
+  text-align: center;
   color: var(--muted);
   font-size: 13px;
   line-height: 1.45;
@@ -255,11 +237,12 @@ h1 {
   display: none;
 }
 
+/* The dot sits on the line's centre now that the row is centred, rather than
+   being nudged down to meet the first line of a left-aligned paragraph. */
 .status-dot {
   flex: 0 0 auto;
   width: 8px;
   height: 8px;
-  margin-top: 5px;
   border-radius: 50%;
   background: var(--line-strong);
 }
