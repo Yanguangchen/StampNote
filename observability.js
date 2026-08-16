@@ -8,6 +8,8 @@
     "capture.store.ready",
     "capture.monitor.started",
     "capture.monitor.failed",
+    "capture.camera.facing",
+    "capture.camera.facing.failed",
     "capture.saved",
     "face.match.completed",
     "face.match.failed",
@@ -66,6 +68,7 @@
   const ENUM_FIELDS = Object.freeze({
     status: new Set(["ok", "degraded", "success", "failed", "signed_in", "signed_out"]),
     trigger: new Set(["schedule", "gesture"]),
+    facing: new Set(["environment", "user"]),
     theme: new Set(["light", "dark", "system"]),
     sessionId: new Set(["morning", "afternoon", "evening"]),
     metricName: new Set(["CLS", "INP", "LCP", "FCP", "TTFB", "long_tasks"]),

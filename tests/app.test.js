@@ -5,6 +5,7 @@ const { test } = require("node:test");
 const vm = require("node:vm");
 
 const appPath = resolve(__dirname, "..", "app.js");
+const cameraFacing = require("../camera-facing.js");
 const cloudData = require("../photo-cloud.js");
 
 class FakeElement {
@@ -168,6 +169,8 @@ function createAppHarness(options = {}) {
     "monitor-icon-start",
     "monitor-icon-stop",
     "monitor-status",
+    "camera-facing-toggle",
+    "camera-facing-name",
     "capture-flash",
     "pose-overlay",
     "pose-badge",
@@ -424,7 +427,20 @@ function createAppHarness(options = {}) {
   let faceIdentityOptions;
   let personTrackerOptions;
   let cameraConstraints;
+  // The page reads its camera choice out of `localStorage`, which the harness
+  // stands in for so a test can seed a device that was already set up and read
+  // back what a press remembered.
+  const cameraStorage = new Map(Object.entries(options.storedFacing || {}));
+  const facingStorage = {
+    getItem(key) {
+      return cameraStorage.has(key) ? cameraStorage.get(key) : null;
+    },
+    setItem(key, value) {
+      cameraStorage.set(key, value);
+    },
+  };
   let detectorClosed = false;
+  let nextCameraError = null;
   let trackStopped = false;
   let releaseCameraLoad = null;
   const cameraLoadGate = options.deferCamera
@@ -598,6 +614,11 @@ function createAppHarness(options = {}) {
   const scope = {
     StampNoteAddress: service,
     StampNoteAutoCapture: options.full === false ? null : autoCapture,
+    StampNoteCameraFacing: {
+      ...cameraFacing,
+      createPreference: (preferenceOptions) =>
+        cameraFacing.createPreference({ storage: facingStorage, ...preferenceOptions }),
+    },
     StampNoteFirebase: cloud,
     StampNotePhotoCloud: cloudData,
     StampNoteFaceIdentity: options.faceEnrollment
@@ -732,6 +753,11 @@ function createAppHarness(options = {}) {
       async getUserMedia(constraints) {
         cameraConstraints = constraints;
         if (cameraLoadGate) await cameraLoadGate;
+        // One-shot, so a test can refuse the camera being switched to and still
+        // have the fallback back to the working one succeed.
+        const injected = nextCameraError;
+        nextCameraError = null;
+        if (injected) throw injected;
         if (options.cameraError) throw options.cameraError;
         return {
           getTracks() {
@@ -803,8 +829,14 @@ function createAppHarness(options = {}) {
     get cameraConstraints() {
       return cameraConstraints;
     },
+    get storedFacing() {
+      return cameraStorage.get("stampnote-camera-facing") || null;
+    },
     get detectorClosed() {
       return detectorClosed;
+    },
+    failNextCamera(error) {
+      nextCameraError = error;
     },
     get faceIdentityOptions() {
       return faceIdentityOptions;
@@ -1134,6 +1166,90 @@ test("initial camera startup uses a prominent loader until the stream is ready",
   assert.equal(harness.elements["camera-loader"].attributes.get("aria-busy"), "false");
   assert.equal(harness.elements["monitor-toggle"].disabled, false);
   assert.equal(harness.controllerState.running, true);
+});
+
+test("the device picks which camera watches, and is remembered", async () => {
+  const harness = createAppHarness({ camera: true });
+  await settle();
+
+  // The back camera by default: the watch is normally a device left facing the
+  // work rather than a phone held up to somebody.
+  assert.equal(harness.elements["camera-facing-name"].textContent, "Back");
+  assert.equal(harness.elements["camera-facing-toggle"].dataset.facing, "environment");
+  assert.equal(
+    harness.elements["camera-facing-toggle"].attributes.get("aria-label"),
+    "Back camera in use. Switch to the front camera.",
+  );
+
+  await harness.elements["camera-facing-toggle"].dispatch("click");
+
+  assert.equal(harness.elements["camera-facing-name"].textContent, "Front");
+  assert.equal(harness.elements["camera-facing-toggle"].dataset.facing, "user");
+  assert.equal(
+    harness.elements["camera-facing-toggle"].attributes.get("aria-label"),
+    "Front camera in use. Switch to the back camera.",
+  );
+  // A device is set up once and left that way, so the next visit starts there.
+  assert.equal(harness.storedFacing, "user");
+
+  await harness.elements["monitor-toggle"].dispatch("click");
+  await settle(8);
+
+  assert.equal(harness.cameraConstraints.video.facingMode, "user");
+  // Both cameras are still asked for the resolution the photograph wants.
+  assert.equal(harness.cameraConstraints.video.width.ideal, 1920);
+  assert.equal(harness.cameraConstraints.video.height.ideal, 1080);
+});
+
+test("switching cameras mid-watch swaps the lens without stopping the watch", async () => {
+  const harness = createAppHarness({
+    camera: true,
+    storedFacing: { "stampnote-camera-facing": "user" },
+  });
+  await settle();
+
+  // A device already set up for the front camera opens on it.
+  assert.equal(harness.elements["camera-facing-name"].textContent, "Front");
+  await harness.elements["monitor-toggle"].dispatch("click");
+  await settle(8);
+  assert.equal(harness.cameraConstraints.video.facingMode, "user");
+  assert.equal(harness.controllerState.running, true);
+
+  await harness.elements["camera-facing-toggle"].dispatch("click");
+  await settle(4);
+
+  assert.equal(harness.cameraConstraints.video.facingMode, "environment");
+  assert.equal(harness.storedFacing, "environment");
+  // Nothing about the watch depends on which lens fills the video element, so
+  // the detector, the schedule and any attendance already taken all carry on.
+  assert.equal(harness.controllerState.running, true);
+  assert.equal(harness.controllerState.paused, false);
+  assert.equal(harness.elements["camera-facing-name"].textContent, "Back");
+});
+
+test("a camera that refuses to open leaves the one already working in place", async () => {
+  const harness = createAppHarness({ camera: true });
+  await settle();
+  await harness.elements["monitor-toggle"].dispatch("click");
+  await settle(8);
+  assert.equal(harness.cameraConstraints.video.facingMode, "environment");
+
+  // Phones will not hold both cameras open at once, so the working one is
+  // released before the other is asked for — and a refusal has to reopen it
+  // rather than leave the watch blind.
+  harness.failNextCamera(Object.assign(new Error("Not readable"), { name: "NotReadableError" }));
+  await harness.elements["camera-facing-toggle"].dispatch("click");
+  await settle(4);
+
+  assert.equal(harness.cameraConstraints.video.facingMode, "environment");
+  assert.equal(harness.storedFacing, "environment");
+  assert.equal(harness.elements["camera-facing-name"].textContent, "Back");
+  assert.equal(harness.controllerState.running, true);
+  assert.match(harness.elements["monitor-status"].textContent, /front camera could not be opened/i);
+  assert.equal(
+    harness.events.some((event) => event.name === "capture.camera.facing.failed"),
+    true,
+  );
 });
 
 test("the live camera prompts for attendance taking before the activity starts", async () => {

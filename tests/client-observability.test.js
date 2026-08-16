@@ -107,6 +107,7 @@ test("client telemetry sanitizes its fixed field allowlist and error codes", () 
     online: true,
     status: "signed_in",
     trigger: "gesture",
+    facing: "user",
     metricName: "LCP",
     metricRating: "poor",
     errorCode: "Auth Popup Blocked!",
@@ -126,10 +127,14 @@ test("client telemetry sanitizes its fixed field allowlist and error codes", () 
     online: true,
     status: "signed_in",
     trigger: "gesture",
+    // Which camera the watch is on is one of two fixed values, so it travels as
+    // an enum rather than as free text.
+    facing: "user",
     metricName: "LCP",
     metricRating: "poor",
     errorCode: "auth_popup_blocked",
   });
+  assert.deepEqual(pure.sanitizeFields({ facing: "sideways" }), {});
   assert.equal(pure.safeErrorCode({ name: "Network Error!" }), "network_error");
   assert.equal(pure.safeErrorCode(null, "fallback"), "fallback");
   assert.deepEqual(pure.sanitizeFields(null), {});

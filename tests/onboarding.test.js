@@ -44,7 +44,17 @@ test("enrollment stores a representative face gallery and can delete it", () => 
   assert.match(app, /embeddings:\s*samples/);
   assert.match(app, /cloud\.saveWorkerFace\(/);
   assert.match(app, /cloud\.deleteWorkerFace\(/);
-  assert.match(app, /facingMode:\s*"user"/);
+  // Enrolling is normally somebody scanning their own face, so the front camera
+  // is where this page starts — but a supervisor working down a queue points the
+  // back one at each worker instead, and can say so before the scan begins.
+  assert.match(app, /fallback:\s*cameraFacing\.FRONT/);
+  assert.match(app, /cameraFacing\.videoConstraints\(facing,/);
+  assert.match(html, /id="camera-facing-toggle"/);
+  assert.match(html, /id="camera-facing-state"/);
+  assert.match(css, /\.camera-facing-toggle:disabled/);
+  // Seven samples belong to one view of one face, so the lens cannot be swapped
+  // out from under a scan that is already running.
+  assert.match(app, /cameraFacingToggle\.disabled = scanActive \|\| saving/);
   // Nothing keeps a frame at photo resolution here, so the camera is asked only
   // for what the face model and the badge-sized portrait can use.
   assert.match(app, /FACE_CAMERA_WIDTH\s*=\s*1280/);

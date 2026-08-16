@@ -12,6 +12,7 @@
   const facialRecognition = window.StampNoteFaceIdentity;
   const personIdentity = window.StampNotePersonTracker;
   const frameScaling = window.StampNoteFrameScaler;
+  const cameraFacing = window.StampNoteCameraFacing;
   const triage = window.StampNoteTriage;
   const autoCapture = window.StampNoteAutoCapture;
   const addressField = document.querySelector("#address-field");
@@ -32,6 +33,8 @@
   const monitorIconStart = document.querySelector("#monitor-icon-start");
   const monitorIconStop = document.querySelector("#monitor-icon-stop");
   const monitorStatus = document.querySelector("#monitor-status");
+  const cameraFacingToggle = document.querySelector("#camera-facing-toggle");
+  const cameraFacingName = document.querySelector("#camera-facing-name");
   const captureFlash = document.querySelector("#capture-flash");
   const poseOverlay = document.querySelector("#pose-overlay");
   const poseBadge = document.querySelector("#pose-badge");
@@ -514,8 +517,18 @@
   const store = storage.createPhotoStore();
   const thumbnailUrls = [];
 
+  // The watch is normally a device left facing the work, so the lens on the
+  // back is the default. A phone held up to a face, a tablet on a wall, and a
+  // laptop that only has the one camera all want the front instead, and that is
+  // a property of where the device is standing rather than of the session — so
+  // the answer is remembered and the next visit starts already set up.
+  const cameraFacingPreference = cameraFacing?.createPreference({
+    fallback: cameraFacing.BACK,
+  });
+
   let stream = null;
   let controller = null;
+  let cameraSwitching = false;
   let monitorStarting = false;
   let sampleTimer = null;
   let wakeLock = null;
@@ -2359,6 +2372,133 @@
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Which way the camera looks
+
+  function currentCameraFacing() {
+    return cameraFacingPreference?.get() || "environment";
+  }
+
+  // The photograph is what the resolution is for, so both cameras are asked for
+  // the same thing and whichever one is fitted answers with the best it has.
+  function cameraRequest(facing = currentCameraFacing()) {
+    return {
+      video: cameraFacing
+        ? cameraFacing.videoConstraints(facing, { width: 1920, height: 1080, frameRate: 30 })
+        : {
+            facingMode: facing,
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 },
+          },
+      audio: false,
+    };
+  }
+
+  function setCameraFacingLabel() {
+    if (!cameraFacingToggle) return;
+
+    const facing = currentCameraFacing();
+    const next = cameraFacing?.opposite(facing) || facing;
+    cameraFacingToggle.dataset.facing = facing;
+    // The visible name is one word and the bar is thumb-width, so the whole
+    // sentence — what is in use and what a press would do — lives in the label
+    // a screen reader reads out.
+    cameraFacingToggle.setAttribute(
+      "aria-label",
+      `${cameraFacing?.name(facing) || "Back"} camera in use. Switch to the ${
+        cameraFacing?.describe(next) || "front camera"
+      }.`,
+    );
+    if (cameraFacingName) {
+      cameraFacingName.textContent = cameraFacing?.name(facing) || "Back";
+    }
+  }
+
+  // Phones routinely refuse to hold both cameras open at once, so the one in
+  // hand is released before the other is asked for. That leaves a moment with
+  // no camera at all, which is why a refusal reopens the camera that was
+  // already working rather than leaving the watch blind.
+  async function useCameraFacing(facing, previousFacing) {
+    stream?.getTracks().forEach((track) => track.stop());
+    stream = null;
+    monitorVideo.srcObject = null;
+
+    let failure = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(cameraRequest(facing));
+    } catch (error) {
+      failure = error;
+      telemetry?.event(
+        "capture.camera.facing.failed",
+        {
+          errorCode: telemetry.safeErrorCode(error, "camera_switch_failed"),
+          facing,
+          status: "failed",
+        },
+        { immediate: true },
+      );
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(cameraRequest(previousFacing));
+      } catch {
+        // Neither camera answered, so the watch is over — and the reason has to
+        // be set after the stop, which writes a status line of its own.
+        stopMonitor();
+        setMonitorStatus(describeCameraError(failure), "error");
+        return false;
+      }
+      cameraFacingPreference?.set(previousFacing);
+      setCameraFacingLabel();
+    }
+
+    monitorVideo.srcObject = stream;
+    try {
+      await monitorVideo.play();
+    } catch {
+      // Some browsers resolve the frame without play() ever settling.
+    }
+
+    if (failure) {
+      setMonitorStatus(
+        `The ${cameraFacing?.describe(facing) || "other camera"} could not be opened, so the ${
+          cameraFacing?.describe(previousFacing) || "camera"
+        } is still in use.`,
+        "error",
+      );
+      return false;
+    }
+    return true;
+  }
+
+  // Nothing about the watch depends on which lens is filling the video element:
+  // the detector, the schedule and any attendance already taken all read the
+  // same element. So a running camera swaps its track rather than restarting,
+  // and the count of photographs, the cadence and the enrolled match survive.
+  async function switchCameraFacing() {
+    if (!cameraFacingPreference || cameraSwitching || monitorStarting) return;
+
+    const previousFacing = currentCameraFacing();
+    const facing = cameraFacingPreference.toggle();
+    setCameraFacingLabel();
+    telemetry?.event("capture.camera.facing", { facing });
+
+    // Stopped, the choice is simply what the next start will ask for.
+    if (!stream) return;
+
+    cameraSwitching = true;
+    if (cameraFacingToggle) cameraFacingToggle.disabled = true;
+    // A camera that is being swapped is a camera that is not there yet, which
+    // is the same situation as a backgrounded tab and takes the same answer.
+    controller?.setPaused(true);
+    try {
+      await useCameraFacing(facing, previousFacing);
+    } finally {
+      cameraSwitching = false;
+      if (cameraFacingToggle) cameraFacingToggle.disabled = false;
+      if (controller) controller.setPaused(false);
+    }
+  }
+
   // Inference is synchronous, so every millisecond of it is a millisecond the
   // overlay cannot move. Rather than a fixed timer that a slow device can never
   // keep up with — queueing ticks behind each other until nothing gets drawn at
@@ -2466,19 +2606,11 @@
       if (workerId) enrolledWorkerNamesForSession.set(workerId, displayName || workerId);
     });
 
-    setMonitorStatus("Starting the camera…");
+    setMonitorStatus(`Starting the ${cameraFacing?.describe(currentCameraFacing()) || "camera"}…`);
     setCameraLoaderDetail("Waiting for camera permission and a secure video stream…");
 
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "environment",
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-          frameRate: { ideal: 30 },
-        },
-        audio: false,
-      });
+      stream = await navigator.mediaDevices.getUserMedia(cameraRequest());
     } catch (error) {
       setMonitorStatus(describeCameraError(error), "error");
       telemetry?.event(
@@ -2871,6 +3003,8 @@
     await startMonitor();
   });
 
+  cameraFacingToggle?.addEventListener("click", switchCameraFacing);
+
   faceEnrollmentSkip?.addEventListener("click", () => {
     controller?.skipFaceEnrollment?.();
   });
@@ -2929,6 +3063,7 @@
   });
 
   setToggleLabel(false);
+  setCameraFacingLabel();
   setSaveLabel();
   store
     .ready()
