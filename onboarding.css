@@ -421,6 +421,43 @@ a {
 }
 
 /* The counter matters only once a scan is running. */
+/* Which lens the scan will look through, named beside the switch that changes
+   it. A running scan is six seconds long and its samples belong to one view, so
+   the switch goes dim rather than swapping the camera underneath them. */
+.scanner-camera {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+  padding-top: var(--gap-md);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.camera-facing-toggle {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  transition:
+    opacity var(--motion-fast) var(--ease),
+    border-color var(--motion-fast) var(--ease);
+}
+
+.camera-facing-toggle:hover:not(:disabled) {
+  border-color: var(--ink);
+}
+
+.camera-facing-toggle:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
 .scan-progress {
   display: none;
   align-items: center;

@@ -17,6 +17,7 @@ const publicFiles = new Set([
   "photo-store.js",
   "photo-triage.js",
   "worker-face.js",
+  "camera-facing.js",
   "frame-scaler.js",
   "face-identity.js",
   "person-tracker.js",

@@ -24,10 +24,18 @@ Built for a phone held in landscape, which is how it gets used while recording:
 
 - **The camera is the page.** It fills whatever shape the screen is, so turning the phone changes nothing about the layout, and nothing scrolls away underneath it.
 - **The address sits across the top of the picture**, in the same uppercase it will be stamped in — what is on screen is what is being written onto the photograph, rather than a panel somewhere else on the page.
-- **A toolbar along the bottom** holds everything that is not the picture, within a thumb's reach: the photographs taken so far and how many, a picker for stamping a photograph that already exists, the record button, and the address. It thins to icons in landscape and pads itself clear of a phone's home indicator.
+- **A toolbar along the bottom** holds everything that is not the picture, within a thumb's reach: the photographs taken so far and how many, a picker for stamping a photograph that already exists, which camera is watching, the record button, and the address. It thins to icons in landscape and pads itself clear of a phone's home indicator.
 - **Photos form a compact strip below the camera** rather than a page-length gallery, so the live picture keeps the screen.
 
 There is no second camera button. The page is already holding the camera open; a file input that opens the phone's camera app beside it was one camera too many.
+
+#### Back or front
+
+**Which lens watches is the device's to choose**, from the toolbar, at any time. A phone propped on a shelf watches the room through the camera on its back; the same phone held up to a face wants the one on its front; a laptop or a wall-mounted tablet only has the front one at all. So the recording page starts on the **back** camera and worker onboarding — normally somebody scanning their own face — starts on the **front** one, and either can be told otherwise.
+
+The name beside the glyph is the camera **in use**, not the one a press would move to, so the bar answers "which camera is this?" without being touched; the whole sentence, including what a press does, is in the button's accessible name. The choice is remembered per page in `localStorage`, so a device set up once starts that way on every later visit. Blocked storage costs only the remembering — the switch still works for the visit.
+
+Switching while the watch is running **swaps the video track instead of restarting**. The detector, the schedule, the photographs already taken and any attendance already recorded all read the same video element and carry on across the change. Because phones routinely refuse to hold both cameras open at once, the camera in hand is released before the other is asked for; if the other one refuses, the working camera is reopened and the toolbar goes back to naming it rather than leaving the watch blind. `facingMode` is asked for rather than demanded, so a device with a single camera returns that one instead of failing outright.
 
 #### Attendance-taking confirmation
 

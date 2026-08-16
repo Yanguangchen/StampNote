@@ -33,6 +33,7 @@
     <script src="photo-store.js" defer></script>
     <script src="photo-triage.js" defer></script>
     <script src="worker-face.js" defer></script>
+    <script src="camera-facing.js" defer></script>
     <script src="frame-scaler.js" defer></script>
     <script src="face-identity.js" defer></script>
     <script src="person-tracker.js" defer></script>
@@ -297,6 +298,25 @@
           <span class="hint">Gallery</span>
         </label>
 
+        <!-- Which lens the device watches through. The name beside the glyph is
+             the camera in use rather than the one a press would move to, so the
+             bar answers "which camera is this?" without anything being tapped. -->
+        <button
+          class="tool"
+          id="camera-facing-toggle"
+          type="button"
+          aria-label="Back camera in use. Switch to the front camera."
+          data-facing="environment"
+        >
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M4.2 8.6h3l1.5-2.2h6.6l1.5 2.2h3a1.7 1.7 0 0 1 1.7 1.7v7.6a1.7 1.7 0 0 1-1.7 1.7H4.2a1.7 1.7 0 0 1-1.7-1.7v-7.6a1.7 1.7 0 0 1 1.7-1.7z" />
+            <path d="M9.4 14.2a2.8 2.8 0 0 0 4.9 1.5" />
+            <path d="M14.6 13.6a2.8 2.8 0 0 0-4.9-1.5" />
+            <path d="M9.7 12.1H8.2v-1.5" />
+            <path d="M14.3 15.7h1.5v1.5" />
+          </svg>
+          <span class="hint" id="camera-facing-name">Back</span>
+        </button>
       </div>
 
       <button

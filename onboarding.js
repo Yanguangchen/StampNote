@@ -5,6 +5,7 @@
   const workerFace = window.StampNoteWorkerFace;
   const faceIdentity = window.StampNoteFaceIdentity;
   const frameScaling = window.StampNoteFrameScaler;
+  const cameraFacing = window.StampNoteCameraFacing;
   const form = document.querySelector("#worker-form");
   const workerId = document.querySelector("#worker-id");
   const workerName = document.querySelector("#worker-name");
@@ -24,6 +25,8 @@
   const rosterBody = document.querySelector("#roster-body");
   const rosterToggle = document.querySelector("#roster-toggle");
   const rosterToggleLabel = document.querySelector("#roster-toggle-label");
+  const cameraFacingToggle = document.querySelector("#camera-facing-toggle");
+  const cameraFacingState = document.querySelector("#camera-facing-state");
 
   // Enrollment deliberately takes longer than the opening match. Seven
   // spaced, mutually consistent views make the stored template less dependent
@@ -40,6 +43,16 @@
   // workers apart in a roster, small enough to sit inside the worker document.
   const PROFILE_PHOTO_EDGE = 256;
   const PROFILE_PHOTO_QUALITY = 0.72;
+
+  // Enrolling is normally somebody scanning their own face while holding the
+  // device, so the front camera is the default here — the opposite of the
+  // recording page, which is normally a device left facing the work. The two
+  // pages therefore remember the answer separately rather than dragging each
+  // other's default around.
+  const cameraFacingPreference = cameraFacing?.createPreference({
+    key: "stampnote-onboarding-camera-facing",
+    fallback: cameraFacing.FRONT,
+  });
 
   let user = null;
   let profileCanvas = null;
@@ -129,6 +142,28 @@
     scannerCard.hidden = !ready && !scanActive;
     startButton.hidden = !detailsStarted() && !scanActive;
     startButton.disabled = !ready || scanActive;
+    refreshCameraFacing();
+  }
+
+  function currentCameraFacing() {
+    return cameraFacingPreference?.get() || "user";
+  }
+
+  // The state is named on the left and the switch says what pressing it would
+  // do, so neither has to be read as the negative of the other. A running scan
+  // dims the switch: its seven samples belong to one view of one face, and
+  // swapping the lens under them halfway through would leave a template made of
+  // two different framings.
+  function refreshCameraFacing() {
+    if (!cameraFacingToggle) return;
+
+    const facing = currentCameraFacing();
+    const next = cameraFacing?.opposite(facing) || facing;
+    cameraFacingToggle.disabled = scanActive || saving;
+    cameraFacingToggle.textContent = `Use the ${cameraFacing?.describe(next) || "other camera"}`;
+    if (cameraFacingState) {
+      cameraFacingState.textContent = `${cameraFacing?.name(facing) || "Front"} camera`;
+    }
   }
 
   function scanMessage(scanState) {
@@ -479,16 +514,28 @@
     cancelButton.hidden = false;
     scannerView.dataset.status = "scanning";
     updateProgress({ status: "loading", samples: 0, total: ONBOARDING_SAMPLES });
-    setStatus("Starting the front camera and private face model…");
+    const facing = currentCameraFacing();
+    setStatus(
+      `Starting the ${cameraFacing?.describe(facing) || "camera"} and private face model…`,
+    );
 
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: FACE_CAMERA_WIDTH },
-          height: { ideal: FACE_CAMERA_HEIGHT },
-          frameRate: { ideal: 30 },
-        },
+        // Asked for rather than demanded: on a laptop with a single camera an
+        // exact `facingMode` fails outright, which would trade a working
+        // webcam for no scan at all.
+        video: cameraFacing
+          ? cameraFacing.videoConstraints(facing, {
+              width: FACE_CAMERA_WIDTH,
+              height: FACE_CAMERA_HEIGHT,
+              frameRate: 30,
+            })
+          : {
+              facingMode: facing,
+              width: { ideal: FACE_CAMERA_WIDTH },
+              height: { ideal: FACE_CAMERA_HEIGHT },
+              frameRate: { ideal: 30 },
+            },
         audio: false,
       });
       video.srcObject = stream;
@@ -536,6 +583,11 @@
     issueWorkerId();
   });
 
+  cameraFacingToggle?.addEventListener("click", () => {
+    cameraFacingPreference?.toggle();
+    refreshCameraFacing();
+  });
+
   rosterToggle?.addEventListener("click", () => {
     setRosterOpen(rosterBody.hidden);
   });
@@ -570,6 +622,7 @@
   }
 
   startButton.disabled = true;
+  refreshCameraFacing();
   cloud.subscribeAuth(async (nextUser, error) => {
     user = nextUser;
     signedInState.textContent = user ? user.email || "Signed in" : "Not signed in";

@@ -152,6 +152,36 @@ test("the live camera is the camera, so there is no second one", () => {
   assert.match(html, /id=["']gallery-input["']/);
 });
 
+test("which lens the device watches through is a control, not an assumption", () => {
+  const toggle = tagWithId("button", "camera-facing-toggle");
+
+  // It sits with Gallery in the leading group, so its name is one of the two
+  // the bar shows without being reached for, and the ring seats it when idle.
+  assert.ok(html.indexOf('id="camera-facing-toggle"') > html.indexOf('<div class="toolbar-group">'));
+  assert.ok(html.indexOf('id="camera-facing-toggle"') < html.indexOf('id="monitor-toggle"'));
+  assert.ok(hasAttribute(toggle, "class", "tool"));
+  assert.ok(hasAttribute(toggle, "type", "button"));
+
+  // The visible name is the camera in use rather than the one a press would
+  // move to, so the bar answers "which camera is this?" untouched. The whole
+  // sentence — the state and what a press does — is in the accessible name,
+  // because the name beside the glyph is one word wide.
+  assert.match(html, /id=["']camera-facing-name["'][^>]*>Back</);
+  assert.ok(hasAttribute(toggle, "aria-label", "Back camera in use. Switch to the front camera."));
+  assert.ok(hasAttribute(toggle, "data-facing", "environment"));
+
+  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  // Asked for rather than demanded: an exact constraint fails outright on a
+  // device with one camera, which would trade a working lens for none at all.
+  assert.equal(/facingMode:\s*"environment"/.test(app), false);
+  assert.match(app, /cameraFacing\.videoConstraints\(facing, \{ width: 1920, height: 1080/);
+  // A running watch swaps its track instead of restarting, so the photographs
+  // taken so far, the cadence and the enrolled match all survive the switch.
+  assert.match(app, /async function switchCameraFacing\(\)/);
+  assert.doesNotMatch(app, /switchCameraFacing[\s\S]{0,600}?startMonitor\(\)/);
+  assert.match(app, /controller\?\.setPaused\(true\);/);
+});
+
 test("gallery control accepts multiple images", () => {
   const galleryInput = tagWithId("input", "gallery-input");
 

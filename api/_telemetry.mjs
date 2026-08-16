@@ -27,6 +27,8 @@ const eventNames = [
   "capture.store.ready",
   "capture.monitor.started",
   "capture.monitor.failed",
+  "capture.camera.facing",
+  "capture.camera.facing.failed",
   "capture.saved",
   "face.match.completed",
   "face.match.failed",
@@ -87,6 +89,7 @@ const telemetryFieldsSchema = z
       .enum(["ok", "degraded", "success", "failed", "signed_in", "signed_out"])
       .optional(),
     trigger: z.enum(["schedule", "gesture"]).optional(),
+    facing: z.enum(["environment", "user"]).optional(),
     theme: z.enum(["light", "dark", "system"]).optional(),
     sessionId: z.enum(["morning", "afternoon", "evening"]).optional(),
     errorCode: z.string().regex(/^[A-Za-z0-9_./:-]{1,80}$/).optional(),
