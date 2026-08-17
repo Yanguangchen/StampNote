@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en" data-surface="metrics">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f3f5f1" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d1512" media="(prefers-color-scheme: dark)" />
+    <title>Metrics · StampNote</title>
+    <link rel="icon" href="icons/stampnote.svg" type="image/svg+xml" />
+    <link
+      rel="preload"
+      href="vendor/fonts/outfit-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="vendor/fonts/outfit.css" />
+    <link rel="stylesheet" href="sidebar.css" />
+    <link rel="stylesheet" href="metrics.css" />
+    <!-- Applied before the first paint so a saved dark theme never flashes white. -->
+    <script>
+      try {
+        const saved = localStorage.getItem("stampnote-theme");
+        if (saved === "dark" || saved === "light") {
+          document.documentElement.dataset.theme = saved;
+        }
+      } catch (error) {
+        /* A blocked storage jar just leaves the system theme in charge. */
+      }
+    </script>
+    <script src="observability.js" defer></script>
+    <script src="photo-cloud.js" defer></script>
+    <script src="firebase.js" defer></script>
+    <script src="metrics.js" defer></script>
+    <script src="sidebar.js" defer></script>
+  </head>
+  <body>
+    <header class="metrics-header" data-sidebar-mount>
+      <div class="account-controls">
+        <span class="account-name" id="metrics-account"></span>
+        <button
+          class="button button-quiet sign-out"
+          id="metrics-sign-out"
+          type="button"
+          title="Sign out"
+          hidden
+        >
+          <svg class="sign-out-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M9.5 4.6H6.4A1.9 1.9 0 0 0 4.5 6.5v11a1.9 1.9 0 0 0 1.9 1.9h3.1" />
+            <path d="M10.2 12h9.3" />
+            <path d="m16.2 8.4 3.3 3.6-3.3 3.6" />
+          </svg>
+          <span class="sign-out-label">Sign out</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="metrics-main">
+      <h1 class="visually-hidden" id="metrics-title">Metrics</h1>
+
+      <p class="metrics-status" id="metrics-status" role="status" aria-live="polite"></p>
+
+      <!-- The button says what it does and which account it wants; a heading and
+           a paragraph above it only said the same thing at greater length. -->
+      <section class="auth-gate" id="metrics-auth-gate" aria-label="Sign in">
+        <button class="button button-primary" id="metrics-sign-in" type="button">
+          Continue with Google
+        </button>
+      </section>
+
+      <div class="metrics-workspace" id="metrics-workspace" hidden>
+        <!-- One row, above everything it scopes: every panel and the table read
+             the same slice, so the numbers can never disagree. -->
+        <div class="metrics-filters">
+          <fieldset class="range-filter">
+            <legend>Range</legend>
+            <div class="range-options" id="metrics-range" role="group" aria-label="Date range">
+              <button class="range-option" type="button" data-days="7">Last 7 days</button>
+              <button class="range-option" type="button" data-days="30" aria-pressed="true">
+                Last 30 days
+              </button>
+              <button class="range-option" type="button" data-days="90">Last 90 days</button>
+            </div>
+          </fieldset>
+          <button class="button button-quiet" id="metrics-table-toggle" type="button" aria-expanded="false" aria-controls="metrics-table">
+            Show table
+          </button>
+          <button class="button button-quiet" id="metrics-refresh" type="button">Refresh</button>
+        </div>
+
+        <div class="metrics-panels" id="metrics-panels"></div>
+
+        <!-- The table twin: every value the charts plot, reachable without a
+             pointer and without relying on colour. -->
+        <div class="metrics-table-wrap" id="metrics-table" hidden>
+          <table class="metrics-table">
+            <caption id="metrics-table-caption">Daily counts</caption>
+            <thead>
+              <tr>
+                <th scope="col">Date</th>
+                <th scope="col">Attendance taken</th>
+                <th scope="col">Flags raised</th>
+                <th scope="col">Sessions created</th>
+              </tr>
+            </thead>
+            <tbody id="metrics-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

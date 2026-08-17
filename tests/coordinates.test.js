@@ -258,6 +258,10 @@ test("the dedicated page exposes all-session filters, GPS records and truck inpu
   assert.match(html, /id="coordinate-session-list"/);
   assert.match(html, /id="coordinate-data"[^>]*type="application\/json"/);
   assert.match(html, /id="coordinate-map-dialog"/);
+  assert.match(html, /id="coordinate-sign-out"[\s\S]*?class="sign-out-icon"/);
+  assert.match(html, /class="sign-out-label">Sign out</);
+  assert.match(css, /\.sign-out\s*\{[^}]*width: 32px/);
+  assert.match(css, /\.sign-out-icon\s*\{[^}]*stroke: currentColor/);
   assert.match(html, /leaflet@1\.9\.4\/dist\/leaflet\.js/);
   assert.doesNotMatch(html, /proximity threshold|maximum GPS uncertainty|GPS proximity is not proof/);
   assert.doesNotMatch(html, /GPS comparison workspace|Dates are ordered first|same Google account/);
@@ -282,6 +286,19 @@ test("the dedicated page exposes all-session filters, GPS records and truck inpu
     /\.coordinate-session-body\[data-collapsed="true"\]\s*\{[^}]*grid-template-rows: 0fr;/,
   );
   assert.match(css, /prefers-reduced-motion: reduce[\s\S]*\.coordinate-session-body/);
+  assert.match(
+    css,
+    /\.coordinates-intro\s*\{[^}]*animation: coordinate-load-from-left 720ms cubic-bezier\(0\.65, 0, 0\.35, 1\)/,
+  );
+  assert.match(
+    css,
+    /\.coordinate-session\s*\{[^}]*animation: coordinate-load-session 760ms cubic-bezier\(0\.65, 0, 0\.35, 1\)/,
+  );
+  assert.match(css, /\.coordinate-session:nth-child\(5\)\s*\{[^}]*570ms/);
+  assert.match(
+    css,
+    /prefers-reduced-motion: reduce[\s\S]*?\.coordinates-intro,[\s\S]*?\.coordinate-session,[\s\S]*?animation: none;/,
+  );
   assert.match(
     server,
     /"coordinates\.html",\s*\n\s*"coordinates\.css",\s*\n\s*"coordinates\.js",/,
@@ -324,12 +341,20 @@ test("the console is set in a vendored monospace face and dressed as an instrume
   // The grid is the viewport's rather than the reading column's, so it is fixed
   // across the whole screen and ordered explicitly beneath the column instead of
   // relying on body's background reaching the canvas.
-  assert.match(css, /body::before\s*\{[\s\S]*?position: fixed;[\s\S]*?var\(--console-grid\) 1px/);
-  assert.match(css, /body::before\s*\{[\s\S]*?inset: 0;/);
-  assert.match(css, /body::before\s*\{[\s\S]*?pointer-events: none;/);
-  assert.match(css, /body::before\s*\{[\s\S]*?animation: coordinate-grid-drift 28s linear infinite;/);
+  assert.match(css, /body::before,\s*body::after\s*\{[\s\S]*?position: fixed;[\s\S]*?var\(--console-grid\) 1px/);
+  assert.match(css, /body::before,\s*body::after\s*\{[\s\S]*?inset: 0;/);
+  assert.match(css, /body::before,\s*body::after\s*\{[\s\S]*?pointer-events: none;/);
+  assert.match(css, /body::before,\s*body::after\s*\{[\s\S]*?animation: coordinate-grid-drift 28s linear infinite;/);
   assert.match(css, /@keyframes coordinate-grid-drift\s*\{[\s\S]*?background-position: 34px 0, 0 34px;/);
-  assert.match(css, /prefers-reduced-motion: reduce[\s\S]*?body::before\s*\{\s*animation: none;/);
+  assert.match(
+    css,
+    /body::after\s*\{[\s\S]*?animation:[\s\S]*?coordinate-grid-scan 9s linear infinite/,
+  );
+  assert.match(css, /@keyframes coordinate-grid-scan/);
+  assert.match(
+    css,
+    /prefers-reduced-motion: reduce[\s\S]*?body::before,\s*body::after\s*\{\s*animation: none;/,
+  );
   assert.match(css, /\.coordinates-main\s*\{\s*position: relative;\s*z-index: 1;\s*\}/);
   assert.doesNotMatch(css, /z-index: -1/);
 
@@ -343,7 +368,7 @@ test("the console is set in a vendored monospace face and dressed as an instrume
   assert.match(css, /animation: console-cursor 1\.1s steps\(1\) 4;/);
   assert.match(
     css,
-    /prefers-reduced-motion: reduce[\s\S]*?body::before\s*\{\s*animation: none;[\s\S]*?\.coordinates-intro h1::after\s*\{\s*animation: none;/,
+    /prefers-reduced-motion: reduce[\s\S]*?body::before,\s*body::after\s*\{\s*animation: none;[\s\S]*?\.coordinates-intro h1::after\s*\{\s*animation: none;/,
   );
 
   // Drawn, not typed, so the heading is still called exactly what it says.

@@ -10,6 +10,9 @@ const app = readFileSync(resolve(root, "onboarding.js"), "utf8");
 
 test("worker onboarding has signed-in identity, scan, and roster controls", () => {
   assert.match(html, /id="onboarding-auth"/);
+  assert.match(html, /id="onboarding-auth-icon"/);
+  assert.match(html, /id="onboarding-auth-label">Sign in with Google</);
+  assert.match(app, /authButton\.classList\.toggle\("sign-out", signedIn\)/);
   assert.match(html, /id="worker-id"/);
   assert.match(html, /id="worker-name"/);
   assert.equal(/id="worker-consent"|type="checkbox"/.test(html), false);
@@ -25,14 +28,19 @@ test("worker onboarding has signed-in identity, scan, and roster controls", () =
   // Every step shares one card shell, so the column's edges line up.
   assert.match(css, /\.card\s*\{[^}]*border-radius:/);
   assert.match(html, /class="card worker-form"[\s\S]*class="card scanner"[\s\S]*class="card roster"/);
+  assert.match(html, /stampnote-theme/);
   assert.match(css, /prefers-color-scheme: dark/);
+  assert.match(css, /:root:not\(\[data-theme="light"\]\)/);
+  assert.match(css, /:root\[data-theme="dark"\]/);
   assert.match(css, /\.scanner-view video\s*\{[^}]*object-fit:\s*cover/);
 });
 
 test("worker onboarding keeps only the enrollment controls and feedback", () => {
   assert.match(html, /<h1[^>]*>Worker onboarding<\/h1>/);
   assert.equal(/class="intro"|class="steps"|class="brand"|local-chip|step-label/.test(html), false);
-  assert.equal(/<svg\b/.test(html), false);
+  // The only drawing is the door that appears once the worker is signed in.
+  assert.equal((html.match(/<svg\b/g) || []).length, 1);
+  assert.match(html, /<svg\b[^>]*class="sign-out-icon"/);
   // A portrait per worker, with initials still standing in for anyone enrolled
   // before portraits existed.
   assert.match(app, /worker-avatar/);

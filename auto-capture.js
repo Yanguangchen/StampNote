@@ -292,6 +292,46 @@
         return publish();
       },
 
+      // A completed attendance scan is a checkpoint, not permission to begin
+      // photographing the work. Keep the camera open while the operator decides
+      // whether the next worker should check in or the activity may begin.
+      takeAnotherAttendance() {
+        if (
+          !state.running ||
+          !enrollmentRequired ||
+          state.activityStarted ||
+          state.faceEnrollment?.status !== "complete"
+        ) {
+          return snapshot();
+        }
+
+        faceIdentity.reset?.();
+        enrollmentDetector?.reset?.();
+        clearTrackedPose();
+        state.faceEnrollment = faceIdentity.enrollmentState();
+        state.nextDueAt = null;
+        state.waitMs = null;
+        return publish();
+      },
+
+      startWork() {
+        if (!state.running || state.activityStarted) {
+          return snapshot();
+        }
+        if (enrollmentRequired && state.faceEnrollment?.status !== "complete") {
+          return snapshot();
+        }
+
+        state.activityStarted = true;
+        state.faceEnrollment = state.faceEnrollment
+          ? { ...state.faceEnrollment, required: false, status: "accepted" }
+          : null;
+        state.nextDueAt = null;
+        state.waitMs = null;
+        scheduler.reset();
+        return publish();
+      },
+
       // A hidden tab gets no fresh camera frames, so tracking stops rather than
       // scoring stale pixels. The schedule keeps its place and catches up on
       // the first tick after the page comes back.
@@ -318,6 +358,17 @@
         }
 
         const timestamp = now();
+
+        if (!state.activityStarted && state.faceEnrollment?.status === "complete") {
+          state.intervalMs = scheduler.intervalFor(state.present);
+          state.nextDueAt = null;
+          state.waitMs = null;
+          state.gesture = null;
+          heldSince = null;
+          armed = true;
+          return publish();
+        }
+
         const frame = sampleFrame();
 
         if (frame) {
@@ -402,14 +453,10 @@
           }
         }
 
-        // Keep both shutter paths and the schedule still while the initial face
-        // samples are collected. Completion resets the schedule so the activity
-        // begins from this moment rather than catching up on enrollment time.
+        // Keep both shutter paths and the schedule still while attendance is
+        // collected. A completed match remains here until the operator explicitly
+        // starts work, so one check-in can never begin recording by itself.
         if (!state.activityStarted) {
-          if (state.faceEnrollment?.status === "complete") {
-            state.activityStarted = true;
-            scheduler.reset();
-          }
           state.intervalMs = scheduler.intervalFor(state.present);
           state.nextDueAt = null;
           state.waitMs = null;
@@ -486,6 +533,7 @@
         retrying: "No match yet — scanning continues automatically",
         not_recognized: "No match yet — scanning continues automatically",
         unavailable: "Face scan unavailable — continue without it",
+        complete: "Attendance recorded — choose another worker or record work",
       };
       return prompts[state.faceEnrollment.status] || "Move closer for attendance taking";
     }

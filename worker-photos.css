@@ -72,6 +72,7 @@ a {
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--surface) 94%, transparent);
   backdrop-filter: blur(14px);
+  animation: worker-photo-header-enter 560ms cubic-bezier(0.65, 0, 0.35, 1) both;
 }
 
 .account-controls {
@@ -142,6 +143,8 @@ p {
   border-radius: 18px;
   background: var(--surface);
   box-shadow: var(--shadow);
+  animation: worker-photo-card-enter 760ms cubic-bezier(0.65, 0, 0.35, 1) 90ms both;
+  transform-origin: 50% 55%;
 }
 
 /* Two buttons, side by side on a phone held either way. Each is an icon and
@@ -153,6 +156,7 @@ p {
 }
 
 .photo-action {
+  --worker-photo-action-delay: 250ms;
   display: flex;
   min-height: 132px;
   flex-direction: column;
@@ -166,15 +170,23 @@ p {
   color: var(--ink);
   cursor: pointer;
   text-align: center;
+  animation: worker-photo-action-enter 680ms cubic-bezier(0.65, 0, 0.35, 1)
+    var(--worker-photo-action-delay) both;
   transition:
-    border-color 140ms ease,
-    transform 140ms ease,
-    background 140ms ease;
+    border-color 300ms cubic-bezier(0.65, 0, 0.35, 1),
+    transform 300ms cubic-bezier(0.65, 0, 0.35, 1),
+    background 300ms cubic-bezier(0.65, 0, 0.35, 1),
+    box-shadow 300ms cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+.photo-action:nth-of-type(2) {
+  --worker-photo-action-delay: 330ms;
 }
 
 .photo-action:hover {
   border-color: var(--accent);
-  transform: translateY(-1px);
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--ink) 10%, transparent);
+  transform: translateY(-2px);
 }
 
 .photo-action:active {
@@ -237,6 +249,10 @@ p {
   display: none;
 }
 
+.save-status:not([hidden]) {
+  animation: worker-photo-control-enter 440ms cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+
 /* The dot sits on the line's centre now that the row is centred, rather than
    being nudged down to meet the first line of a left-aligned paragraph. */
 .status-dot {
@@ -275,11 +291,19 @@ p {
   cursor: pointer;
   font-size: 16px;
   font-weight: 750;
-  transition: opacity 140ms ease, transform 140ms ease;
+  transition:
+    opacity 300ms cubic-bezier(0.65, 0, 0.35, 1),
+    transform 300ms cubic-bezier(0.65, 0, 0.35, 1),
+    box-shadow 300ms cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+.send-button:not([hidden]) {
+  animation: worker-photo-control-enter 500ms cubic-bezier(0.65, 0, 0.35, 1) both;
 }
 
 .send-button:hover:not(:disabled) {
-  transform: translateY(-1px);
+  box-shadow: 0 9px 24px color-mix(in srgb, var(--ink) 18%, transparent);
+  transform: translateY(-2px);
 }
 
 .send-button:disabled {
@@ -294,6 +318,35 @@ p {
 
 @keyframes pulse {
   50% { opacity: 0.25; }
+}
+
+@keyframes worker-photo-header-enter {
+  from {
+    opacity: 0;
+    translate: 0 -12px;
+  }
+}
+
+@keyframes worker-photo-card-enter {
+  from {
+    opacity: 0;
+    scale: 0.985;
+    translate: 0 18px;
+  }
+}
+
+@keyframes worker-photo-action-enter {
+  from {
+    opacity: 0;
+    translate: 0 14px;
+  }
+}
+
+@keyframes worker-photo-control-enter {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
 }
 
 @media (max-width: 620px) {
@@ -322,5 +375,13 @@ p {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .photo-header,
+  .action-card,
+  .photo-action,
+  .save-status:not([hidden]),
+  .send-button:not([hidden]) {
+    animation: none !important;
   }
 }

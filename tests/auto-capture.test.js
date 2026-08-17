@@ -124,9 +124,13 @@ test("face enrollment pauses every shutter until two close samples are ready", a
   assert.equal(harness.controller.getState().faceEnrollment.samples, 1);
 
   await harness.controller.tick();
-  assert.equal(harness.saved.length, 0, "completion begins the activity without an early photo");
-  assert.equal(harness.controller.getState().activityStarted, true);
+  assert.equal(harness.saved.length, 0, "completion waits for an explicit start-work action");
+  assert.equal(harness.controller.getState().activityStarted, false);
 
+  await harness.controller.tick();
+  assert.equal(harness.saved.length, 0, "attendance confirmation cannot take a work photo");
+  harness.controller.startWork();
+  assert.equal(harness.controller.getState().activityStarted, true);
   await harness.controller.tick();
   assert.equal(harness.saved.length, 1);
 });
@@ -150,7 +154,7 @@ test("the opening scan uses the focused face detector even without a visible pos
   await harness.controller.tick();
 
   assert.equal(focusedScans, 2);
-  assert.equal(harness.controller.getState().activityStarted, true);
+  assert.equal(harness.controller.getState().activityStarted, false);
 });
 
 test("the opening scan asks the detector for the body alone, not a second face", async () => {
@@ -172,9 +176,10 @@ test("the opening scan asks the detector for the body alone, not a second face",
     harness.detectOptions.map((entry) => entry.poseOnly),
     [true, true],
   );
-  assert.equal(harness.controller.getState().activityStarted, true);
+  assert.equal(harness.controller.getState().activityStarted, false);
 
   // Once the scan hands over, the full set of parts is wanted again.
+  harness.controller.startWork();
   await harness.controller.tick();
   assert.equal(harness.detectOptions.at(-1).poseOnly, false);
 });
@@ -197,6 +202,30 @@ test("face enrollment can be skipped without trapping the activity", async () =>
   assert.equal(skipped.faceEnrollment.status, "skipped");
   assert.equal(skipped.faceEnrollment.required, false);
 
+  await harness.controller.tick();
+  assert.equal(harness.saved.length, 1);
+});
+
+test("another attendance resets the face scan while every shutter remains paused", async () => {
+  const identity = createEnrollmentIdentity();
+  const harness = createHarness({ faceIdentity: identity });
+  harness.present = true;
+  harness.controller.start();
+
+  await harness.controller.tick();
+  await harness.controller.tick();
+  assert.equal(harness.controller.getState().faceEnrollment.status, "complete");
+  assert.equal(harness.controller.getState().activityStarted, false);
+
+  const another = harness.controller.takeAnotherAttendance();
+  assert.equal(another.faceEnrollment.status, "no_face");
+  assert.equal(another.activityStarted, false);
+  await harness.controller.tick();
+  await harness.controller.tick();
+  assert.equal(harness.controller.getState().faceEnrollment.status, "complete");
+  assert.equal(harness.saved.length, 0);
+
+  harness.controller.startWork();
   await harness.controller.tick();
   assert.equal(harness.saved.length, 1);
 });

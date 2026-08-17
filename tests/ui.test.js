@@ -96,6 +96,9 @@ test("face enrollment visibly pauses the activity and explains how to complete i
   assert.match(tagWithId("button", "face-enrollment-skip"), /type=["']button["']/);
   assert.match(html, /id="face-enrollment-match"[^>]*aria-live="assertive"/);
   assert.match(html, /id="face-enrollment-worker-id"/);
+  assert.match(html, /id="face-enrollment-another"[\s\S]*?Take another attendance/);
+  assert.match(html, /id="face-enrollment-record"[\s\S]*?Record work/);
+  assert.match(tagWithId("div", "face-enrollment-actions"), /hidden/);
   assert.match(css, /\.face-enrollment\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*0/);
   assert.match(css, /\.face-enrollment\[data-status="complete"\][^{]*\{[^}]*background:/);
   assert.match(css, /\.face-enrollment-match strong\s*\{[^}]*font-size:\s*clamp/);
@@ -104,9 +107,13 @@ test("face enrollment visibly pauses the activity and explains how to complete i
   const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
   const controller = readFileSync(resolve(projectRoot, "auto-capture.js"), "utf8");
   assert.match(app, /faceEnrollmentSkip\?\.addEventListener\("click"/);
+  assert.match(app, /faceEnrollmentAnother\?\.addEventListener\("click"/);
+  assert.match(app, /faceEnrollmentRecord\?\.addEventListener\("click"/);
   assert.match(app, /model\s*\?\s*facialRecognition\?\.createFaceIdentity/);
   assert.match(controller, /if \(!state\.activityStarted\)/);
   assert.match(controller, /skipFaceEnrollment\(\)/);
+  assert.match(controller, /takeAnotherAttendance\(\)/);
+  assert.match(controller, /startWork\(\)/);
 });
 
 test("initial camera loading has a prominent, accessible throbber", () => {
@@ -194,7 +201,6 @@ test("gallery control accepts multiple images", () => {
 // Every control on screen is a glyph with one concise name in the markup.
 const NAMED_CONTROLS = [
   ["label", "for", "gallery-input", "Gallery"],
-  ["button", "id", "monitor-toggle", "Camera"],
   ["button", "id", "captures-save", "Save"],
   ["button", "id", "cloud-auth", "Account"],
   ["button", "id", "share-button", "Share"],
@@ -267,10 +273,16 @@ test("capture choices stay labelled while secondary names appear on request", ()
   assert.match(css, /:is\([^)]*\):active > \.hint/);
   assert.match(css, /:is\([^)]*\):focus-visible > \.hint/);
 
-  // Camera and Gallery are visible without requiring any gesture.
+  // Gallery is visible without requiring any gesture. The shutter is not
+  // labelled at all: it is named by its shape, and by its aria-label for
+  // anyone who cannot see the shape.
   assert.match(css, /\.toolbar > \.toolbar-group:first-child > \.tool > \.hint,/);
-  assert.match(css, /\.toolbar > \.record > \.hint\s*\{[^}]*position:\s*static/);
-  assert.match(css, /\.toolbar > \.record > \.hint\s*\{[^}]*opacity:\s*1/);
+  assert.doesNotMatch(html, /id="monitor-toggle-name"/);
+  assert.doesNotMatch(css, /\.toolbar > \.record > \.hint/);
+  assert.match(
+    tagWithId("button", "monitor-toggle"),
+    /aria-label=["']Start camera["']/,
+  );
 });
 
 test("the automatically resolved location address is immutable", () => {
@@ -989,17 +1001,32 @@ test("the shutter is centred and saving sits in the bottom right corner", () => 
   assert.ok(html.indexOf('id="monitor-toggle"') > html.indexOf('<div class="toolbar-group">'));
   assert.ok(html.indexOf('id="monitor-toggle"') < html.indexOf('toolbar-group-end'));
 
-  // A camera's shutter, not a recorder's: a bright ring around a bright disc,
-  // with the glyph as ink on the disc rather than a red light in a dark well.
+  // A camera's shutter release, built the way one is: a turned metal collar,
+  // a chrome dome seated in it, and a dish for the fingertip. The shape carries
+  // both states, so neither glyph is drawn.
   assert.match(css, /--record:\s*#ff3b30/);
-  assert.match(css, /\.record\s*\{[^}]*border:\s*2px solid rgba\(255, 255, 255/);
-  assert.match(css, /\.record::before\s*\{[^}]*background:\s*linear-gradient\(180deg, #fff/);
-  // Watching, the disc is the red one stops.
+  assert.match(css, /\.record\s*\{[^}]*background:\s*conic-gradient\(/);
+  assert.match(css, /\.record::before\s*\{[^}]*background:\s*radial-gradient\(/);
+  // Rim light along the top, shade underneath: the two shadows that make a
+  // disc read as a dome. The cap itself is red, at rest and running alike.
+  assert.match(css, /\.record::before\s*\{[^}]*inset 0 2px 2px rgba\(255, 255, 255/);
+  assert.match(css, /\.record::before\s*\{[^}]*radial-gradient\([^)]*#f0372c/);
+  assert.match(css, /\.record::after\s*\{[^}]*box-shadow:\s*inset 0 3px 5px/);
+  assert.match(css, /\.record \.record-icon\s*\{[^}]*display:\s*none/);
+  // Pressed, the rim light goes out and the shade under it deepens.
+  assert.match(css, /\.record:active::before\s*\{[^}]*inset 0 3px 7px/);
+  // Watching, the same cap is lit rather than resting: a lamp behind it, not a
+  // different button.
   assert.match(
     css,
-    /\.record\[data-running="true"\]::before\s*\{[^}]*background:\s*linear-gradient\(180deg, #ff5d54/,
+    /\.record\[data-running="true"\]::before\s*\{[^}]*radial-gradient\([^)]*#ff4b3f/,
   );
-  assert.match(css, /\.record\s*\{[^}]*linear-gradient/);
+  assert.match(
+    css,
+    /\.record\[data-running="true"\]::before\s*\{[^}]*0 0 12px rgba\(255, 59, 48/,
+  );
+  // The collar is turned metal, so its gradient goes round rather than down.
+  assert.match(css, /\.record\s*\{[^}]*conic-gradient/);
   assert.match(css, /\.record\s*\{[^}]*box-shadow:/);
   assert.match(css, /\.record::before\s*\{[^}]*inset:\s*6px/);
   // The press closes the 4px gap the resting shadow holds open.
@@ -1111,7 +1138,7 @@ test("the watch tracks a room, not just one person", () => {
   assert.equal(/personIds:\s*state\.personIds/.test(controller), false);
 });
 
-test("the default screen drifts, and the tools orbit the shutter until reached for", () => {
+test("the default screen drifts, and the tools stay put", () => {
   const orbit = readFileSync(resolve(projectRoot, "orbit.js"), "utf8");
 
   assert.match(html, /<script\s+src=["']orbit\.js[^"']*["']\s+defer><\/script>/i);
@@ -1122,22 +1149,19 @@ test("the default screen drifts, and the tools orbit the shutter until reached f
   assert.match(css, /@keyframes stage-drift/);
   assert.match(css, /body\[data-stage="idle"\] \.stage\s*\{\s*background:\s*transparent/);
 
-  // The ring: a shared circuit, one seat per tool, glyphs kept upright by the
-  // counter-rotation in the keyframes.
-  assert.match(css, /body\[data-stage="idle"\] \.toolbar \.tool\s*\{[^}]*animation:\s*tool-orbit/);
-  assert.match(css, /animation-delay:\s*calc\(var\(--i, 0\) \/ var\(--n, 1\) \* var\(--orbit-duration\) \* -1\)/);
-  assert.match(css, /@keyframes tool-orbit\s*\{[\s\S]*?rotate\(360deg\)[\s\S]*?rotate\(-360deg\)/);
+  // The tools sit in their bar. Circling the shutter meant a control that had
+  // to be waited for and chased, and a ring that had to be held still before
+  // it could be hit.
+  assert.doesNotMatch(css, /tool-orbit/);
+  assert.doesNotMatch(css, /--orbit-radius|--orbit-duration/);
+  assert.doesNotMatch(css, /data-orbit-paused/);
+  assert.doesNotMatch(css, /animation-play-state:\s*paused/);
+  assert.doesNotMatch(orbit, /orbitPaused|APPROACH|measureRing/);
 
-  // Reaching for a tool — or tabbing to one — holds the ring still to be hit.
-  assert.match(css, /\[data-orbit-paused="true"\] \.tool,[\s\S]*?:focus-within \.tool\s*\{\s*animation-play-state:\s*paused/);
-
-  // The pause is proximity to the ring itself, measured off a seat because a
-  // clamp() in a custom property never resolves to pixels.
-  assert.match(orbit, /Math\.abs\(distance - ring\.radius\) <= APPROACH/);
-  assert.match(orbit, /toolbar\.dataset\.orbitPaused = near \? "true" : "false"/);
+  // What is left of that file is the idle stage itself and the status bar
+  // colour that follows it.
   assert.match(orbit, /record\.dataset\.running !== "true"/);
   assert.match(orbit, /document\.body\.dataset\.stage = idle \? "idle" : "live"/);
-  // The phone status bar follows either idle palette and stays dark over the camera.
   assert.match(orbit, /window\.matchMedia\("\(prefers-color-scheme: dark\)"\)/);
   assert.match(orbit, /const idleThemeColour = darkScheme\.matches \? "#0d1512" : "#f6f7f6"/);
   assert.match(orbit, /themeColour\?\.setAttribute\("content", idle \? idleThemeColour : "#0d1512"\)/);
@@ -1146,8 +1170,6 @@ test("the default screen drifts, and the tools orbit the shutter until reached f
   assert.match(css, /@media \(prefers-color-scheme: dark\)[\s\S]*?body\[data-stage="idle"\]\s*\{[^}]*background:\s*#0d1512/);
   assert.match(css, /@media \(prefers-color-scheme: dark\)[\s\S]*?--surface-solid:\s*#151d1a/);
   assert.match(css, /@media \(prefers-color-scheme: dark\)[\s\S]*?body\[data-stage="idle"\] \.toolbar \.tool\s*\{[^}]*color:\s*rgba\(232, 239, 233, 0\.82\)/);
-  // A hidden tool must not hold an empty seat.
-  assert.match(orbit, /tools\.filter\(\(tool\) => !tool\.hidden\)/);
 });
 
 test("the opening screen keeps queued photographs out of sight", () => {

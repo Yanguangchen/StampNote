@@ -78,7 +78,7 @@ test("the local server exposes public assets and every API boundary without expo
     const dashboard = await fetch(`${origin}/admin.html`);
     assert.equal(dashboard.status, 200);
     const dashboardBody = await dashboard.text();
-    assert.match(dashboardBody, /Photos &amp; attendance/);
+    assert.match(dashboardBody, /Session management/);
     assert.match(dashboardBody, /id="attendance-list"/);
 
     const onboarding = await fetch(`${origin}/onboarding.html`);
@@ -124,6 +124,11 @@ test("the local server exposes public assets and every API boundary without expo
     assert.equal(triage.status, 405);
     assert.deepEqual(await triage.json(), { error: "Use POST for photo review." });
     assert.ok(triage.headers.get("x-request-id"));
+
+    const assistant = await fetch(`${origin}/api/assistant`);
+    assert.equal(assistant.status, 405);
+    assert.deepEqual(await assistant.json(), { error: "Use POST for operations questions." });
+    assert.ok(assistant.headers.get("x-request-id"));
 
     const health = await fetch(`${origin}/api/health`);
     assert.equal(health.status, 200);

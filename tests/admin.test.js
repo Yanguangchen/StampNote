@@ -512,7 +512,7 @@ async function chooseScope(harness, { location = 1, date = 0, session = 0 } = {}
 }
 
 test("photos and daily attendance share one dashboard without status or access-copy clutter", () => {
-  assert.match(adminHtml, /Photos &amp; attendance/);
+  assert.match(adminHtml, /Session management/);
   assert.match(adminHtml, /id="photo-library"/);
   assert.match(adminHtml, /id="attendance-list"/);
   assert.match(adminHtml, /id="attendance-worker-filter"/);

@@ -320,6 +320,9 @@
 
   const document = globalScope.document;
   if (!document) return;
+  // Other read-only surfaces reuse the session grouping API above without
+  // mounting the coordinate workspace itself.
+  if (!document.querySelector("#coordinate-session-list")) return;
 
   const cloud = globalScope.StampNoteFirebase;
   const data = globalScope.StampNoteCloudData;
@@ -380,6 +383,14 @@
   let sessions = [];
   let loading = false;
   let positionMap = null;
+  const requestedSessionKey = (() => {
+    try {
+      return String(new URLSearchParams(globalScope.location?.search || "").get("session") || "").slice(0, 180);
+    } catch (error) {
+      return "";
+    }
+  })();
+  let requestedSessionRevealed = false;
 
   function plural(count, noun) {
     return `${count} ${noun}${count === 1 ? "" : "s"}`;
@@ -1084,6 +1095,26 @@
     updateMachineIndex();
   }
 
+  function revealRequestedSession() {
+    if (requestedSessionRevealed || !requestedSessionKey) return;
+    const session = sessions.find((entry) => entry.key === requestedSessionKey);
+    if (!session) return;
+    dateFilter.value = session.dateKey;
+    locationFilter.value = session.locationKey;
+    setSearchOpen(true);
+    render();
+    const card = [...sessionList.children].find(
+      (entry) => entry.dataset.sessionKey === requestedSessionKey,
+    );
+    const toggle = card?.querySelector(".coordinate-visibility-toggle");
+    requestedSessionRevealed = true;
+    toggle?.click();
+    globalScope.requestAnimationFrame?.(() => {
+      card?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+      toggle?.focus?.({ preventScroll: true });
+    });
+  }
+
   async function loadAllPhotos() {
     const loaded = [];
     let after = null;
@@ -1110,6 +1141,7 @@
       sessions = buildCoordinateSessions({ photos, attendance, savedSessions }, data);
       updateLocationFilter();
       render();
+      revealRequestedSession();
       setStatus(
         `${plural(sessions.length, "session")} · ${plural(
           sessions.reduce((total, session) => total + session.readings.length, 0),

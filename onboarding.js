@@ -10,6 +10,8 @@
   const workerId = document.querySelector("#worker-id");
   const workerName = document.querySelector("#worker-name");
   const authButton = document.querySelector("#onboarding-auth");
+  const authIcon = document.querySelector("#onboarding-auth-icon");
+  const authLabel = document.querySelector("#onboarding-auth-label");
   const signedInState = document.querySelector("#signed-in-state");
   const startButton = document.querySelector("#start-face-scan");
   const cancelButton = document.querySelector("#cancel-face-scan");
@@ -627,7 +629,14 @@
     user = nextUser;
     signedInState.textContent = user ? user.email || "Signed in" : "Not signed in";
     signedInState.dataset.signedIn = String(Boolean(user));
-    authButton.textContent = user ? "Sign out" : "Sign in with Google";
+    const signedIn = Boolean(user);
+    authButton.classList.toggle("sign-out", signedIn);
+    authButton.title = signedIn ? "Sign out" : "Sign in with Google";
+    if (authIcon) authIcon.hidden = !signedIn;
+    if (authLabel) {
+      authLabel.classList.toggle("sign-out-label", signedIn);
+      authLabel.textContent = signedIn ? "Sign out" : "Sign in with Google";
+    }
     refreshFlow();
     if (error) setStatus(error?.message || "Google sign-in is unavailable.", "error");
     else if (user) setStatus("Enter the worker details, then start the face scan.");

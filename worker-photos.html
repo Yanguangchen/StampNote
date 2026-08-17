@@ -15,7 +15,7 @@
     />
     <link rel="stylesheet" href="vendor/fonts/outfit.css" />
     <link rel="stylesheet" href="sidebar.css" />
-    <link rel="stylesheet" href="worker-photos.css" />
+    <link rel="stylesheet" href="worker-photos.css?v=20260817-1" />
     <script src="sidebar.js" defer></script>
     <script src="address-service.js" defer></script>
     <script src="stamp.js" defer></script>
@@ -30,7 +30,19 @@
       <div class="account-controls">
         <p id="worker-photo-account">Photos save on this device</p>
         <button class="auth-button" id="worker-photo-auth" type="button">
-          Sign in to sync
+          <svg
+            class="sign-out-icon"
+            id="worker-photo-auth-icon"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            focusable="false"
+            hidden
+          >
+            <path d="M9.5 4.6H6.4A1.9 1.9 0 0 0 4.5 6.5v11a1.9 1.9 0 0 0 1.9 1.9h3.1" />
+            <path d="M10.2 12h9.3" />
+            <path d="m16.2 8.4 3.3 3.6-3.3 3.6" />
+          </svg>
+          <span class="auth-label" id="worker-photo-auth-label">Sign in to sync</span>
         </button>
       </div>
     </header>

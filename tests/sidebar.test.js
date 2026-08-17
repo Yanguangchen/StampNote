@@ -10,8 +10,10 @@ const sidebarCss = readFileSync(resolve(root, "sidebar.css"), "utf8");
 const captureHtml = readFileSync(resolve(root, "index.html"), "utf8");
 const adminHtml = readFileSync(resolve(root, "admin.html"), "utf8");
 const coordinatesHtml = readFileSync(resolve(root, "coordinates.html"), "utf8");
+const aiDashboardHtml = readFileSync(resolve(root, "ai-dashboard.html"), "utf8");
 const onboardingHtml = readFileSync(resolve(root, "onboarding.html"), "utf8");
 const workerPhotosHtml = readFileSync(resolve(root, "worker-photos.html"), "utf8");
+const metricsHtml = readFileSync(resolve(root, "metrics.html"), "utf8");
 const server = readFileSync(resolve(root, "server.js"), "utf8");
 
 class FakeElement {
@@ -25,9 +27,20 @@ class FakeElement {
     this.id = "";
     this.inert = false;
     this.listeners = new Map();
-    this.textContent = "";
+    this._textContent = "";
     this.type = "";
     this.focused = 0;
+  }
+
+  get textContent() {
+    if (this.children.length > 0) {
+      return this.children.map((child) => child.textContent).join("");
+    }
+    return this._textContent;
+  }
+
+  set textContent(value) {
+    this._textContent = String(value);
   }
 
   addEventListener(name, callback) {
@@ -113,7 +126,7 @@ function createSidebarHarness(pathname, options = {}) {
 }
 
 test("every switchable page loads the drawer and marks where its toggle goes", () => {
-  [captureHtml, adminHtml, coordinatesHtml, onboardingHtml, workerPhotosHtml].forEach((html) => {
+  [captureHtml, adminHtml, coordinatesHtml, aiDashboardHtml, onboardingHtml, workerPhotosHtml].forEach((html) => {
     assert.match(html, /<link rel="stylesheet" href="sidebar\.css" \/>/);
     assert.match(html, /<script src="sidebar\.js" defer><\/script>/);
     assert.match(html, /<header[^>]*data-sidebar-mount/);
@@ -124,6 +137,24 @@ test("every switchable page loads the drawer and marks where its toggle goes", (
   assert.match(server, /"coordinates\.html",\s*\n\s*"coordinates\.css",\s*\n\s*"coordinates\.js",/);
   assert.match(server, /"sidebar\.css",\s*\n\s*"sidebar\.js",/);
   assert.match(server, /"worker-photos\.html",\s*\n\s*"worker-photos\.css",\s*\n\s*"worker-photos\.js",/);
+});
+
+test("sign-out is a door icon on every account control", () => {
+  assert.match(
+    sidebarCss,
+    /:is\(\.button, \.ai-button, \.ai-icon-button, \.auth-button\)\.sign-out/,
+  );
+  [
+    ["admin.html", adminHtml],
+    ["coordinates.html", coordinatesHtml],
+    ["onboarding.html", onboardingHtml],
+    ["worker-photos.html", workerPhotosHtml],
+    ["ai-dashboard.html", aiDashboardHtml],
+    ["metrics.html", metricsHtml],
+  ].forEach(([name, html]) => {
+    assert.match(html, /class="sign-out-icon"/, `${name} should use the door sign-out icon`);
+  });
+  assert.match(captureHtml, /class="icon sign-out-icon"/, "index.html should swap in the door icon");
 });
 
 test("the drawer starts hidden and out of the tab order", () => {
@@ -170,7 +201,15 @@ test("the drawer lists every page and marks the one being viewed", () => {
   const { links } = createSidebarHarness("/onboarding.html");
   assert.deepEqual(
     links.map((link) => link.href),
-    ["index.html", "worker-photos.html", "onboarding.html", "coordinates.html", "admin.html"],
+    [
+      "index.html",
+      "worker-photos.html",
+      "onboarding.html",
+      "coordinates.html",
+      "ai-dashboard.html",
+      "admin.html",
+      "metrics.html",
+    ],
   );
   assert.equal(
     links.find((link) => link.href === "coordinates.html")?.textContent,
@@ -178,13 +217,30 @@ test("the drawer lists every page and marks the one being viewed", () => {
   );
   assert.deepEqual(
     links.map((link) => link.getAttribute("aria-current")),
-    [null, null, "page", null, null],
+    [null, null, "page", null, null, null, null],
   );
 
+  // Each link carries an icon and its label, with no extra hint descriptions.
+  links.forEach((link) => {
+    const icon = link.children.find((child) => child.className === "sidebar-link-icon");
+    const label = link.children.find((child) => child.className === "sidebar-link-label");
+    assert.ok(icon, "link should have an icon");
+    assert.ok(label, "link should have a label");
+    assert.ok(icon.innerHTML.includes("<svg"), "icon should contain an SVG");
+  });
+  assert.doesNotMatch(sidebar, /hint:/);
+  assert.match(sidebar, /heading:\s*"Worker workspace"/);
+  assert.match(sidebar, /heading:\s*"Admin workspace"/);
+  assert.match(sidebarCss, /\.sidebar-link-icon/);
+  assert.match(sidebarCss, /\.sidebar-link-label/);
+  assert.match(sidebarCss, /\.sidebar-heading:not\(:first-child\)/);
+
   // cleanUrls serves /admin without an extension, and a bare path is capture.
-  assert.equal(createSidebarHarness("/admin").links[4].getAttribute("aria-current"), "page");
+  assert.equal(createSidebarHarness("/admin").links[5].getAttribute("aria-current"), "page");
   assert.equal(createSidebarHarness("/coordinates").links[3].getAttribute("aria-current"), "page");
+  assert.equal(createSidebarHarness("/ai-dashboard").links[4].getAttribute("aria-current"), "page");
   assert.equal(createSidebarHarness("/worker-photos").links[1].getAttribute("aria-current"), "page");
+  assert.equal(createSidebarHarness("/metrics").links[6].getAttribute("aria-current"), "page");
   assert.equal(createSidebarHarness("/").links[0].getAttribute("aria-current"), "page");
 });
 
@@ -208,7 +264,7 @@ test("opening the drawer moves focus into it and closing brings focus back", () 
   toggle.dispatch("click");
   // Focus lands on a page you can actually go to, not the one already open.
   assert.equal(links[0].focused, 1);
-  assert.equal(links[4].focused, 0);
+  assert.equal(links[5].focused, 0);
 
   documentListeners.get("keydown")({ key: "Escape" });
   assert.equal(toggle.focused, 1);

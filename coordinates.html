@@ -34,7 +34,7 @@
       integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
       crossorigin=""
     />
-    <link rel="stylesheet" href="coordinates.css?v=20260816-9" />
+    <link rel="stylesheet" href="coordinates.css?v=20260817-3" />
     <script>
       try {
         const saved = localStorage.getItem("stampnote-theme");
@@ -55,7 +55,7 @@
       crossorigin=""
       defer
     ></script>
-    <script src="coordinates.js?v=20260816-7" defer></script>
+    <script src="coordinates.js?v=20260817-2" defer></script>
     <script src="sidebar.js" defer></script>
   </head>
   <body>
@@ -66,8 +66,19 @@
       </a>
       <div class="account-actions">
         <span class="account-name" id="coordinate-account-name"></span>
-        <button class="button button-quiet" id="coordinate-sign-out" type="button" hidden>
-          Sign out
+        <button
+          class="button button-quiet sign-out"
+          id="coordinate-sign-out"
+          type="button"
+          title="Sign out"
+          hidden
+        >
+          <svg class="sign-out-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M9.5 4.6H6.4A1.9 1.9 0 0 0 4.5 6.5v11a1.9 1.9 0 0 0 1.9 1.9h3.1" />
+            <path d="M10.2 12h9.3" />
+            <path d="m16.2 8.4 3.3 3.6-3.3 3.6" />
+          </svg>
+          <span class="sign-out-label">Sign out</span>
         </button>
       </div>
     </header>

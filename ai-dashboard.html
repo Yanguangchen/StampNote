@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en" data-surface="ai-dashboard">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#edf2ef" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#09110e" media="(prefers-color-scheme: dark)" />
+    <title>Operations AI · StampNote</title>
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="icons/stampnote.svg" type="image/svg+xml" />
+    <link
+      rel="preload"
+      href="vendor/fonts/outfit-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="vendor/fonts/outfit.css" />
+    <link rel="stylesheet" href="sidebar.css" />
+    <link rel="stylesheet" href="ai-dashboard.css?v=20260817-4" />
+    <script>
+      try {
+        const saved = localStorage.getItem("stampnote-theme");
+        if (saved === "dark" || saved === "light") document.documentElement.dataset.theme = saved;
+      } catch (error) {
+        /* A blocked storage jar leaves the operating-system theme in charge. */
+      }
+    </script>
+    <script src="observability.js" defer></script>
+    <script src="photo-cloud.js?v=20260816-1" defer></script>
+    <script src="firebase.js?v=20260816-2" defer></script>
+    <script src="coordinates.js?v=20260817-1" defer></script>
+    <script src="metrics.js?v=20260817-1" defer></script>
+    <script src="ai-dashboard.js?v=20260817-4" defer></script>
+    <script src="sidebar.js" defer></script>
+  </head>
+  <body>
+    <header class="ai-header" data-sidebar-mount>
+      <a class="ai-brand" href="index.html" aria-label="Back to StampNote capture">
+        <span class="ai-brand-mark" aria-hidden="true"></span>
+        <span>StampNote</span>
+      </a>
+      <div class="ai-account-actions">
+        <span class="ai-account-name" id="ai-account-name"></span>
+        <button
+          class="ai-button ai-button-quiet theme-toggle"
+          id="theme-toggle"
+          type="button"
+          aria-pressed="false"
+          title="Switch to dark theme"
+        >
+          <span class="theme-toggle-icon" id="theme-toggle-icon" aria-hidden="true">☾</span>
+          <span class="theme-toggle-label" id="theme-toggle-label">Dark</span>
+        </button>
+        <button
+          class="ai-icon-button"
+          id="ai-sign-out"
+          type="button"
+          title="Sign out"
+          hidden
+        >
+          <svg class="sign-out-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M9.5 4.6H6.4A1.9 1.9 0 0 0 4.5 6.5v11a1.9 1.9 0 0 0 1.9 1.9h3.1" />
+            <path d="M10.2 12h9.3" />
+            <path d="m16.2 8.4 3.3 3.6-3.3 3.6" />
+          </svg>
+          <span class="visually-hidden">Sign out</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="ai-main">
+      <p
+        class="ai-dashboard-status"
+        id="ai-dashboard-status"
+        role="status"
+        aria-live="polite"
+        hidden
+      ></p>
+
+      <section class="ai-auth-gate" id="ai-auth-gate" aria-labelledby="ai-auth-title">
+        <div class="ai-auth-symbol" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false">
+            <path d="M12 3.2 4.8 6.4v5.3c0 4.5 2.9 7.7 7.2 9.1 4.3-1.4 7.2-4.6 7.2-9.1V6.4L12 3.2Z" />
+            <path d="m8.7 12 2.1 2.1 4.5-4.6" />
+          </svg>
+        </div>
+        <p class="ai-eyebrow">Private workspace</p>
+        <h2 id="ai-auth-title">Sign in to ask about your operations</h2>
+        <p>Answers are grounded in records available to your StampNote account.</p>
+        <button class="ai-button ai-button-primary" id="ai-sign-in" type="button">
+          Continue with Google
+        </button>
+      </section>
+
+      <section class="ai-workspace" id="ai-workspace" hidden>
+        <section class="ai-chat-panel" aria-labelledby="ai-chat-title">
+          <header class="ai-chat-heading">
+            <h2 id="ai-chat-title">Operations conversation</h2>
+            <div class="ai-chat-heading-actions">
+              <span id="ai-scope-label">Loading records…</span>
+              <button class="ai-icon-button" id="ai-refresh" type="button" title="Refresh records">
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M19.2 8.2A8 8 0 1 0 20 14" />
+                  <path d="M19.2 3.8v4.4h-4.4" />
+                </svg>
+                <span class="visually-hidden">Refresh records</span>
+              </button>
+            </div>
+          </header>
+
+          <ol class="ai-message-list" id="ai-message-list" aria-live="polite">
+            <li class="ai-message-row ai-message-row-assistant">
+              <article class="ai-message ai-message-assistant">
+                <span class="ai-message-label">Operations AI</span>
+                <div class="ai-message-body">
+                  Ask for a summary, a date, a worker, a location, or the sessions that need review.
+                  I will show which retrieved facts support the answer.
+                </div>
+              </article>
+            </li>
+          </ol>
+
+          <div class="ai-prompt-suggestions" aria-label="Suggested prompts">
+            <button type="button" data-ai-question="Show the last 30 days of Metrics statistics and graphs for attendance, flags, and sessions.">
+              30-day metrics
+            </button>
+            <button type="button" data-ai-question="Show me the flagged sessions and explain each flag.">
+              Flagged sessions
+            </button>
+            <button type="button" data-ai-question="Show the location discrepancies between photo GPS references and truck locations.">
+              Location discrepancies
+            </button>
+            <button type="button" data-ai-question="Which sessions had problematic weather and what was the impact?">
+              Weather impact
+            </button>
+            <button type="button" data-ai-question="Summarize attendance by worker for the most recent date.">
+              Attendance
+            </button>
+            <button type="button" data-ai-question="Summarize the latest recorded site activity and anything needing attention.">
+              Latest activity
+            </button>
+          </div>
+
+          <form class="ai-chat-form" id="ai-chat-form">
+            <label class="visually-hidden" for="ai-prompt">Ask Operations AI</label>
+            <textarea
+              id="ai-prompt"
+              rows="2"
+              maxlength="1200"
+              placeholder="Ask about sessions, flags, weather, or attendance…"
+            ></textarea>
+            <div class="ai-composer-actions">
+              <button
+                class="ai-mic-button"
+                id="ai-mic"
+                type="button"
+                aria-pressed="false"
+                title="Speak a question"
+                disabled
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <rect x="8.2" y="3" width="7.6" height="12" rx="3.8" />
+                  <path d="M5.7 11.4a6.3 6.3 0 0 0 12.6 0M12 17.7V21M8.7 21h6.6" />
+                </svg>
+                <span class="visually-hidden">Speak a question</span>
+              </button>
+              <button class="ai-send-button" id="ai-send" type="submit" disabled>
+                Ask AI
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="m5 12 13-7-4.4 14-2.4-5.1L5 12Z" />
+                </svg>
+              </button>
+            </div>
+          </form>
+          <p class="ai-voice-status" id="ai-voice-status" aria-live="polite"></p>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

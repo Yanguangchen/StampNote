@@ -62,7 +62,10 @@ class FakeElement {
   }
 
   querySelector(selector) {
-    return selector === ".hint" ? this.hint || null : null;
+    if (selector === ".hint") return this.hint || null;
+    if (selector === ".sign-in-icon") return this.signInIcon || null;
+    if (selector === ".sign-out-icon") return this.signOutIcon || null;
+    return null;
   }
 
   remove() {
@@ -165,7 +168,6 @@ function createAppHarness(options = {}) {
     "monitor-frame",
     "monitor-video",
     "monitor-toggle",
-    "monitor-toggle-name",
     "monitor-icon-start",
     "monitor-icon-stop",
     "monitor-status",
@@ -183,6 +185,9 @@ function createAppHarness(options = {}) {
     "face-enrollment-message",
     "face-enrollment-match",
     "face-enrollment-worker-id",
+    "face-enrollment-actions",
+    "face-enrollment-another",
+    "face-enrollment-record",
     "face-enrollment-skip",
     "captures",
     "captures-summary",
@@ -209,6 +214,7 @@ function createAppHarness(options = {}) {
   elements["monitor-frame"].hidden = true;
   elements["face-enrollment"].hidden = true;
   elements["face-enrollment-match"].hidden = true;
+  elements["face-enrollment-actions"].hidden = true;
   elements["ai-review-loader"].hidden = true;
   elements["camera-loader"].hidden = true;
   elements.viewer.hidden = true;
@@ -220,6 +226,9 @@ function createAppHarness(options = {}) {
   elements["captures-save"].hint = new FakeElement("span");
   elements["ai-review-bin"].hint = new FakeElement("span");
   elements["cloud-auth"].hint = new FakeElement("span");
+  elements["cloud-auth"].signInIcon = new FakeElement("svg");
+  elements["cloud-auth"].signOutIcon = new FakeElement("svg");
+  elements["cloud-auth"].signOutIcon.hidden = true;
 
   const body = new FakeElement("body");
   const documentListeners = new Map();
@@ -468,6 +477,31 @@ function createAppHarness(options = {}) {
         ...controllerState.faceEnrollment,
         required: false,
         status: "skipped",
+      };
+      captureConfiguration?.onUpdate?.({ ...controllerState });
+      return controllerState;
+    },
+    takeAnotherAttendance() {
+      if (controllerState.activityStarted || controllerState.faceEnrollment?.status !== "complete") {
+        return controllerState;
+      }
+      controllerState.faceEnrollment = {
+        required: true,
+        status: "move_closer",
+        samples: 0,
+        total: 2,
+        progress: 0,
+      };
+      captureConfiguration?.onUpdate?.({ ...controllerState });
+      return controllerState;
+    },
+    startWork() {
+      if (controllerState.faceEnrollment?.status !== "complete") return controllerState;
+      controllerState.activityStarted = true;
+      controllerState.faceEnrollment = {
+        ...controllerState.faceEnrollment,
+        required: false,
+        status: "accepted",
       };
       captureConfiguration?.onUpdate?.({ ...controllerState });
       return controllerState;
@@ -944,6 +978,8 @@ test("capture-library initialization syncs reviewed photos and supports viewer d
   assert.deepEqual(harness.storeCalls.marked, ["capture-1"]);
   assert.equal(record.status, "synced");
   assert.equal(harness.elements["cloud-auth"].dataset.signedIn, "true");
+  assert.equal(harness.elements["cloud-auth"].signInIcon.hidden, true);
+  assert.equal(harness.elements["cloud-auth"].signOutIcon.hidden, false);
 
   await harness.elements.captures.children[0].dispatch("click");
   assert.equal(harness.elements.viewer.hidden, false);
@@ -1310,7 +1346,7 @@ test("recording loads enrolled faces and records each matched worker once", asyn
   assert.deepEqual(harness.personTrackerOptions.identities, workers);
   assert.match(harness.elements["monitor-status"].textContent, /attendance taking/i);
 
-  harness.controllerState.activityStarted = true;
+  harness.controllerState.activityStarted = false;
   harness.controllerState.faceEnrollment = {
     required: true,
     status: "complete",
@@ -1333,7 +1369,9 @@ test("recording loads enrolled faces and records each matched worker once", asyn
   assert.equal(harness.elements["face-enrollment-title"].textContent, "Attendance recorded");
   assert.equal(harness.elements["face-enrollment-match"].hidden, false);
   assert.equal(harness.elements["face-enrollment-worker-id"].textContent, "WORKER-7");
-  assert.match(harness.elements["face-enrollment-message"].textContent, /Ari Tan is ready/i);
+  assert.match(harness.elements["face-enrollment-message"].textContent, /Ari Tan is checked in/i);
+  assert.equal(harness.elements["face-enrollment-actions"].hidden, false);
+  assert.equal(harness.controllerState.activityStarted, false);
 
   await settle();
   assert.equal(harness.cloudCalls.attendance.length, 1);
@@ -1349,6 +1387,11 @@ test("recording loads enrolled faces and records each matched worker once", asyn
     1,
     "the opening worker is recorded once",
   );
+
+  await harness.elements["face-enrollment-record"].dispatch("click");
+  assert.equal(harness.controllerState.activityStarted, true);
+  assert.equal(harness.elements["face-enrollment"].hidden, true);
+  assert.match(harness.elements["monitor-status"].textContent, /recording work/i);
 
   harness.controllerState.bodies = [
     {
@@ -1375,9 +1418,66 @@ test("recording loads enrolled faces and records each matched worker once", asyn
   await settle();
   assert.equal(harness.cloudCalls.attendance.length, 2, "a worker is recorded once per session");
 
-  const confirmationTimer = harness.timers.find((timer) => timer.delay === 1_800);
-  assert.ok(confirmationTimer, "the matched identity remains prominent before fading");
-  confirmationTimer.callback();
+  assert.equal(harness.elements["face-enrollment-actions"].hidden, true);
+});
+
+test("each completed check-in can hand the camera to another worker before work starts", async () => {
+  const embedding = Array.from({ length: 128 }, (unused, index) => index / 1000);
+  const harness = createAppHarness({
+    camera: true,
+    cloud: true,
+    faceEnrollment: true,
+    workerFaces: [
+      { workerId: "WORKER-7", displayName: "Ari Tan", embedding },
+      { workerId: "WORKER-9", displayName: "Bo Lim", embedding },
+    ],
+  });
+  await settle();
+  await harness.elements["monitor-toggle"].dispatch("click");
+  await settle(8);
+
+  harness.controllerState.faceEnrollment = {
+    required: true,
+    status: "complete",
+    samples: 2,
+    total: 2,
+    workerId: "WORKER-7",
+    personLabel: "Ari Tan",
+    matchDistance: 0.38,
+    matchVotes: 2,
+    requiredVotes: 2,
+  };
+  harness.captureConfiguration.onUpdate({ ...harness.controllerState });
+  await settle();
+  assert.equal(harness.cloudCalls.attendance.length, 1);
+
+  await harness.elements["face-enrollment-another"].dispatch("click");
+  assert.equal(harness.controllerState.activityStarted, false);
+  assert.equal(harness.controllerState.faceEnrollment.status, "move_closer");
+  assert.equal(harness.elements["face-enrollment-actions"].hidden, true);
+  assert.equal(harness.elements["face-enrollment"].hidden, false);
+  assert.match(harness.elements["monitor-status"].textContent, /next worker/i);
+
+  harness.controllerState.faceEnrollment = {
+    required: true,
+    status: "complete",
+    samples: 2,
+    total: 2,
+    workerId: "WORKER-9",
+    personLabel: "Bo Lim",
+    matchDistance: 0.35,
+    matchVotes: 2,
+    requiredVotes: 2,
+  };
+  harness.captureConfiguration.onUpdate({ ...harness.controllerState });
+  await settle();
+  assert.equal(harness.cloudCalls.attendance.length, 2);
+  assert.equal(harness.cloudCalls.attendance[1].workerId, "WORKER-9");
+  assert.equal(harness.controllerState.activityStarted, false);
+  assert.equal(harness.elements["face-enrollment-actions"].hidden, false);
+
+  await harness.elements["face-enrollment-record"].dispatch("click");
+  assert.equal(harness.controllerState.activityStarted, true);
   assert.equal(harness.elements["face-enrollment"].hidden, true);
 });
 

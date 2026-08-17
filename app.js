@@ -29,7 +29,6 @@
   const monitorFrame = document.querySelector("#monitor-frame");
   const monitorVideo = document.querySelector("#monitor-video");
   const monitorToggle = document.querySelector("#monitor-toggle");
-  const monitorToggleName = document.querySelector("#monitor-toggle-name");
   const monitorIconStart = document.querySelector("#monitor-icon-start");
   const monitorIconStop = document.querySelector("#monitor-icon-stop");
   const monitorStatus = document.querySelector("#monitor-status");
@@ -46,6 +45,9 @@
   const faceEnrollmentMessage = document.querySelector("#face-enrollment-message");
   const faceEnrollmentMatch = document.querySelector("#face-enrollment-match");
   const faceEnrollmentWorkerId = document.querySelector("#face-enrollment-worker-id");
+  const faceEnrollmentActions = document.querySelector("#face-enrollment-actions");
+  const faceEnrollmentAnother = document.querySelector("#face-enrollment-another");
+  const faceEnrollmentRecord = document.querySelector("#face-enrollment-record");
   const faceEnrollmentSkip = document.querySelector("#face-enrollment-skip");
   const capturesList = document.querySelector("#captures");
   const capturesSummary = document.querySelector("#captures-summary");
@@ -455,7 +457,6 @@
   const DOWNLOAD_SPACING = 400;
   const AI_REVIEW_BATCH_SIZE = 8;
   const AI_REVIEW_MAX_EDGE = 512;
-  const FACE_MATCH_CONFIRMATION_MS = 1_800;
   // Version 2 covers automatic uploads. The old button-only consent must not be
   // silently broadened to include background review.
   const AI_REVIEW_CONSENT_KEY = "stampnote-ai-review-consent-v2";
@@ -554,10 +555,7 @@
   let cloudSyncPromise = null;
   let cloudSyncRequested = false;
   let lastTrackingErrorCode = null;
-  let faceEnrollmentWasActive = false;
-  let faceMatchConfirmationVisible = false;
-  let faceMatchConfirmationShown = false;
-  let faceMatchConfirmationTimer = null;
+  let faceEnrollmentWasScanning = false;
   const attendanceEntriesForSession = new Map();
   const attendanceMatchVotesForSession = new Map();
   const enrolledWorkerNamesForSession = new Map();
@@ -711,6 +709,10 @@
       if (name) {
         name.textContent = "Account";
       }
+      const signInIcon = cloudAuth.querySelector(".sign-in-icon");
+      const signOutIcon = cloudAuth.querySelector(".sign-out-icon");
+      if (signInIcon) signInIcon.hidden = Boolean(user);
+      if (signOutIcon) signOutIcon.hidden = !user;
       cloudAuth.setAttribute("aria-label", user ? "Sign out of account" : "Sign in to account");
     }
   }
@@ -1022,9 +1024,6 @@
     monitorToggle.dataset.running = String(running);
     monitorToggle.setAttribute("aria-pressed", String(running));
     monitorToggle.setAttribute("aria-label", running ? "Stop camera" : "Start camera");
-    if (monitorToggleName) {
-      monitorToggleName.textContent = "Camera";
-    }
     if (monitorIconStart && monitorIconStop) {
       // `hidden` is an HTMLElement property, so assigning it on an SVG element
       // sets a stray JavaScript property and leaves the icon on screen. The
@@ -1525,33 +1524,21 @@
     }
 
     const enrollment = state.faceEnrollment;
-    const active = Boolean(
-      state.running && enrollment?.required && !state.activityStarted,
+    const awaitingChoice = Boolean(
+      state.running && !state.activityStarted && enrollment?.status === "complete" && enrollment?.workerId,
+    );
+    const scanning = Boolean(
+      state.running && enrollment?.required && !state.activityStarted && !awaitingChoice,
     );
     const total = Math.max(
       1,
       Number(enrollment?.total) || Number(facialRecognition?.DEFAULTS?.enrollmentSamples) || 2,
     );
     const samples = Math.max(0, Math.min(total, Number(enrollment?.samples) || 0));
-    const completedNow = Boolean(
-      faceEnrollmentWasActive &&
-      !active &&
-      state.running &&
-      enrollment?.status === "complete" &&
-      enrollment?.workerId,
+    const completedNow = Boolean(faceEnrollmentWasScanning && awaitingChoice);
+    const skippedNow = Boolean(
+      faceEnrollmentWasScanning && state.running && enrollment?.status === "skipped",
     );
-    if (completedNow && !faceMatchConfirmationShown) {
-      faceMatchConfirmationShown = true;
-      faceMatchConfirmationVisible = true;
-      window.clearTimeout(faceMatchConfirmationTimer);
-      faceMatchConfirmationTimer = window.setTimeout(() => {
-        faceMatchConfirmationVisible = false;
-        faceMatchConfirmationTimer = null;
-        if (!controller?.getState?.().running) return;
-        faceEnrollment.hidden = true;
-      }, FACE_MATCH_CONFIRMATION_MS);
-    }
-    const confirming = Boolean(faceMatchConfirmationVisible && state.running);
     const instructions = {
       loading: "Preparing private on-device face matching…",
       no_face: "Step into view and move close to the camera.",
@@ -1576,57 +1563,56 @@
         ? matchDistance
         : Number.NaN;
     if (faceEnrollmentKicker) {
-      faceEnrollmentKicker.textContent = confirming ? "Attendance confirmed" : "Worker check-in";
+      faceEnrollmentKicker.textContent = awaitingChoice ? "Attendance confirmed" : "Worker check-in";
     }
     if (faceEnrollmentTitle) {
-      faceEnrollmentTitle.textContent = confirming
+      faceEnrollmentTitle.textContent = awaitingChoice
         ? "Attendance recorded"
         : enrollment?.status === "unavailable"
           ? "Attendance taking unavailable"
           : "Attendance taking";
     }
     if (faceEnrollmentMessage) {
-      faceEnrollmentMessage.textContent = confirming
-        ? `${enrollment?.personLabel || "Worker"} is ready. Auto capture is starting.`
+      faceEnrollmentMessage.textContent = awaitingChoice
+        ? `${enrollment?.personLabel || "Worker"} is checked in. Take another attendance, or record work when everyone is ready.`
         : instruction;
     }
     if (faceEnrollmentMatch) {
-      faceEnrollmentMatch.hidden = !confirming;
+      faceEnrollmentMatch.hidden = !awaitingChoice;
     }
     if (faceEnrollmentWorkerId) {
-      faceEnrollmentWorkerId.textContent = confirming ? enrollment?.workerId || "" : "";
+      faceEnrollmentWorkerId.textContent = awaitingChoice ? enrollment?.workerId || "" : "";
     }
-    faceEnrollment.dataset.status = confirming ? "complete" : enrollment?.status || "no_face";
-    faceEnrollment.hidden = !(active || confirming);
+    if (faceEnrollmentActions) faceEnrollmentActions.hidden = !awaitingChoice;
+    if (faceEnrollmentSkip) faceEnrollmentSkip.hidden = awaitingChoice;
+    faceEnrollment.dataset.status = awaitingChoice ? "complete" : enrollment?.status || "no_face";
+    faceEnrollment.hidden = !(scanning || awaitingChoice);
 
-    if (faceEnrollmentWasActive && !active && state.running) {
-      enrollmentFaceScanner?.close?.();
-      enrollmentFaceScanner = null;
-      const skipped = enrollment?.status === "skipped";
+    if (completedNow) {
       telemetry?.event(
-        skipped ? "face.match.skipped" : "face.match.completed",
+        "face.match.completed",
         {
           matchDistance: telemetryMatchDistance,
           matchVotes: Number(enrollment?.matchVotes) || 0,
           requiredVotes: Number(enrollment?.requiredVotes) || 0,
           sampleCount: samples,
-          status: skipped ? undefined : "success",
+          status: "success",
         },
         { immediate: true },
       );
       setMonitorStatus(
-        skipped
-          ? "Worker match skipped — auto capture is now running."
-          : enrollment?.personLabel
-            ? `${enrollment.personLabel} (${enrollment.workerId}) matched — auto capture is now running.`
-            : "Face scan complete — auto capture is now running.",
-        skipped ? "idle" : "success",
+        enrollment?.personLabel
+          ? `${enrollment.personLabel} (${enrollment.workerId}) matched — choose another attendance or record work.`
+          : "Attendance recorded — choose another attendance or record work.",
+        "success",
       );
-      if (!skipped) {
-        saveMatchedAttendance(enrollment);
-      }
+      saveMatchedAttendance(enrollment);
+      faceEnrollmentAnother?.focus?.();
+    } else if (skippedNow) {
+      telemetry?.event("face.match.skipped", {}, { immediate: true });
+      setMonitorStatus("Worker match skipped — recording work is now running.", "idle");
     }
-    faceEnrollmentWasActive = active;
+    faceEnrollmentWasScanning = scanning;
   }
 
   function renderState(state) {
@@ -2755,10 +2741,6 @@
     sampleTimer = null;
     window.clearTimeout(captureFlashTimer);
     captureFlashTimer = null;
-    window.clearTimeout(faceMatchConfirmationTimer);
-    faceMatchConfirmationTimer = null;
-    faceMatchConfirmationVisible = false;
-    faceMatchConfirmationShown = false;
     attendanceSessionVersion += 1;
     attendanceEntriesForSession.clear();
     attendanceMatchVotesForSession.clear();
@@ -2800,7 +2782,8 @@
     if (faceEnrollment) {
       faceEnrollment.hidden = true;
     }
-    faceEnrollmentWasActive = false;
+    if (faceEnrollmentActions) faceEnrollmentActions.hidden = true;
+    faceEnrollmentWasScanning = false;
     setToggleLabel(false);
     setMonitorStatus("Auto capture stopped. Your photos are still stored on this device.");
   }
@@ -3007,6 +2990,29 @@
 
   faceEnrollmentSkip?.addEventListener("click", () => {
     controller?.skipFaceEnrollment?.();
+    enrollmentFaceScanner?.close?.();
+    enrollmentFaceScanner = null;
+  });
+
+  faceEnrollmentAnother?.addEventListener("click", () => {
+    const state = controller?.takeAnotherAttendance?.();
+    if (!state || state.activityStarted || state.faceEnrollment?.status === "complete") return;
+    setMonitorStatus("Ready for the next worker. Ask them to move close to the camera.");
+    telemetry?.event("attendance.another.requested", { status: "success" });
+  });
+
+  faceEnrollmentRecord?.addEventListener("click", () => {
+    const state = controller?.startWork?.();
+    if (!state?.activityStarted) return;
+    enrollmentFaceScanner?.close?.();
+    enrollmentFaceScanner = null;
+    setMonitorStatus("Recording work — auto capture is now running.", "success");
+    telemetry?.event("capture.work.started", {
+      attendanceCount: [...attendanceEntriesForSession.values()].filter(
+        (entry) => entry.status === "saved" || entry.status === "pending",
+      ).length,
+      status: "success",
+    });
   });
 
   capturesSave?.addEventListener("click", saveCaptures);

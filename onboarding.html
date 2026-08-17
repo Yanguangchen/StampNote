@@ -16,6 +16,17 @@
     <link rel="stylesheet" href="vendor/fonts/outfit.css" />
     <link rel="stylesheet" href="sidebar.css" />
     <link rel="stylesheet" href="onboarding.css" />
+    <!-- Applied before the first paint so a saved dark theme never flashes white. -->
+    <script>
+      try {
+        const saved = localStorage.getItem("stampnote-theme");
+        if (saved === "dark" || saved === "light") {
+          document.documentElement.dataset.theme = saved;
+        }
+      } catch (error) {
+        /* A blocked storage jar just leaves the system theme in charge. */
+      }
+    </script>
     <script src="sidebar.js" defer></script>
     <script src="worker-face.js" defer></script>
     <script src="camera-facing.js" defer></script>
@@ -32,7 +43,21 @@
     <header class="onboarding-header" data-sidebar-mount>
       <div class="account-controls">
         <p id="signed-in-state">Not signed in</p>
-        <button class="auth-button" id="onboarding-auth" type="button">Sign in with Google</button>
+        <button class="auth-button" id="onboarding-auth" type="button">
+          <svg
+            class="sign-out-icon"
+            id="onboarding-auth-icon"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            focusable="false"
+            hidden
+          >
+            <path d="M9.5 4.6H6.4A1.9 1.9 0 0 0 4.5 6.5v11a1.9 1.9 0 0 0 1.9 1.9h3.1" />
+            <path d="M10.2 12h9.3" />
+            <path d="m16.2 8.4 3.3 3.6-3.3 3.6" />
+          </svg>
+          <span class="auth-label" id="onboarding-auth-label">Sign in with Google</span>
+        </button>
       </div>
     </header>
 

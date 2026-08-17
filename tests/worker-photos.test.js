@@ -20,6 +20,27 @@ test("the worker page offers separate camera and multi-photo library inputs", ()
   assert.doesNotMatch(html, /Ready\. Location access is requested/);
 });
 
+test("the worker photo controls enter with a staggered ease-in-out sequence", () => {
+  assert.match(
+    css,
+    /\.photo-header\s*\{[^}]*animation: worker-photo-header-enter 560ms cubic-bezier\(0\.65, 0, 0\.35, 1\)/,
+  );
+  assert.match(
+    css,
+    /\.action-card\s*\{[^}]*animation: worker-photo-card-enter 760ms cubic-bezier\(0\.65, 0, 0\.35, 1\) 90ms both;/,
+  );
+  assert.match(
+    css,
+    /\.photo-action:nth-of-type\(2\)\s*\{[^}]*--worker-photo-action-delay: 330ms;/,
+  );
+  assert.match(css, /\.save-status:not\(\[hidden\]\)[\s\S]*worker-photo-control-enter 440ms/);
+  assert.match(css, /\.send-button:not\(\[hidden\]\)[\s\S]*worker-photo-control-enter 500ms/);
+  assert.match(
+    css,
+    /prefers-reduced-motion: reduce[\s\S]*?\.photo-header,[\s\S]*?\.action-card,[\s\S]*?animation: none !important;/,
+  );
+});
+
 test("the page opens on the two buttons rather than on a paragraph about them", () => {
   // The eyebrow and the standfirst went entirely; the stamp's contents are
   // learned from the first photo rather than promised above the button.
@@ -97,6 +118,7 @@ class FakeElement {
     this.tagName = tagName.toUpperCase();
     this.attributes = new Map();
     this.children = [];
+    this.className = "";
     this.dataset = {};
     this.disabled = false;
     this.files = null;
@@ -104,6 +126,14 @@ class FakeElement {
     this.listeners = new Map();
     this.textContent = "";
     this.value = "";
+    const names = new Set();
+    this.classList = {
+      toggle(name, force) {
+        const on = force === undefined ? !names.has(name) : Boolean(force);
+        if (on) names.add(name);
+        else names.delete(name);
+      },
+    };
   }
 
   addEventListener(name, callback) {
@@ -158,6 +188,8 @@ function createWorkerPhotosHarness(options = {}) {
     "worker-photo-status-text",
     "worker-photo-send",
     "worker-photo-auth",
+    "worker-photo-auth-icon",
+    "worker-photo-auth-label",
     "worker-photo-account",
   ];
   const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement()]));
@@ -591,7 +623,9 @@ test("sign-in syncs pending worker photos and a refused login stays on the page"
   assert.deepEqual(harness.storeCalls.marked, [pending.id]);
   assert.match(harness.elements["worker-photo-status-text"].textContent, /1 sanitized photo synced/);
   assert.equal(harness.elements["worker-photo-account"].textContent, "owner@example.com");
-  assert.equal(harness.elements["worker-photo-auth"].textContent, "Sign out");
+  assert.equal(harness.elements["worker-photo-auth-label"].textContent, "Sign out");
+  assert.equal(harness.elements["worker-photo-auth-icon"].hidden, false);
+  assert.equal(harness.elements["worker-photo-auth"].title, "Sign out");
 
   await harness.elements["worker-photo-auth"].dispatch("click");
   await settle();

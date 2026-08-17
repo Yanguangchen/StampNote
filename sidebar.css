@@ -114,10 +114,15 @@
   text-transform: uppercase;
 }
 
+.sidebar-heading:not(:first-child) {
+  margin-top: 14px;
+}
+
 .sidebar-link {
-  display: grid;
-  gap: 2px;
-  padding: 11px 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
   border: 1px solid transparent;
   border-radius: 11px;
   color: var(--ink, #17201c);
@@ -139,10 +144,28 @@
   transform: scale(0.99);
 }
 
-.sidebar-link span {
+.sidebar-link-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
   color: var(--muted, #68726d);
-  font-size: 12px;
-  font-weight: 500;
+}
+
+.sidebar-link-icon svg {
+  width: 18px;
+  height: 18px;
+  fill: currentcolor;
+}
+
+.sidebar-link-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The page you are already on is marked rather than removed: the list stays the
@@ -152,7 +175,7 @@
   color: var(--accent, #176146);
 }
 
-.sidebar-link[aria-current="page"] span {
+.sidebar-link[aria-current="page"] .sidebar-link-icon {
   color: inherit;
 }
 
@@ -187,4 +210,39 @@
   .sidebar-link {
     transition-duration: 0.01ms !important;
   }
+}
+
+/* Sign-out is a door, not a word. The account name already sits beside it, and
+   the label stays in the control for the tooltip and for assistive tech. */
+:is(.button, .ai-button, .ai-icon-button, .auth-button).sign-out {
+  display: grid;
+  place-items: center;
+  position: relative;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 0;
+  padding: 0;
+}
+
+.sign-out-icon {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.sign-out-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

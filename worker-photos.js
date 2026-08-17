@@ -67,6 +67,8 @@
   const statusText = document.querySelector("#worker-photo-status-text");
   const sendButton = document.querySelector("#worker-photo-send");
   const authButton = document.querySelector("#worker-photo-auth");
+  const authIcon = document.querySelector("#worker-photo-auth-icon");
+  const authLabel = document.querySelector("#worker-photo-auth-label");
   const account = document.querySelector("#worker-photo-account");
 
   let user = null;
@@ -397,8 +399,17 @@
   function updateAccount(nextUser) {
     user = nextUser || null;
     account.textContent = user?.email || "Photos save on this device";
-    authButton.textContent = user ? "Sign out" : "Sign in to sync";
-    authButton.setAttribute("aria-pressed", String(Boolean(user)));
+    const signedIn = Boolean(user);
+    authButton?.classList?.toggle("sign-out", signedIn);
+    if (authButton) {
+      authButton.title = signedIn ? "Sign out" : "Sign in to sync";
+      authButton.setAttribute("aria-pressed", String(signedIn));
+    }
+    if (authIcon) authIcon.hidden = !signedIn;
+    if (authLabel) {
+      authLabel?.classList?.toggle("sign-out-label", signedIn);
+      authLabel.textContent = signedIn ? "Sign out" : "Sign in to sync";
+    }
   }
 
   if (!cloud) {

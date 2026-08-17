@@ -23,7 +23,7 @@
     />
     <link rel="stylesheet" href="vendor/fonts/outfit.css" />
     <link rel="stylesheet" href="sidebar.css" />
-    <link rel="stylesheet" href="styles.css?v=20260816-4" />
+    <link rel="stylesheet" href="styles.css?v=20260817-1" />
     <script src="sidebar.js" defer></script>
     <script src="observability.js" defer></script>
     <script src="address-service.js" defer></script>
@@ -37,14 +37,14 @@
     <script src="frame-scaler.js" defer></script>
     <script src="face-identity.js" defer></script>
     <script src="person-tracker.js" defer></script>
-    <script src="auto-capture.js" defer></script>
+    <script src="auto-capture.js?v=20260817-1" defer></script>
     <script src="pose-mapping.js" defer></script>
     <script src="photo-cloud.js" defer></script>
     <script src="firebase.js?v=20260816-2" defer></script>
     <!-- A module, because the vendored MediaPipe runtime is one. It only
          registers a loader; nothing is downloaded until the watch is started. -->
     <script src="pose-model.js" type="module"></script>
-    <script src="app.js?v=20260816-4" defer></script>
+    <script src="app.js?v=20260817-2" defer></script>
     <script src="orbit.js?v=20260816-1" defer></script>
   </head>
   <body>
@@ -88,9 +88,9 @@
         </div>
       </section>
 
-      <!-- Attendance taking waits here until the first person has supplied two
-           clear on-device face samples. The scan can be bypassed, so an older
-           device or a covered face never prevents the activity from starting. -->
+      <!-- Attendance taking stays here for as many workers as the operator needs.
+           A completed check-in offers another scan or an explicit start-work
+           action, so one person's attendance never starts recording by itself. -->
       <section
         class="face-enrollment"
         id="face-enrollment"
@@ -117,6 +117,22 @@
           >
             <span>Worker ID</span>
             <strong id="face-enrollment-worker-id"></strong>
+          </div>
+          <div class="face-enrollment-actions" id="face-enrollment-actions" hidden>
+            <button
+              class="face-enrollment-action face-enrollment-action-secondary"
+              id="face-enrollment-another"
+              type="button"
+            >
+              Take another attendance
+            </button>
+            <button
+              class="face-enrollment-action face-enrollment-action-primary"
+              id="face-enrollment-record"
+              type="button"
+            >
+              Record work
+            </button>
           </div>
           <div class="face-enrollment-progress-row">
             <div
@@ -346,15 +362,25 @@
         >
           <rect x="7" y="7" width="10" height="10" rx="2.5" />
         </svg>
-        <span class="hint" id="monitor-toggle-name">Camera</span>
       </button>
 
       <div class="toolbar-group toolbar-group-end">
         <button class="tool" id="cloud-auth" type="button" aria-label="Sign in to account">
-          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <svg class="icon sign-in-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
             <path d="M7.2 18.5h9.7a3.9 3.9 0 0 0 .6-7.8 5.8 5.8 0 0 0-11-1.6 4.8 4.8 0 0 0 .7 9.4z" />
             <path d="M12 12.3v7.8" />
             <path d="m8.9 15.4 3.1-3.1 3.1 3.1" />
+          </svg>
+          <svg
+            class="icon sign-out-icon"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            focusable="false"
+            hidden
+          >
+            <path d="M9.5 4.6H6.4A1.9 1.9 0 0 0 4.5 6.5v11a1.9 1.9 0 0 0 1.9 1.9h3.1" />
+            <path d="M10.2 12h9.3" />
+            <path d="m16.2 8.4 3.3 3.6-3.3 3.6" />
           </svg>
           <span class="hint">Account</span>
         </button>

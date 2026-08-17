@@ -9,7 +9,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="StampNote" />
-    <title>StampNote photos and attendance</title>
+    <title>StampNote session management</title>
     <link rel="manifest" href="manifest.json" />
     <link rel="icon" href="icons/stampnote.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="icons/stampnote-180.png" sizes="180x180" />
@@ -38,7 +38,7 @@
     <script src="photo-cloud.js?v=20260816-1" defer></script>
     <script src="firebase.js?v=20260816-2" defer></script>
     <script src="weather-service.js" defer></script>
-    <script src="admin.js?v=20260816-3" defer></script>
+    <script src="admin.js?v=20260817-1" defer></script>
     <script src="sidebar.js" defer></script>
   </head>
   <body>
@@ -59,13 +59,26 @@
           <span class="theme-toggle-icon" id="theme-toggle-icon" aria-hidden="true">☾</span>
           <span class="theme-toggle-label" id="theme-toggle-label">Dark</span>
         </button>
-        <button class="button button-quiet" id="sign-out" type="button" hidden>Sign out</button>
+        <button
+          class="button button-quiet sign-out"
+          id="sign-out"
+          type="button"
+          title="Sign out"
+          hidden
+        >
+          <svg class="sign-out-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M9.5 4.6H6.4A1.9 1.9 0 0 0 4.5 6.5v11a1.9 1.9 0 0 0 1.9 1.9h3.1" />
+            <path d="M10.2 12h9.3" />
+            <path d="m16.2 8.4 3.3 3.6-3.3 3.6" />
+          </svg>
+          <span class="sign-out-label">Sign out</span>
+        </button>
       </div>
     </header>
 
     <main class="admin-main">
       <section class="intro" aria-labelledby="dashboard-title">
-        <h1 id="dashboard-title">Photos &amp; attendance</h1>
+        <h1 id="dashboard-title">Session management</h1>
       </section>
 
       <p class="dashboard-status" id="dashboard-status" role="status" aria-live="polite"></p>

@@ -97,6 +97,31 @@
   // has not been answered yet; "all" is the reader having picked "Whole day".
   const selection = { locationKey: null, dateKey: null, sessionId: null };
 
+  function readNavigationRequest(location = window.location) {
+    try {
+      const params = new URLSearchParams(location.search || "");
+      const section = String(location.hash || "").replace(/^#/, "");
+      const allowedSections = new Set([
+        "attendance-panel",
+        "photos-panel",
+        "session-facts",
+        "session-truck-location",
+      ]);
+      return {
+        locationKey: String(params.get("location") || "").slice(0, 96),
+        dateKey: String(params.get("date") || "").slice(0, 16),
+        sessionId: String(params.get("session") || "").slice(0, 32),
+        section: allowedSections.has(section) ? section : "session-facts",
+      };
+    } catch (error) {
+      return { locationKey: "", dateKey: "", sessionId: "", section: "session-facts" };
+    }
+  }
+
+  const navigationRequest = readNavigationRequest();
+  let navigationApplied = false;
+  let navigationRevealed = false;
+
   const THEME_KEY = "stampnote-theme";
 
   function readStoredTheme() {
@@ -429,6 +454,37 @@
     else if (selection.sessionId !== "all") selection.sessionId = session?.id || null;
 
     return { location, dateGroup, session };
+  }
+
+  function applyNavigationRequest(scope) {
+    if (
+      navigationApplied ||
+      !navigationRequest.locationKey ||
+      !navigationRequest.dateKey ||
+      !navigationRequest.sessionId
+    ) {
+      return;
+    }
+    const location = scope.find((entry) => entry.locationKey === navigationRequest.locationKey);
+    const dateGroup = location?.dates.find((entry) => entry.dateKey === navigationRequest.dateKey);
+    const session = dateGroup?.sessions.find((entry) => entry.id === navigationRequest.sessionId);
+    if (!location || !dateGroup || !session) return;
+    selection.locationKey = location.locationKey;
+    selection.dateKey = dateGroup.dateKey;
+    selection.sessionId = session.id;
+    navigationApplied = true;
+  }
+
+  function revealNavigationTarget(view) {
+    if (navigationRevealed || !navigationApplied || !isScopeChosen(view)) return;
+    const target = document.getElementById(navigationRequest.section);
+    if (!target) return;
+    navigationRevealed = true;
+    window.requestAnimationFrame?.(() => {
+      target.scrollIntoView?.({ behavior: "smooth", block: "start" });
+      target.setAttribute("tabindex", "-1");
+      target.focus?.({ preventScroll: true });
+    });
   }
 
   // The detail side is a reward for finishing the rail: a location, a date, and
@@ -1195,6 +1251,7 @@
 
   function renderDashboard() {
     const scope = buildScope();
+    applyNavigationRequest(scope);
     const view = resolveSelection(scope);
     ensureDayWeather(view.location, view.dateGroup);
     renderScopeRail(scope, view);
@@ -1209,6 +1266,7 @@
     renderTruckLocation(view);
     renderAttendance(view);
     renderPhotos(view);
+    revealNavigationTarget(view);
   }
 
   // An unanswered rail leaves no stale session's photographs or totals behind.

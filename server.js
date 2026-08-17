@@ -34,6 +34,9 @@ const publicFiles = new Set([
   "coordinates.html",
   "coordinates.css",
   "coordinates.js",
+  "ai-dashboard.html",
+  "ai-dashboard.css",
+  "ai-dashboard.js",
   "onboarding.html",
   "onboarding.css",
   "onboarding.js",
@@ -42,6 +45,9 @@ const publicFiles = new Set([
   "worker-photos.js",
   "sidebar.css",
   "sidebar.js",
+  "metrics.html",
+  "metrics.css",
+  "metrics.js",
   "weather-service.js",
   "manifest.json",
   "icons/stampnote.svg",
@@ -153,6 +159,7 @@ createServer((request, response) => {
 
   const apiRoutes = {
     "/api/triage": ["./api/_ai-triage.mjs", "handleTriageRequest"],
+    "/api/assistant": ["./api/_ai-assistant.mjs", "handleAssistantRequest"],
     "/api/telemetry": ["./api/_telemetry.mjs", "handleTelemetryRequest"],
     "/api/health": ["./api/_health.mjs", "handleHealthRequest"],
   };
