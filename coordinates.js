@@ -834,7 +834,7 @@
       yInput.disabled = true;
       saveStatus.textContent = options.clear ? "Clearing…" : "Saving…";
       saveStatus.dataset.state = "loading";
-
+      const traceId = telemetry?.createTraceId?.();
       try {
         const saved = await cloud.updateSessionTruckLocation(
           {
@@ -854,9 +854,22 @@
         saveStatus.dataset.state = "success";
         showComparison();
         updateMachineIndex();
+        telemetry?.event?.(
+          "coordinates.truck_location.updated",
+          { action: options.clear ? "clear" : "save", status: "success" },
+          { traceId },
+        );
       } catch (error) {
         saveStatus.textContent = describeError(error);
         saveStatus.dataset.state = "error";
+        telemetry?.event?.(
+          "coordinates.truck_location.failed",
+          {
+            errorCode: telemetry?.safeErrorCode?.(error, "truck_location_update_failed"),
+            status: "failed",
+          },
+          { traceId, immediate: true },
+        );
       } finally {
         saveButton.disabled = false;
         clearButton.disabled = session.truckLocation.x === null && session.truckLocation.y === null;
@@ -1130,8 +1143,13 @@
   async function loadCoordinates() {
     if (!signedInUser || loading) return;
     loading = true;
+    const now = () => (typeof performance !== "undefined" && performance?.now ? performance.now() : Date.now());
+    const startedAt = now();
+    const traceId = telemetry?.createTraceId?.();
     refreshButton.disabled = true;
     setStatus("Loading Geographic Surveillence…", "loading");
+    telemetry?.event?.("coordinates.load.started", { online: navigator.onLine !== false }, { traceId });
+
     try {
       const [photos, attendance, savedSessions] = await Promise.all([
         loadAllPhotos(),
@@ -1149,11 +1167,30 @@
         )}`,
         "success",
       );
+      telemetry?.event?.(
+        "coordinates.load.completed",
+        {
+          durationMs: now() - startedAt,
+          sessionCount: sessions.length,
+          flaggedCount: sessions.filter((s) => s.comparison?.flaggedForReview).length,
+          status: "success",
+        },
+        { traceId },
+      );
     } catch (error) {
       setStatus(describeError(error), "error");
       sessions = [];
       updateLocationFilter();
       render();
+      telemetry?.event?.(
+        "coordinates.load.failed",
+        {
+          durationMs: now() - startedAt,
+          errorCode: telemetry?.safeErrorCode?.(error, "coordinates_load_failed"),
+          status: "failed",
+        },
+        { traceId, immediate: true, dedupeMs: 60000 },
+      );
     } finally {
       loading = false;
       refreshButton.disabled = false;
@@ -1185,12 +1222,24 @@
       await cloud.signIn();
     } catch (error) {
       setStatus(describeError(error), "error");
+      telemetry?.event?.(
+        "cloud.auth.failed",
+        { errorCode: telemetry?.safeErrorCode?.(error, "auth_failed"), status: "failed" },
+        { immediate: true, dedupeMs: 60000 },
+      );
     } finally {
       signInButton.disabled = false;
     }
   });
   signOutButton.addEventListener("click", () => {
-    cloud.signOut().catch((error) => setStatus(describeError(error), "error"));
+    cloud.signOut().catch((error) => {
+      setStatus(describeError(error), "error");
+      telemetry?.event?.(
+        "cloud.auth.failed",
+        { errorCode: telemetry?.safeErrorCode?.(error, "auth_failed"), status: "failed" },
+        { immediate: true, dedupeMs: 60000 },
+      );
+    });
   });
   refreshButton.addEventListener("click", loadCoordinates);
   dateFilter.addEventListener("change", render);
@@ -1228,8 +1277,16 @@
     if (error) {
       setUser(null);
       setStatus(describeError(error), "error");
+      telemetry?.event?.(
+        "cloud.auth.failed",
+        { errorCode: telemetry?.safeErrorCode?.(error, "auth_failed"), status: "failed" },
+        { immediate: true, dedupeMs: 60000 },
+      );
       return;
     }
+    telemetry?.event?.("cloud.auth.state", {
+      status: user ? "signed_in" : "signed_out",
+    });
     setUser(user);
   });
 })(typeof globalThis !== "undefined" ? globalThis : this);

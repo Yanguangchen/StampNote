@@ -6,6 +6,7 @@
   const faceIdentity = window.StampNoteFaceIdentity;
   const frameScaling = window.StampNoteFrameScaler;
   const cameraFacing = window.StampNoteCameraFacing;
+  const telemetry = window.StampNoteObservability;
   const form = document.querySelector("#worker-form");
   const workerId = document.querySelector("#worker-id");
   const workerName = document.querySelector("#worker-name");
@@ -314,9 +315,18 @@
         try {
           await cloud.deleteWorkerFace(worker.workerId);
           setStatus(`${worker.workerId} face template deleted.`, "success");
+          telemetry?.event("onboarding.worker.deleted", { status: "success" });
           await refreshRoster();
         } catch (error) {
           setStatus(error?.message || "The face template could not be deleted.", "error");
+          telemetry?.event(
+            "onboarding.worker.delete_failed",
+            {
+              errorCode: telemetry?.safeErrorCode(error, "delete_worker_failed"),
+              status: "failed",
+            },
+            { immediate: true },
+          );
           remove.disabled = false;
         }
       });
@@ -506,7 +516,6 @@
       setStatus("The on-device face scanner has not loaded. Reload and try again.", "error");
       return;
     }
-
     workerId.value = normalizedId;
     workerName.value = normalizedName;
     samples = [];
@@ -522,10 +531,8 @@
     );
 
     try {
+      telemetry?.event("onboarding.scan.started", { facing, status: "ok" });
       stream = await navigator.mediaDevices.getUserMedia({
-        // Asked for rather than demanded: on a laptop with a single camera an
-        // exact `facingMode` fails outright, which would trade a working
-        // webcam for no scan at all.
         video: cameraFacing
           ? cameraFacing.videoConstraints(facing, {
               width: FACE_CAMERA_WIDTH,
@@ -568,6 +575,14 @@
       releaseScanner("idle");
       setStatus(error?.message || "The face scanner could not start.", "error");
       instruction.textContent = "Your face should fill the oval.";
+      telemetry?.event(
+        "onboarding.scan.failed",
+        {
+          errorCode: telemetry?.safeErrorCode(error, "scan_start_failed"),
+          status: "failed",
+        },
+        { immediate: true },
+      );
     }
   }
 
@@ -576,10 +591,6 @@
     if (!scanning && !saving) startScan();
   });
 
-  // Typing is what reveals the rest of the page, so this runs on every keystroke
-  // rather than on blur: the ID and the camera card should both be there by the
-  // time the eye leaves the name field. The button answers the first character;
-  // the ID needs a whole name and a look at what is taken, so it follows.
   workerName?.addEventListener("input", () => {
     refreshFlow();
     issueWorkerId();
@@ -597,7 +608,6 @@
   cancelButton?.addEventListener("click", () => {
     releaseScanner("idle");
     samples = [];
-    // A cancelled scan leaves nothing behind, portrait included.
     profileReady = false;
     updateProgress({ status: "no_face", samples: 0, total: ONBOARDING_SAMPLES });
     instruction.textContent = "Your face should fill the oval.";
@@ -611,6 +621,11 @@
       else await cloud.signIn();
     } catch (error) {
       setStatus(error?.message || "Google sign-in could not start.", "error");
+      telemetry?.event(
+        "cloud.auth.failed",
+        { errorCode: telemetry?.safeErrorCode(error, "auth_failed"), status: "failed" },
+        { immediate: true, dedupeMs: 60000 },
+      );
     } finally {
       authButton.disabled = false;
     }
@@ -620,9 +635,15 @@
     startButton.disabled = true;
     authButton.disabled = true;
     setStatus("Worker enrollment dependencies are unavailable. Reload the page.", "error");
+    telemetry?.event(
+      "client.error",
+      { errorCode: "onboarding_dependencies_missing" },
+      { immediate: true },
+    );
     return;
   }
 
+  telemetry?.configure({ surface: "onboarding" });
   startButton.disabled = true;
   refreshCameraFacing();
   cloud.subscribeAuth(async (nextUser, error) => {
@@ -638,14 +659,71 @@
       authLabel.textContent = signedIn ? "Sign out" : "Sign in with Google";
     }
     refreshFlow();
-    if (error) setStatus(error?.message || "Google sign-in is unavailable.", "error");
-    else if (user) setStatus("Enter the worker details, then start the face scan.");
-    else setStatus("Sign in, then enter the worker details.");
+    if (error) {
+      setStatus(error?.message || "Google sign-in is unavailable.", "error");
+      telemetry?.event(
+        "cloud.auth.failed",
+        { errorCode: telemetry?.safeErrorCode(error, "auth_failed"), status: "failed" },
+        { immediate: true, dedupeMs: 60000 },
+      );
+    } else if (user) {
+      setStatus("Enter the worker details, then start the face scan.");
+    } else {
+      setStatus("Sign in, then enter the worker details.");
+    }
+    telemetry?.event("cloud.auth.state", {
+      status: nextUser ? "signed_in" : "signed_out",
+    });
     if (!user && (scanning || saving)) releaseScanner("idle");
     await refreshRoster();
-    // Signing in over an already-typed name issues its ID; signing out clears it.
     await issueWorkerId();
   });
+
+  // Pre-cache static assets for instant loads and offline resilience.
+  const ONBOARDING_CACHE_NAME = "stampnote-onboarding-v1";
+  const ONBOARDING_STATIC_ASSETS = [
+    "onboarding.html",
+    "onboarding.css",
+    "onboarding.js",
+    "sidebar.css",
+    "sidebar.js",
+    "worker-face.js",
+    "camera-facing.js",
+    "frame-scaler.js",
+    "face-identity.js",
+    "pose-mapping.js",
+    "firebase.js",
+    "pose-model.js",
+    "observability.js",
+    "manifest.json",
+    "icons/stampnote.svg",
+    "vendor/fonts/outfit.css",
+    "vendor/fonts/outfit-latin.woff2",
+  ];
+
+  async function cacheStaticAssets() {
+    if ("caches" in window) {
+      try {
+        const cache = await window.caches.open(ONBOARDING_CACHE_NAME);
+        await Promise.allSettled(
+          ONBOARDING_STATIC_ASSETS.map((asset) =>
+            fetch(asset).then((res) => (res.ok ? cache.put(asset, res) : null)),
+          ),
+        );
+      } catch {
+        /* Storage blocked or offline caching failures are non-fatal. */
+      }
+    }
+    if ("serviceWorker" in navigator) {
+      try {
+        await navigator.serviceWorker.register("sw.js");
+      } catch {
+        /* Service worker registration failure is non-fatal. */
+      }
+    }
+  }
+
+  cacheStaticAssets();
 
   window.addEventListener("pagehide", () => releaseScanner("idle"));
 })();

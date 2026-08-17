@@ -247,3 +247,74 @@ test("browser errors are reported immediately without leaking their messages", a
   await new Promise((resolve) => setImmediate(resolve));
   assert.ok(harness.requests.length >= 2);
 });
+
+test("browser telemetry supports all 7 application surfaces and new domain events", async () => {
+  const surfaces = [
+    "capture",
+    "dashboard",
+    "ai-dashboard",
+    "coordinates",
+    "metrics",
+    "onboarding",
+    "worker-photos",
+  ];
+
+  for (const surface of surfaces) {
+    const harness = createBrowserHarness({ surface });
+    assert.ok(harness.api);
+    harness.api.configure({ surface });
+    harness.api.event("client.ready", { online: true });
+    assert.equal(await harness.api.flush(), true);
+    const body = JSON.parse(harness.requests[0].options.body);
+    assert.equal(body.surface, surface);
+  }
+
+  const harness = createBrowserHarness({ surface: "ai-dashboard" });
+  const { api } = harness;
+  const newEvents = [
+    ["capture.work.started", { attendanceCount: 5 }],
+    ["attendance.another.requested", { attendanceCount: 2 }],
+    ["dashboard.weather.failed", { errorCode: "weather_down" }],
+    ["dashboard.weather.save_failed", { errorCode: "save_down" }],
+    ["dashboard.sessions.failed", { errorCode: "sessions_down" }],
+    ["dashboard.session.truck_location.updated", { action: "save", status: "success" }],
+    ["dashboard.session.truck_location.failed", { errorCode: "truck_failed" }],
+    ["metrics.loaded", { checkInCount: 10, photoCount: 20 }],
+    ["metrics.load.completed", { checkInCount: 10, photoCount: 20, durationMs: 250 }],
+    ["metrics.load.failed", { errorCode: "metrics_failed" }],
+    ["coordinates.load.started", { online: true }],
+    ["coordinates.load.completed", { sessionCount: 5, flaggedCount: 1 }],
+    ["coordinates.load.failed", { errorCode: "coord_failed" }],
+    ["coordinates.truck_location.updated", { action: "clear", status: "success" }],
+    ["coordinates.truck_location.failed", { errorCode: "truck_failed" }],
+    ["ai.knowledge.loaded", { sessionCount: 4, factCount: 20 }],
+    ["ai.knowledge.failed", { errorCode: "kb_failed" }],
+    ["ai.assistant.query.started", { factCount: 5 }],
+    ["ai.assistant.query.completed", { factCount: 5, durationMs: 300 }],
+    ["ai.assistant.query.failed", { errorCode: "query_failed" }],
+    ["onboarding.scan.started", { facing: "user", status: "ok" }],
+    ["onboarding.scan.completed", { sampleCount: 7, status: "success" }],
+    ["onboarding.scan.failed", { errorCode: "scan_failed" }],
+    ["onboarding.worker.saved", { sampleCount: 7, status: "success" }],
+    ["onboarding.worker.save_failed", { errorCode: "save_failed" }],
+    ["onboarding.worker.deleted", { status: "success" }],
+    ["onboarding.worker.delete_failed", { errorCode: "delete_failed" }],
+    ["worker.photo.staged", { photoCount: 3, source: "camera", status: "success" }],
+    ["worker.photo.gps.failed", { errorCode: "gps_timeout" }],
+    ["worker.photo.sent", { photoCount: 3, uploadedCount: 3, failedCount: 0, durationMs: 400 }],
+    ["worker.photo.send_failed", { errorCode: "send_failed" }],
+    ["worker.photo.sync.completed", { uploadedCount: 2, failedCount: 0 }],
+    ["worker.photo.sync.failed", { errorCode: "sync_failed" }],
+  ];
+
+  for (const [name, fields] of newEvents) {
+    assert.equal(api.event(name, fields), true, `Failed to emit event: ${name}`);
+  }
+
+  assert.equal(await api.flush(), true);
+  assert.equal(await api.flush(), true);
+  const totalSent = harness.requests
+    .map((r) => JSON.parse(r.options.body).events.length)
+    .reduce((sum, count) => sum + count, 0);
+  assert.equal(totalSent, newEvents.length);
+});

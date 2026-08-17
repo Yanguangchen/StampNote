@@ -2,6 +2,13 @@
 
 StampNote is a browser-based image annotation toolkit for field photos, site visits, deliveries, inspections, and personal records. It watches through the device camera and photographs the scene on its own, stamping each image with its location and capture date/time. Photos can still be taken or picked by hand when that suits better.
 
+A left-hand page menu is shared by every surface and is grouped as:
+
+- **Worker workspace:** Recording and Worker photos.
+- **Admin workspace:** Worker onboarding, Geographic Surveillence, Operations AI, Photos & attendance, and Metrics.
+
+Sign-out is a door-and-arrow icon on every signed-in header. The account name already sits beside it. Where one control both signs in and out, the sign-in wording stays visible until an account is connected; Recording keeps the one-word **Account** label and swaps the cloud glyph for the door.
+
 ## Autonomous capture
 
 Press start once and the page takes over:
@@ -109,7 +116,9 @@ The fallback is rougher than the model at everything: it needs some visible skin
 
 Captures first go to IndexedDB on the device. After Gemini reviews a batch, each reviewed photo is saved directly in Cloud Firestore as a compact 512-pixel JPEG together with its searchable metadata. A failed or signed-out upload stays in the local queue and retries after Google sign-in; the same deterministic photo document ID is used on every attempt, so a retry cannot create a duplicate. Where IndexedDB is unavailable — private browsing, older WebViews — captures still work for the session and say so on screen.
 
-Photo documents remain under `users/{uid}/photos/{photoId}`, worker templates live in the team-wide `workers/{workerId}` roster, and matched check-ins live under `attendanceDays/{date}/entries/{eventId}`. A recording session writes one attendance event per recognized worker: the opening worker is recorded after the two-view check, and additional enrolled workers are recorded after two live face matches while capture continues. The same worker is never duplicated within one camera session. Firestore requires Google authentication but, by explicit project policy, any authenticated project user can read or write every document. Anonymous visitors remain blocked. No public image URL exists: the authenticated dashboard turns Firestore bytes into a temporary in-browser image URL. Open `admin.html` to browse photos alongside recent attendance grouped by location and then date, and open `onboarding.html` to enroll, replace, or delete worker templates.
+Photo documents remain under `users/{uid}/photos/{photoId}`, worker templates live in the team-wide `workers/{workerId}` roster, and matched check-ins live under `attendanceDays/{date}/entries/{eventId}`. A recording session writes one attendance event per recognized worker: the opening worker is recorded after the two-view check, and additional enrolled workers are recorded after two live face matches while capture continues. The same worker is never duplicated within one camera session. Firestore requires Google authentication but, by explicit project policy, any authenticated project user can read or write every document. Anonymous visitors remain blocked. No public image URL exists: the authenticated dashboard turns Firestore bytes into a temporary in-browser image URL.
+
+Open **Photos & attendance** (`admin.html`) to browse photos alongside recent attendance grouped by location and then date. Open **Worker onboarding** (`onboarding.html`) to enroll, replace, or delete worker templates; the worker ID is issued from the typed name rather than entered by hand. **Worker photos** (`worker-photos.html`) is the field path that does not start the watch: take one photo or pick several, stamp a fresh GPS fix and the day's weather, run Gemini sanitization, then save locally and sync when signed in. **Metrics** (`metrics.html`) plots three independent daily series — attendance taken, flags raised, and sessions created — over the last 7 or 30 days. **Operations AI** (`ai-dashboard.html`) answers questions about those loaded records.
 
 The intended RPA truck-coordinate workflow matches the active session to the nearest truck by GPS
 proximity; it does not infer the session address from the truck coordinate. The conservative match,
@@ -144,7 +153,13 @@ The screen is held awake while the watch runs. A backgrounded tab has its camera
 
 ## Stamping a photo you already have
 
-The gallery picker is a native HTML file input, so the browser keeps the chosen photos on the device. It stamps images that already exist, and it is what remains where a live camera cannot be opened at all.
+The gallery picker on Recording is a native HTML file input, so the browser keeps the chosen photos on the device. It stamps images that already exist, and it is what remains where a live camera cannot be opened at all. Worker photos is the dedicated field page for the same job: two buttons, a stamp, Gemini sanitization, then Send.
+
+## Operations AI
+
+Operations AI is a read-only assistant for the signed-in workspace. The browser loads sessions, attendance, weather, GPS/truck comparisons, and Metrics series from Firestore, selects up to 24 retrieved facts for the current question, and POSTs them to `/api/assistant` with a Firebase ID token. Gemini **3.1 Flash-Lite** may use only those facts. It cites them as `[S1]`…`[S24]`, must not invent workers, dates, counts, URLs, or causes, and must not change data. Verified links, coordinate maps, and Metrics graphs are rendered by the page from the loaded records, not from model-authored markup.
+
+A local Live Server origin (`http://127.0.0.1:5500` or `http://localhost:5500`) is allowed to call the deployed assistant. Same-site requests use `/api/assistant` on the current host. The endpoint rejects missing or invalid auth, oversized bodies, extra fields, and cross-site POSTs.
 
 ## Run locally
 
@@ -163,7 +178,7 @@ Start the dependency-light local server and open `http://127.0.0.1:8080`:
 npm start
 ```
 
-It serves the public files and the same three API handlers exposed on Vercel: `/api/triage`, `/api/telemetry`, and `/api/health`. It deliberately refuses `.env.local`, package metadata, and internal API modules.
+It serves the public files and the same four API handlers exposed on Vercel: `/api/triage`, `/api/assistant`, `/api/telemetry`, and `/api/health`. It deliberately refuses `.env.local`, package metadata, and internal API modules.
 
 To use the Vercel development environment instead, first update the CLI—the currently installed 51.3.0 release is behind the current 58.11.0 release—then link and pull the project configuration:
 
@@ -197,13 +212,13 @@ The Firebase browser configuration is public by design and already points at `st
    npx firebase-tools deploy --only auth,firestore:rules,firestore:indexes,database --project stampnote-eedcd
    ```
 
-5. Open the capture page, sign in, review a photo batch, and confirm that `/admin.html` shows the compact copies for the same account.
+5. Open Recording, sign in, review a photo batch, and confirm that Photos & attendance shows the compact copies for the same account. Operations AI and Metrics read the same signed-in workspace.
 
 The Firestore and Realtime Database rules allow any authenticated project user to read and write project data; anonymous requests are denied. The checked-in Firestore index enables the dashboard's cross-date attendance query. Realtime Database is configured but the current application still stores photos, attendance, and worker templates in Firestore. The Google sign-in allowlist is therefore the security boundary. Analytics initialization is best-effort: a blocker may disable it without breaking Authentication or Firestore.
 
 Use the same Google account on the capture page and `/admin.html`. Each account sees only its own uploaded photos. See the [Firebase CLI reference](https://firebase.google.com/docs/cli) and [Google provider configuration guide](https://firebase.google.com/docs/auth/configure-providers-cli) for the upstream command contract.
 
-Before exposing the app publicly, configure Google API quotas or billing alerts and add a Vercel Firewall rate-limit rule for `POST /api/triage`. The photo library is authenticated, but the Gemini endpoint still relies on same-site checks and request validation rather than Firebase identity, so the firewall remains the cost boundary for direct scripted traffic.
+Before exposing the app publicly, configure Google API quotas or billing alerts and add Vercel Firewall rate-limit rules for `POST /api/triage` and `POST /api/assistant`. Photo review still relies on same-site checks and request validation rather than Firebase identity, so the firewall remains the cost boundary for direct scripted triage traffic. Operations questions require a verified Firebase ID token in addition to those checks.
 
 Using localhost is important because browsers restrict precise geolocation and camera access to secure contexts. MediaPipe remains committed under `vendor/`; the installed server dependencies provide the AI SDK, structured-output validation and local environment loading.
 
@@ -218,7 +233,7 @@ For the best camera experience, open the page on a mobile device. The autonomous
 
 `manifest.json` requests the `fullscreen` display mode with `standalone` as the compatibility fallback. From the deployed HTTPS site—or from `localhost`/`127.0.0.1` during development—use the browser's **Install app** or **Add to Home Screen** action, then launch StampNote from the installed icon. Opening the ordinary URL in a browser tab still shows browser chrome; the manifest display mode applies to the installed app window.
 
-Chromium receives 192 px and 512 px maskable PNG icons. iOS receives a 180 px Apple touch icon plus the standalone and translucent-status-bar metadata, so a Home Screen launch omits Safari's URL and toolbar controls. No service worker or offline cache is installed: camera capture and the on-device store continue to work with assets already loaded, but a fresh offline launch is not promised.
+Chromium receives 192 px and 512 px maskable PNG icons. iOS receives a 180 px Apple touch icon plus the standalone and translucent-status-bar metadata, so a Home Screen launch omits Safari's URL and toolbar controls. Worker onboarding registers `sw.js` to cache its static assets for a later visit. Recording still does not promise a fresh offline launch: camera capture and the on-device store continue to work with assets already loaded.
 
 ## Automated tests
 
@@ -229,7 +244,7 @@ npm test
 npm run test:coverage
 ```
 
-The suite contains more than 200 focused tests. It runs the browser entrypoints in controlled VM environments, starts the actual local HTTP server for boundary checks, and covers Firebase initialization/authentication/Firestore behavior, IndexedDB CRUD and fallbacks, the authenticated dashboard, observability and health endpoints, Gemini request validation, cloud synchronization, manual stamping/share, AI review, and camera start/stop behavior.
+The suite contains more than 400 focused tests. It runs the browser entrypoints in controlled VM environments, starts the actual local HTTP server for boundary checks, and covers Firebase initialization/authentication/Firestore behavior, IndexedDB CRUD and fallbacks, the authenticated dashboard, Geographic Surveillence, Metrics, Operations AI, Worker photos, observability and health endpoints, Gemini review and assistant validation, cloud synchronization, manual stamping/share, AI review, and camera start/stop behavior.
 
 The capture stack has focused tests for landmark mapping, anonymous session identity, aligned face embeddings, occluded joints, vehicle classification, synthetic fallback-detection scenes, tracker hysteresis, both capture cadences, gesture captures, local triage, storage pruning, and the controller driving a two-hour watch on a fake clock.
 
@@ -239,18 +254,19 @@ The MediaPipe and face-recognition weight files themselves are not inference-tes
 
 ## Observability
 
-The capture page and dashboard emit privacy-safe operational events for camera startup, tracking recovery, Gemini review, Google sign-in, Firestore sync, dashboard loading, browser errors, and basic performance. The Vercel functions add structured request logs and correlation headers, while `/api/health` reports whether the server and Gemini configuration are ready. Telemetry is limited to event names, anonymous per-page session and trace IDs, counts, durations, fixed states, and normalized error codes; it never includes image data, photo IDs, addresses, account identity, model reasons, or raw error messages.
+The capture page and dashboard emit privacy-safe operational events for camera startup, tracking recovery, Gemini review, Operations AI questions, Google sign-in, Firestore sync, dashboard loading, browser errors, and basic performance. The Vercel functions add structured request logs and correlation headers, while `/api/health` reports whether the server and Gemini configuration are ready. Telemetry is limited to event names, anonymous per-page session and trace IDs, counts, durations, fixed states, and normalized error codes; it never includes image data, photo IDs, addresses, account identity, model reasons, or raw error messages.
 
 See [OBSERVABILITY.md](OBSERVABILITY.md) for the event catalog, production log commands, privacy contract, health check, and failure runbooks.
 
 ## Workflow
 
-1. Open worker onboarding, sign in with Google, enter the worker ID and name, then hold close for seven clear face views over about six seconds. Repeat for the worker roster.
-2. Return to recording and press record. The opening scan matches the face against Firestore before the activity begins; continue without a worker ID remains available.
+1. Open the page menu and go to Worker onboarding. Sign in with Google, enter the worker name — the ID is issued from it — then hold close for seven clear face views over about six seconds. Repeat for the worker roster.
+2. Return to Recording and press record. The opening scan matches the face against Firestore before the activity begins; continue without a worker ID remains available.
 3. The watch photographs the scene on its own — every 30 seconds with a person in frame, every 120 seconds without. Public boxes state the enrolled worker ID, or `TRACKING WORKER` until a roster match is available. Raise both hands above your head to take one there and then.
 4. The street address fills in automatically where the browser allows it; otherwise type it in, and later captures pick it up.
 5. Photos are stamped and stored on the device as they are taken. Allow Gemini review; every eight scheduled photos are then reviewed automatically and all eight compact copies sync to Firestore. Upload failures stay queued locally.
-6. Open the dashboard to browse photos by location and date, filter the recoverable AI review bin, and review attendance grouped by location and date beside the photos.
+6. For a site photo without starting the watch, open Worker photos, take or pick images, then Send.
+7. Open Photos & attendance to browse photos by location and date, filter the recoverable AI review bin, and review attendance grouped by location and date beside the photos. Geographic Surveillence compares GPS readings with truck X/Y. Metrics shows the 7- or 30-day counts. Operations AI answers questions from the records already loaded for the signed-in account.
 
 ## Project files
 
@@ -273,21 +289,28 @@ See [OBSERVABILITY.md](OBSERVABILITY.md) for the event catalog, production log c
 - `person-tracker.js` — stable internal tracking with enrolled worker IDs on public boxes
 - `api/_ai-triage.mjs` — validates batches, calls Gemini through Google AI Studio, and applies the conservative discard threshold
 - `api/triage.mjs` — Vercel Function exposing the server-only AI review endpoint
+- `api/_ai-assistant.mjs` — validates grounded operations questions, verifies the Firebase ID token, and calls Gemini through Google AI Studio
+- `api/assistant.mjs` — Vercel Function exposing the server-only Operations AI endpoint
 - `api/_observability.mjs` — correlation IDs, safe structured logs and response timing
 - `api/_telemetry.mjs`, `api/telemetry.mjs` — strict privacy-safe browser event intake
 - `api/_health.mjs`, `api/health.mjs` — deployment and Gemini configuration health check
 - `observability.js` — bounded browser telemetry, error capture and performance signals
 - `auto-capture.js` — the watch loop joining tracker, schedule and store
 - `firebase.js` — Google Authentication plus Firestore photo, attendance, and worker-template access
+- `sidebar.js`, `sidebar.css` — shared page menu mounted on every surface
 - `admin.html`, `admin.css`, `admin.js` — combined authenticated photo and attendance dashboard
 - `coordinates.html`, `coordinates.css`, `coordinates.js` — Geographic Surveillence GPS comparison and truck-coordinate entry workspace
+- `ai-dashboard.html`, `ai-dashboard.css`, `ai-dashboard.js` — Operations AI conversation over loaded workspace records
+- `metrics.html`, `metrics.css`, `metrics.js` — 7- and 30-day attendance, flag and session counts
 - `onboarding.html`, `onboarding.css`, `onboarding.js` — signed-in worker face enrollment and roster management
+- `worker-photos.html`, `worker-photos.css`, `worker-photos.js` — stamped field photos with Gemini sanitization and optional cloud sync
 - `firebase.json`, `.firebaserc` — Firebase provider/rules deployment configuration and project alias
 - `firestore.rules` — authenticated-team-wide Firebase access policy
 - `database.rules.json` — authenticated-team-wide Realtime Database access policy and attendance indexes
 - `app.js` — interface behavior, camera lifecycle, cloud queue and session caching
 - `server.js` — local static and AI-function development server
 - `vercel.json` — Vercel static output and clean-URL configuration
+- `sw.js` — caches Worker onboarding's static assets
 - `manifest.json`, `icons/` — full-screen PWA launch metadata and install icons
 - `tests/` — automated front-end, capture-stack and AI-boundary tests
 - `package.json` — commands, runtime requirement and dependencies

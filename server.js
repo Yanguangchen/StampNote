@@ -50,6 +50,7 @@ const publicFiles = new Set([
   "metrics.js",
   "weather-service.js",
   "manifest.json",
+  "sw.js",
   "icons/stampnote.svg",
   "icons/stampnote-180.png",
   "icons/stampnote-192.png",

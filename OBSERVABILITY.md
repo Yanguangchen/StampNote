@@ -1,11 +1,12 @@
 # StampNote observability
 
-StampNote emits small, structured operational events to Vercel Runtime Logs. The purpose is to answer four questions without collecting photo or account content:
+StampNote emits small, structured operational events to Vercel Runtime Logs. The purpose is to answer five questions without collecting photo or account content:
 
 1. Is the deployed server configured and responding?
 2. Are Gemini reviews completing, failing, or being rejected before the model call?
-3. Are reviewed photos reaching Firestore?
-4. Is the camera/tracker/dashboard healthy in the browser?
+3. Are Operations AI questions completing, failing, or being rejected before the model call?
+4. Are reviewed photos reaching Firestore?
+5. Is the camera/tracker/dashboard healthy in the browser?
 
 ## Privacy contract
 
@@ -22,20 +23,25 @@ The browser sanitizer drops every field that is not on its fixed allowlist. The 
 
 ## Signals
 
-| Area | Success events | Failure events | Useful fields |
-| --- | --- | --- | --- |
-| HTTP functions | `http.request.completed` | status `4xx` or `5xx` | `route`, `statusCode`, `durationMs`, `requestId`, `traceId` |
-| Gemini | `ai.review.completed` | `ai.review.failed` | `batchSize`, `reviewedCount`, `flaggedCount`, `category`, `errorCode`, `httpStatus` |
-| Firestore sync | `cloud.sync.completed` | `cloud.sync.failed` | `uploadedCount`, `queuedCount`, `failedCount`, `durationMs`, `operationTraceId` |
-| Google sign-in | `cloud.auth.state` | `cloud.auth.failed` | fixed `status`, `errorCode` |
-| Camera and tracking | `capture.monitor.started`, `tracking.recovered` | `capture.monitor.failed`, `tracking.failed` | `errorCode`, `durationMs` |
-| Camera choice | `capture.camera.facing` | `capture.camera.facing.failed` | `facing`, `errorCode` |
-| Dashboard | `dashboard.load.completed`, `attendance.load.completed` | `dashboard.load.failed`, `dashboard.image.failed`, `attendance.load.failed` | `photoCount`, `workerCount`, `checkInCount`, `durationMs`, `errorCode` |
-| Dashboard deletion | `dashboard.location.deleted`, `dashboard.date.deleted`, `dashboard.session.deleted` | `dashboard.location.delete_failed`, `dashboard.date.delete_failed`, `dashboard.session.delete_failed` | `checkInCount`, `photoCount`, fixed `status`, `errorCode` |
-| Attendance sync | `attendance.saved` | `attendance.save.failed` | fixed `status`, `errorCode` |
-| Browser performance | `web.vital`, `client.ready` | `client.error` | `metricName`, `metricValue`, `metricRating`, `online` |
+| Area | Surfaces | Success events | Failure events | Useful fields |
+| --- | --- | --- | --- | --- |
+| HTTP functions | Server | `http.request.completed` | status `4xx` or `5xx` | `route`, `statusCode`, `durationMs`, `requestId`, `traceId` |
+| Gemini review | `capture`, `worker-photos` | `ai.review.completed` | `ai.review.failed` | `batchSize`, `reviewedCount`, `flaggedCount`, `category`, `errorCode`, `httpStatus` |
+| Operations AI | `ai-dashboard` | `ai.assistant.started`, `ai.assistant.completed`, `ai.assistant.query.completed`, `ai.knowledge.loaded` | `ai.assistant.failed`, `ai.assistant.query.failed`, `ai.knowledge.failed` | `model`, `factCount`, `sessionCount`, `durationMs`, `category`, `errorCode`, `httpStatus` |
+| Firestore sync | `capture`, `worker-photos` | `cloud.sync.completed`, `worker.photo.sync.completed` | `cloud.sync.failed`, `worker.photo.sync.failed` | `uploadedCount`, `queuedCount`, `failedCount`, `durationMs`, `operationTraceId` |
+| Google sign-in | All surfaces | `cloud.auth.state` | `cloud.auth.failed` | fixed `status`, `errorCode` |
+| Camera and tracking | `capture` | `capture.monitor.started`, `tracking.recovered` | `capture.monitor.failed`, `tracking.failed` | `errorCode`, `durationMs` |
+| Camera choice | `capture`, `onboarding` | `capture.camera.facing` | `capture.camera.facing.failed` | `facing`, `errorCode` |
+| Face onboarding | `onboarding` | `onboarding.scan.started`, `onboarding.scan.completed`, `onboarding.worker.saved`, `onboarding.worker.deleted` | `onboarding.scan.failed`, `onboarding.worker.save_failed`, `onboarding.worker.delete_failed` | `sampleCount`, `facing`, fixed `status`, `errorCode` |
+| Worker photos | `worker-photos` | `worker.photo.staged`, `worker.photo.sent` | `worker.photo.gps.failed`, `worker.photo.send_failed` | `photoCount`, `uploadedCount`, `failedCount`, `source`, `durationMs`, `errorCode` |
+| Coordinates / Surveillance | `coordinates` | `coordinates.load.completed`, `coordinates.truck_location.updated` | `coordinates.load.failed`, `coordinates.truck_location.failed` | `sessionCount`, `flaggedCount`, `action`, `durationMs`, `errorCode` |
+| Metrics dashboard | `metrics` | `metrics.load.completed`, `metrics.loaded` | `metrics.load.failed` | `checkInCount`, `photoCount`, `durationMs`, `errorCode` |
+| Admin dashboard | `dashboard` | `dashboard.load.completed`, `attendance.load.completed`, `dashboard.session.truck_location.updated` | `dashboard.load.failed`, `dashboard.image.failed`, `dashboard.weather.failed`, `dashboard.weather.save_failed`, `dashboard.sessions.failed`, `dashboard.session.truck_location.failed`, `attendance.load.failed` | `photoCount`, `workerCount`, `checkInCount`, `durationMs`, `action`, `errorCode` |
+| Admin deletion | `dashboard` | `dashboard.location.deleted`, `dashboard.date.deleted`, `dashboard.session.deleted` | `dashboard.location.delete_failed`, `dashboard.date.delete_failed`, `dashboard.session.delete_failed` | `checkInCount`, `photoCount`, fixed `status`, `errorCode` |
+| Attendance sync | `capture` | `attendance.saved`, `capture.work.started`, `attendance.another.requested` | `attendance.save.failed` | `attendanceCount`, fixed `status`, `errorCode` |
+| Browser performance | All surfaces | `web.vital`, `client.ready` | `client.error` | `metricName`, `metricValue`, `metricRating`, `online` |
 
-Browser operation events may carry a `traceId`. The telemetry intake writes that value to Runtime Logs as `operationTraceId`, keeping it distinct from the telemetry batch's own request trace. Gemini requests send the operation ID as `X-StampNote-Trace-Id`, so one review can be followed from `ai.review.started` to the server-side Gemini result. Every function response includes `X-Request-Id`, `X-StampNote-Trace-Id`, and `Server-Timing`.
+Browser operation events may carry a `traceId`. The telemetry intake writes that value to Runtime Logs as `operationTraceId`, keeping it distinct from the telemetry batch's own request trace. Gemini review and Operations AI requests send the operation ID as `X-StampNote-Trace-Id`, so one call can be followed from the browser start event to the server-side Gemini result. Every function response includes `X-Request-Id`, `X-StampNote-Trace-Id`, and `Server-Timing`.
 
 ## Health check
 
@@ -62,6 +68,7 @@ Useful filters:
 
 ```sh
 vercel logs --environment production --since 1h --query 'ai.review.failed' --expand
+vercel logs --environment production --since 1h --query 'ai.assistant.failed' --expand
 vercel logs --environment production --since 1h --query 'cloud.sync.failed' --expand
 vercel logs --environment production --since 1h --query 'tracking.failed' --expand
 vercel logs --environment production --since 1h --level error --expand
@@ -82,6 +89,18 @@ Copy an `operationTraceId`, `traceId`, or `requestId` from a failure and use it 
    - `model_unavailable` / 503: verify the configured Gemini model.
    - `request_aborted` or `upstream_failure` / 502: retry and check whether failures repeat across sessions.
 4. Confirm `/api/health` returns 200. Unreviewed local originals remain untouched after any failure.
+
+### Operations AI does not answer
+
+1. Find the `/api/assistant` `http.request.completed` event. Copy its `traceId` or `requestId`.
+2. Use `outcome` and `statusCode`:
+   - `rejected` / 401: the Firebase ID token was missing or failed Identity Toolkit lookup. Sign in again.
+   - `rejected` / 400: the grounded payload did not match the schema (facts, history, or declared scope).
+   - `rejected` / 403 or 415: a cross-site POST or a non-JSON body was refused.
+   - `quota_exhausted` / 429: inspect Google AI Studio quota or billing.
+   - `configuration` / 503: repair `GOOGLE_GENERATIVE_AI_API_KEY` in Vercel and redeploy.
+   - `request_aborted` or `upstream_failure` / 502: retry and check whether failures repeat across sessions.
+3. Confirm `/api/health` returns 200. The page keeps the loaded records; a failed question does not write to Firestore.
 
 ### Reviewed photos do not appear in Firestore
 
@@ -113,4 +132,4 @@ npm start
 curl -i http://127.0.0.1:8080/api/health
 ```
 
-A local POST to `/api/telemetry` should return 202 only when its JSON matches the strict schema. Tests cover browser field stripping, server rejection of private extra fields, bounded retries, request correlation, safe error classification, CORS/preflight behavior, healthy and degraded states, and all three Vercel route adapters. See the [Vercel logs CLI reference](https://vercel.com/docs/cli/logs) for current filtering options.
+A local POST to `/api/telemetry` should return 202 only when its JSON matches the strict schema. Tests cover browser field stripping, server rejection of private extra fields, bounded retries, request correlation, safe error classification, CORS/preflight behavior, healthy and degraded states, and all four Vercel route adapters. See the [Vercel logs CLI reference](https://vercel.com/docs/cli/logs) for current filtering options.

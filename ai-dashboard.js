@@ -716,6 +716,7 @@
   const data = globalScope.StampNoteCloudData;
   const coordinates = globalScope.StampNoteCoordinates;
   const metricsApi = globalScope.StampNoteMetrics;
+  const telemetry = globalScope.StampNoteObservability;
   const signInButton = document.querySelector("#ai-sign-in");
   const signOutButton = document.querySelector("#ai-sign-out");
   const authGate = document.querySelector("#ai-auth-gate");
@@ -734,6 +735,8 @@
   const themeIcon = document.querySelector("#theme-toggle-icon");
   const themeLabel = document.querySelector("#theme-toggle-label");
   const assistantEndpoint = resolveAssistantEndpoint(globalScope.location);
+
+  telemetry?.configure({ surface: "ai-dashboard" });
 
   let signedInUser = null;
   let knowledge = null;
@@ -1133,6 +1136,9 @@
   async function loadKnowledge() {
     if (!signedInUser || loading) return;
     loading = true;
+    const now = () => (typeof performance !== "undefined" && performance?.now ? performance.now() : Date.now());
+    const startedAt = now();
+    const traceId = telemetry?.createTraceId?.();
     knowledge = null;
     setBusy();
     setStatus("Building the operations knowledge index…", "loading");
@@ -1151,8 +1157,27 @@
         `Ready · ${knowledge.facts.length} searchable operational facts indexed in this browser.`,
         "success",
       );
+      telemetry?.event?.(
+        "ai.knowledge.loaded",
+        {
+          durationMs: now() - startedAt,
+          sessionCount: knowledge.metrics.sessionCount,
+          factCount: knowledge.facts.length,
+          status: "success",
+        },
+        { traceId },
+      );
     } catch (error) {
       setStatus(describeError(error), "error");
+      telemetry?.event?.(
+        "ai.knowledge.failed",
+        {
+          durationMs: now() - startedAt,
+          errorCode: telemetry?.safeErrorCode?.(error, "knowledge_build_failed"),
+          status: "failed",
+        },
+        { traceId, immediate: true, dedupeMs: 60000 },
+      );
     } finally {
       loading = false;
       setBusy();
@@ -1162,6 +1187,9 @@
   async function askQuestion(question) {
     const cleaned = String(question || "").trim();
     if (!cleaned || !knowledge || asking || !signedInUser) return;
+    const now = () => (typeof performance !== "undefined" && performance?.now ? performance.now() : Date.now());
+    const startedAt = now();
+    const traceId = telemetry?.createTraceId?.();
     const request = createAssistantPayload(cleaned, history, knowledge);
     addMessage("user", cleaned);
     const pending = addMessage("assistant", "Reviewing the relevant records…");
@@ -1169,6 +1197,11 @@
     asking = true;
     prompt.value = "";
     setBusy();
+    telemetry?.event?.(
+      "ai.assistant.query.started",
+      { factCount: request.sources.length },
+      { traceId },
+    );
     try {
       const token = await signedInUser.getIdToken();
       const response = await globalScope.fetch(assistantEndpoint, {
@@ -1176,6 +1209,7 @@
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",
+          "X-StampNote-Trace-Id": traceId,
         },
         body: JSON.stringify(request.payload),
       });
@@ -1205,9 +1239,27 @@
         { role: "assistant", content: String(result.answer).slice(0, 2_400) },
       );
       if (history.length > 8) history.splice(0, history.length - 8);
+      telemetry?.event?.(
+        "ai.assistant.query.completed",
+        {
+          durationMs: now() - startedAt,
+          factCount: request.sources.length,
+          status: "success",
+        },
+        { traceId },
+      );
     } catch (error) {
       pending.body.textContent = describeError(error);
       pending.article.dataset.state = "error";
+      telemetry?.event?.(
+        "ai.assistant.query.failed",
+        {
+          durationMs: now() - startedAt,
+          errorCode: telemetry?.safeErrorCode?.(error, "assistant_query_failed"),
+          status: "failed",
+        },
+        { traceId, immediate: true, dedupeMs: 60000 },
+      );
     } finally {
       asking = false;
       setBusy();
@@ -1249,6 +1301,7 @@
       /* The selected theme still applies for this visit. */
     }
     applyTheme(next);
+    telemetry?.event("dashboard.theme.changed", { theme: next });
   }
 
   const Recognition = globalScope.SpeechRecognition || globalScope.webkitSpeechRecognition;
@@ -1303,8 +1356,30 @@
     else recognition.start();
   });
   refreshButton.addEventListener("click", loadKnowledge);
-  signInButton.addEventListener("click", () => cloud.signIn().catch((error) => setStatus(describeError(error), "error")));
-  signOutButton.addEventListener("click", () => cloud.signOut().catch((error) => setStatus(describeError(error), "error")));
+  signInButton.addEventListener("click", () =>
+    cloud
+      .signIn()
+      .catch((error) => {
+        setStatus(describeError(error), "error");
+        telemetry?.event(
+          "cloud.auth.failed",
+          { errorCode: telemetry?.safeErrorCode(error, "auth_failed"), status: "failed" },
+          { immediate: true, dedupeMs: 60000 },
+        );
+      }),
+  );
+  signOutButton.addEventListener("click", () =>
+    cloud
+      .signOut()
+      .catch((error) => {
+        setStatus(describeError(error), "error");
+        telemetry?.event(
+          "cloud.auth.failed",
+          { errorCode: telemetry?.safeErrorCode(error, "auth_failed"), status: "failed" },
+          { immediate: true, dedupeMs: 60000 },
+        );
+      }),
+  );
   themeToggle?.addEventListener("click", toggleTheme);
   document.querySelectorAll("[data-ai-question]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -1321,6 +1396,11 @@
   if (!cloud || !data || !coordinates) {
     signInButton.disabled = true;
     setStatus("The operations data client could not initialize.", "error");
+    telemetry?.event(
+      "client.error",
+      { errorCode: "cloud_dependencies_missing" },
+      { immediate: true },
+    );
     return;
   }
   cloud.subscribeAuth((user, error) => {
@@ -1329,6 +1409,11 @@
       authGate.hidden = false;
       workspace.hidden = true;
       setStatus(describeError(error), "error");
+      telemetry?.event(
+        "cloud.auth.failed",
+        { errorCode: telemetry?.safeErrorCode(error, "auth_failed"), status: "failed" },
+        { immediate: true, dedupeMs: 60000 },
+      );
       return;
     }
     signedInUser = user || null;
@@ -1336,6 +1421,9 @@
     workspace.hidden = !user;
     signOutButton.hidden = !user;
     accountName.textContent = user?.email || "";
+    telemetry?.event("cloud.auth.state", {
+      status: user ? "signed_in" : "signed_out",
+    });
     if (user) loadKnowledge();
     else {
       knowledge = null;

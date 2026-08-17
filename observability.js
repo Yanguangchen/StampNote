@@ -1,26 +1,50 @@
 (function initializeStampNoteObservability(globalScope) {
   "use strict";
 
+  const SURFACES = new Set([
+    "capture",
+    "dashboard",
+    "ai-dashboard",
+    "coordinates",
+    "metrics",
+    "onboarding",
+    "worker-photos",
+  ]);
   const EVENT_NAMES = new Set([
     "client.ready",
     "client.error",
     "web.vital",
+    "health.checked",
     "capture.store.ready",
     "capture.monitor.started",
     "capture.monitor.failed",
     "capture.camera.facing",
     "capture.camera.facing.failed",
     "capture.saved",
+    "capture.work.started",
     "face.match.completed",
     "face.match.failed",
     "face.match.skipped",
     "attendance.saved",
     "attendance.save.failed",
+    "attendance.another.requested",
+    "attendance.load.completed",
+    "attendance.load.failed",
     "tracking.failed",
     "tracking.recovered",
+    "session.gps.saved",
+    "session.gps.save_failed",
     "ai.review.started",
     "ai.review.completed",
     "ai.review.failed",
+    "ai.assistant.started",
+    "ai.assistant.completed",
+    "ai.assistant.failed",
+    "ai.assistant.query.started",
+    "ai.assistant.query.completed",
+    "ai.assistant.query.failed",
+    "ai.knowledge.loaded",
+    "ai.knowledge.failed",
     "cloud.auth.state",
     "cloud.auth.failed",
     "cloud.sync.started",
@@ -30,6 +54,9 @@
     "dashboard.load.completed",
     "dashboard.load.failed",
     "dashboard.image.failed",
+    "dashboard.weather.failed",
+    "dashboard.weather.save_failed",
+    "dashboard.sessions.failed",
     "dashboard.location.deleted",
     "dashboard.location.delete_failed",
     "dashboard.date.deleted",
@@ -38,12 +65,30 @@
     "dashboard.session.rename_failed",
     "dashboard.session.deleted",
     "dashboard.session.delete_failed",
+    "dashboard.session.truck_location.updated",
+    "dashboard.session.truck_location.failed",
     "dashboard.theme.changed",
-    "session.gps.saved",
-    "session.gps.save_failed",
-    "attendance.load.completed",
-    "attendance.load.failed",
-    "health.checked",
+    "metrics.loaded",
+    "metrics.load.completed",
+    "metrics.load.failed",
+    "coordinates.load.started",
+    "coordinates.load.completed",
+    "coordinates.load.failed",
+    "coordinates.truck_location.updated",
+    "coordinates.truck_location.failed",
+    "onboarding.scan.started",
+    "onboarding.scan.completed",
+    "onboarding.scan.failed",
+    "onboarding.worker.saved",
+    "onboarding.worker.save_failed",
+    "onboarding.worker.deleted",
+    "onboarding.worker.delete_failed",
+    "worker.photo.staged",
+    "worker.photo.gps.failed",
+    "worker.photo.sent",
+    "worker.photo.send_failed",
+    "worker.photo.sync.completed",
+    "worker.photo.sync.failed",
   ]);
   const NUMBER_FIELDS = new Set([
     "durationMs",
@@ -63,16 +108,23 @@
     "checkInCount",
     "workerCount",
     "accuracyMeters",
+    "attendanceCount",
+    "sessionCount",
+    "flaggedSessionCount",
+    "factCount",
+    "score",
   ]);
-  const BOOLEAN_FIELDS = new Set(["automatic", "online", "persistent"]);
+  const BOOLEAN_FIELDS = new Set(["automatic", "online", "persistent", "flagged"]);
   const ENUM_FIELDS = Object.freeze({
     status: new Set(["ok", "degraded", "success", "failed", "signed_in", "signed_out"]),
-    trigger: new Set(["schedule", "gesture"]),
+    trigger: new Set(["schedule", "gesture", "worker"]),
     facing: new Set(["environment", "user"]),
     theme: new Set(["light", "dark", "system"]),
     sessionId: new Set(["morning", "afternoon", "evening"]),
     metricName: new Set(["CLS", "INP", "LCP", "FCP", "TTFB", "long_tasks"]),
     metricRating: new Set(["good", "needs_improvement", "poor", "unknown"]),
+    action: new Set(["save", "clear", "delete", "rename", "keep", "discard", "review"]),
+    source: new Set(["camera", "library"]),
   });
   const MAX_QUEUE = 40;
   const FLUSH_DELAY = 1800;
@@ -130,7 +182,8 @@
   const sessionId = createId();
   const queue = [];
   const dedupe = new Map();
-  let surface = globalScope.document.documentElement.dataset.surface || "capture";
+  const docSurface = globalScope.document.documentElement?.dataset?.surface;
+  let surface = SURFACES.has(docSurface) ? docSurface : "capture";
   let flushTimer = null;
   let flushing = false;
   let lastLcp = null;
@@ -233,7 +286,7 @@
   }
 
   function configure(options = {}) {
-    if (["capture", "dashboard"].includes(options.surface)) {
+    if (SURFACES.has(options.surface)) {
       surface = options.surface;
     }
   }

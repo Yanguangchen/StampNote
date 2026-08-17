@@ -152,3 +152,22 @@ test("the recording page moves worker onboarding into the shared page drawer", (
   assert.doesNotMatch(capture, /id="worker-onboarding"|Enroll worker faces/);
   assert.match(sidebar, /file: "onboarding\.html", label: "Worker onboarding"/);
 });
+
+test("worker onboarding pre-caches static assets and registers the service worker", () => {
+  assert.match(app, /ONBOARDING_CACHE_NAME\s*=\s*"stampnote-onboarding-v1"/);
+  assert.match(app, /"onboarding\.html"/);
+  assert.match(app, /"onboarding\.css"/);
+  assert.match(app, /"onboarding\.js"/);
+  assert.match(app, /"worker-face\.js"/);
+  assert.match(app, /"camera-facing\.js"/);
+  assert.match(app, /"face-identity\.js"/);
+  assert.match(app, /"pose-model\.js"/);
+  assert.match(app, /navigator\.serviceWorker\.register\("sw\.js"\)/);
+  assert.match(app, /cacheStaticAssets\(\)/);
+
+  const swContent = readFileSync(resolve(root, "sw.js"), "utf8");
+  assert.match(swContent, /stampnote-onboarding-v1/);
+  assert.match(swContent, /addEventListener\("install"/);
+  assert.match(swContent, /addEventListener\("fetch"/);
+});
+

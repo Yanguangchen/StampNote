@@ -52,6 +52,7 @@
   const storage = globalScope.StampNoteStore;
   const weatherService = globalScope.StampNoteWeather;
   const cloud = globalScope.StampNoteFirebase;
+  const telemetry = globalScope.StampNoteObservability;
   const store = storage.createPhotoStore();
   const localLiveServer =
     ["127.0.0.1", "localhost"].includes(globalScope.location.hostname) &&
@@ -59,6 +60,8 @@
   const reviewEndpoint = localLiveServer
     ? "https://stampnote-omega.vercel.app/api/triage"
     : "/api/triage";
+
+  telemetry?.configure({ surface: "worker-photos" });
 
   const takeInput = document.querySelector("#take-photo");
   const chooseInput = document.querySelector("#choose-photos");
@@ -274,14 +277,32 @@
     );
     let uploaded = 0;
     let failed = 0;
-    for (const record of pending) {
-      try {
-        await uploadRecord(record);
-        uploaded += 1;
-      } catch (error) {
-        failed += 1;
-        console.warn("[StampNote worker photos] Cloud sync failed.", error);
+    try {
+      for (const record of pending) {
+        try {
+          await uploadRecord(record);
+          uploaded += 1;
+        } catch (error) {
+          failed += 1;
+          console.warn("[StampNote worker photos] Cloud sync failed.", error);
+        }
       }
+      if (uploaded > 0 || failed > 0) {
+        telemetry?.event("worker.photo.sync.completed", {
+          uploadedCount: uploaded,
+          failedCount: failed,
+          status: failed === 0 ? "success" : "failed",
+        });
+      }
+    } catch (error) {
+      telemetry?.event(
+        "worker.photo.sync.failed",
+        {
+          errorCode: telemetry?.safeErrorCode(error, "worker_sync_failed"),
+          status: "failed",
+        },
+        { immediate: true },
+      );
     }
     return { uploaded, failed };
   }
@@ -321,6 +342,11 @@
         `${staged.length} photo${staged.length === 1 ? " is" : "s are"} ready. ${weatherNote}`,
         "success",
       );
+      telemetry?.event("worker.photo.staged", {
+        photoCount: staged.length,
+        source: source === "camera" || source === "library" ? source : undefined,
+        status: "success",
+      });
     } catch (error) {
       staged = [];
       const message =
@@ -328,6 +354,14 @@
           ? describeLocationError(error)
           : error?.message || "The photo could not be prepared.";
       setStatus(`${message} No photo was saved.`, "error");
+      telemetry?.event(
+        "worker.photo.gps.failed",
+        {
+          errorCode: telemetry?.safeErrorCode(error, "gps_fix_failed"),
+          status: "failed",
+        },
+        { immediate: true },
+      );
     } finally {
       setProcessing(false);
       takeInput.value = "";
@@ -335,9 +369,15 @@
     }
   }
 
+  function nowMs() {
+    return globalScope.performance?.now?.() ?? Date.now();
+  }
+
   async function sendStagedPhotos() {
     if (processing || staged.length === 0) return;
     setProcessing(true);
+    const startedAt = nowMs();
+    const traceId = telemetry?.createTraceId();
 
     try {
       const sanitation = await requestGeminiSanitization(staged);
@@ -377,6 +417,7 @@
         }
       }
 
+      const sentCount = staged.length;
       staged = [];
       const sentNote = user
         ? `${uploaded} sent${uploadFailed ? `; ${uploadFailed} kept on device to retry` : ""}.`
@@ -385,8 +426,28 @@
         `${sentNote}${held ? ` ${held} held back by Gemini sanitization.` : ""}`,
         uploadFailed ? "idle" : "success",
       );
+      telemetry?.event(
+        "worker.photo.sent",
+        {
+          durationMs: nowMs() - startedAt,
+          photoCount: sentCount,
+          uploadedCount: uploaded,
+          failedCount: uploadFailed,
+          status: "success",
+        },
+        { traceId },
+      );
     } catch (error) {
       setStatus(`${error?.message || "Gemini sanitization failed."} Nothing was sent.`, "error");
+      telemetry?.event(
+        "worker.photo.send_failed",
+        {
+          durationMs: nowMs() - startedAt,
+          errorCode: telemetry?.safeErrorCode(error, "worker_send_failed"),
+          status: "failed",
+        },
+        { traceId, immediate: true },
+      );
     } finally {
       setProcessing(false);
     }
@@ -419,9 +480,17 @@
       if (error) {
         updateAccount(null);
         setStatus(error.message || "Google sign-in is unavailable.", "error");
+        telemetry?.event(
+          "cloud.auth.failed",
+          { errorCode: telemetry?.safeErrorCode(error, "auth_failed"), status: "failed" },
+          { immediate: true, dedupeMs: 60000 },
+        );
         return;
       }
       updateAccount(nextUser);
+      telemetry?.event("cloud.auth.state", {
+        status: nextUser ? "signed_in" : "signed_out",
+      });
       if (nextUser) {
         syncPendingWorkerPhotos().then(({ uploaded, failed }) => {
           if (uploaded > 0) {
@@ -443,6 +512,11 @@
         else await cloud.signIn();
       } catch (error) {
         setStatus(error.message || "Google sign-in could not be completed.", "error");
+        telemetry?.event(
+          "cloud.auth.failed",
+          { errorCode: telemetry?.safeErrorCode(error, "auth_failed"), status: "failed" },
+          { immediate: true, dedupeMs: 60000 },
+        );
       } finally {
         authButton.disabled = false;
       }
@@ -451,5 +525,10 @@
 
   store.ready().catch((error) => {
     setStatus(error.message || "The local photo store could not be opened.", "error");
+    telemetry?.event(
+      "client.error",
+      { errorCode: "photo_store_failed" },
+      { immediate: true },
+    );
   });
 })(typeof window !== "undefined" ? window : globalThis);

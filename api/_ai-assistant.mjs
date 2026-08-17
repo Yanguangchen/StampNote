@@ -238,6 +238,11 @@ export async function handleAssistantRequest(request, options = {}) {
       requestBytes,
     });
     const result = await answer(payload, { abortSignal: request.signal });
+    logEvent(context, "info", "ai.assistant.completed", {
+      model: result.model,
+      factCount: result.retrieved,
+      durationMs: Date.now() - context.startedAt,
+    });
     return respond(result, 200, "answered", {
       model: result.model,
       factCount: result.retrieved,

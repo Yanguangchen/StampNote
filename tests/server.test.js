@@ -97,6 +97,11 @@ test("the local server exposes public assets and every API boundary without expo
     assert.equal(manifest.status, 200);
     assert.match(manifest.headers.get("content-type"), /^application\/manifest\+json/);
     assert.equal((await manifest.json()).display, "fullscreen");
+
+    const sw = await fetch(`${origin}/sw.js`);
+    assert.equal(sw.status, 200);
+    assert.match(sw.headers.get("content-type"), /^text\/javascript/);
+
     const appIcon = await fetch(`${origin}/icons/stampnote-192.png`);
     assert.equal(appIcon.status, 200);
     assert.match(appIcon.headers.get("content-type"), /^image\/png/);

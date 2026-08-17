@@ -407,6 +407,10 @@
     if (panelHost.children.length > 0) panelHost.dataset.stale = "true";
     setStatus("Loading metrics…", "loading");
 
+    const now = () => (typeof performance !== "undefined" && performance?.now ? performance.now() : Date.now());
+    const startedAt = now();
+    const traceId = telemetry?.createTraceId?.();
+
     try {
       const [entries, loadedPhotos] = await Promise.all([
         cloud.getAttendance({ pageSize: 500 }),
@@ -416,18 +420,27 @@
       photos = loadedPhotos;
       render();
       setStatus("");
-      telemetry?.event("metrics.loaded", {
-        attendance: attendance.length,
-        photos: photos.length,
-        status: "success",
-      });
+      telemetry?.event(
+        "metrics.load.completed",
+        {
+          durationMs: now() - startedAt,
+          checkInCount: attendance.length,
+          photoCount: photos.length,
+          status: "success",
+        },
+        { traceId },
+      );
     } catch (error) {
       panelHost.dataset.stale = "false";
       setStatus(describeError(error), "error");
       telemetry?.event(
         "metrics.load.failed",
-        { errorCode: telemetry.safeErrorCode(error, "metrics_failed"), status: "failed" },
-        { immediate: true, dedupeMs: 60000 },
+        {
+          durationMs: now() - startedAt,
+          errorCode: telemetry?.safeErrorCode?.(error, "metrics_failed") || "metrics_failed",
+          status: "failed",
+        },
+        { traceId, immediate: true, dedupeMs: 60000 },
       );
     } finally {
       loading = false;
@@ -486,8 +499,16 @@
     accountName.textContent = user?.email || "";
     if (error) {
       setStatus(describeError(error), "error");
+      telemetry?.event(
+        "cloud.auth.failed",
+        { errorCode: telemetry.safeErrorCode(error, "auth_failed"), status: "failed" },
+        { immediate: true, dedupeMs: 60000 },
+      );
       return;
     }
+    telemetry?.event("cloud.auth.state", {
+      status: user ? "signed_in" : "signed_out",
+    });
     if (!user) {
       attendance = [];
       photos = [];

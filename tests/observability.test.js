@@ -370,3 +370,92 @@ test("health and telemetry Vercel routes delegate to their shared handlers", asy
     else process.env.GOOGLE_GENERATIVE_AI_API_KEY = originalKey;
   }
 });
+
+test("telemetry accepts payloads from all 7 surfaces and validates new operational events", async () => {
+  const { handleTelemetryRequest } = await import("../api/_telemetry.mjs");
+  const surfaces = [
+    "capture",
+    "dashboard",
+    "ai-dashboard",
+    "coordinates",
+    "metrics",
+    "onboarding",
+    "worker-photos",
+  ];
+
+  for (const surface of surfaces) {
+    const payload = {
+      sessionId: "session_valid_123",
+      surface,
+      events: [
+        {
+          name: "client.ready",
+          atMs: 10,
+          fields: { online: true },
+        },
+      ],
+    };
+    const response = await handleTelemetryRequest(
+      new Request("https://example.com/api/telemetry", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://localhost:5500",
+        },
+        body: JSON.stringify(payload),
+      }),
+    );
+    assert.equal(response.status, 202, `Failed for surface: ${surface}`);
+  }
+
+  const comprehensivePayload = {
+    sessionId: "session_full_123",
+    surface: "ai-dashboard",
+    events: [
+      {
+        name: "ai.assistant.query.completed",
+        atMs: 120,
+        fields: { factCount: 4, durationMs: 450, status: "success" },
+      },
+      {
+        name: "coordinates.truck_location.updated",
+        atMs: 200,
+        fields: { action: "save", status: "success" },
+      },
+      {
+        name: "onboarding.worker.saved",
+        atMs: 300,
+        fields: { sampleCount: 7, status: "success" },
+      },
+      {
+        name: "worker.photo.sent",
+        atMs: 400,
+        fields: { photoCount: 2, uploadedCount: 2, failedCount: 0, status: "success" },
+      },
+      {
+        name: "metrics.load.completed",
+        atMs: 500,
+        fields: { checkInCount: 15, photoCount: 40, status: "success" },
+      },
+    ],
+  };
+
+  const traced = await captureLogs(async () =>
+    handleTelemetryRequest(
+      new Request("https://example.com/api/telemetry", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://localhost:5500",
+          "X-StampNote-Trace-Id": "ai-trace-555",
+        },
+        body: JSON.stringify(comprehensivePayload),
+      }),
+    ),
+  );
+
+  assert.equal(traced.value.status, 202);
+  const result = await traced.value.json();
+  assert.equal(result.accepted, 5);
+  assert.equal(result.traceId, "ai-trace-555");
+});
