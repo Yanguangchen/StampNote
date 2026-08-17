@@ -108,6 +108,55 @@ test("an enrolled face restores its stable worker ID before anonymous tracking b
   assert.equal(returned.bodies[0].faceMatched, true);
 });
 
+test("an ambiguous enrolled face stays anonymous instead of taking the nearest worker ID", () => {
+  const live = [1, ...Array.from({ length: 127 }, () => 0)];
+  const closeRunnerUp = [
+    Math.cos(0.03),
+    Math.sin(0.03),
+    ...Array.from({ length: 126 }, () => 0),
+  ];
+  const tracker = people.createPersonTracker({
+    identities: [
+      { workerId: "worker-1", embedding: live },
+      { workerId: "worker-2", embedding: closeRunnerUp },
+    ],
+  });
+
+  const result = tracker.update([body(0.2, { faceEmbedding: live })], 1_000);
+
+  assert.equal(result.bodies[0].workerId, undefined);
+  assert.equal(result.bodies[0].faceMatched, undefined);
+  assert.equal(result.bodies[0].personLabel, "TRACKING WORKER");
+});
+
+test("a later ambiguous embedding cannot keep voting for a previously verified worker", () => {
+  const worker = [1, ...Array.from({ length: 127 }, () => 0)];
+  const other = [
+    Math.cos(0.12),
+    Math.sin(0.12),
+    ...Array.from({ length: 126 }, () => 0),
+  ];
+  const tracker = people.createPersonTracker({
+    identities: [
+      { workerId: "worker-1", embedding: worker },
+      { workerId: "worker-2", embedding: other },
+    ],
+  });
+  const verified = tracker.update([body(0.2, { faceEmbedding: worker })], 1_000);
+  assert.equal(verified.bodies[0].workerId, "WORKER-1");
+  assert.equal(verified.bodies[0].faceMatched, true);
+
+  const ambiguous = [
+    Math.cos(0.06),
+    Math.sin(0.06),
+    ...Array.from({ length: 126 }, () => 0),
+  ];
+  const uncertain = tracker.update([body(0.21, { faceEmbedding: ambiguous })], 2_000);
+
+  assert.equal(uncertain.bodies[0].faceMatched, undefined);
+  assert.notEqual(uncertain.bodies[0].workerId, "WORKER-1");
+});
+
 test("workers without a roster match stay explicit while the internal track ID remains stable", () => {
   const tracker = people.createPersonTracker();
   const first = tracker.update([body(0.2)], 1_100).bodies[0];

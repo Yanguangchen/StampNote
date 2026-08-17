@@ -348,7 +348,7 @@ test("Firebase auth subscriptions report SDK startup failures and can be cancell
   assert.deepEqual(failures, [{ user: null, error: startupError }]);
 });
 
-test("worker face templates are validated, team-scoped, listed, replaced, and deleted", async () => {
+test("worker face templates are validated, account-scoped, listed, replaced, and deleted", async () => {
   const embedding = Array.from({ length: 128 }, (unused, index) => index / 1000);
   const enrollmentViews = [
     embedding,
@@ -387,7 +387,12 @@ test("worker face templates are validated, team-scoped, listed, replaced, and de
     profilePhoto: null,
   });
   const write = harness.calls.writes[0];
-  assert.deepEqual(write.reference.segments.slice(1), ["workers", "WORKER-7"]);
+  assert.deepEqual(write.reference.segments.slice(1), [
+    "users",
+    "user-1",
+    "workers",
+    "WORKER-7",
+  ]);
   assert.equal(write.value.ownerId, "user-1");
   assert.equal(write.value.templateType, "face-api-128-flat-gallery");
   assert.equal(write.value.schemaVersion, 3);
@@ -405,10 +410,20 @@ test("worker face templates are validated, team-scoped, listed, replaced, and de
   assert.equal(workers.length, 1, "malformed stored templates are ignored");
   assert.equal(workers[0].workerId, "WORKER-7");
   assert.equal(workers[0].embeddings.length, 1, "legacy centroids remain usable as a gallery");
-  assert.deepEqual(harness.calls.queries.at(-1).segments.slice(1), ["workers"]);
+  assert.equal(harness.calls.queries.length, 2);
+  assert.deepEqual(harness.calls.queries[0].segments.slice(1), ["users", "user-1", "workers"]);
+  assert.deepEqual(harness.calls.queries[1].collection.segments.slice(1), ["workers"]);
+  assert.deepEqual(harness.calls.queries[1].clauses, [
+    { kind: "where", field: "ownerId", operator: "==", value: "user-1" },
+  ]);
 
   await harness.client.deleteWorkerFace("worker-7");
-  assert.deepEqual(harness.calls.deleted.at(-1).segments.slice(1), ["workers", "WORKER-7"]);
+  assert.deepEqual(harness.calls.deleted.at(-1).segments.slice(1), [
+    "users",
+    "user-1",
+    "workers",
+    "WORKER-7",
+  ]);
 
   await assert.rejects(
     harness.client.saveWorkerFace({ workerId: "bad/id", displayName: "Ari", embedding }),
@@ -424,6 +439,54 @@ test("worker face templates are validated, team-scoped, listed, replaced, and de
     harness.client.getWorkerFaces(),
     (error) => error.code === "auth-required",
   );
+});
+
+test("face matching loads only the signed-in account and its owned legacy templates", async () => {
+  const embedding = Array.from({ length: 128 }, (unused, index) => index / 1000);
+  const harness = createHarness({
+    queryResults: [
+      [
+        {
+          id: "WORKER-7",
+          data: () => ({
+            workerId: "WORKER-7",
+            displayName: "Scoped Ari",
+            embedding,
+            ownerId: "user-1",
+          }),
+        },
+      ],
+      [
+        {
+          id: "legacy-owned",
+          data: () => ({
+            workerId: "WORKER-8",
+            displayName: "Owned Bo",
+            embedding,
+            ownerId: "user-1",
+          }),
+        },
+        {
+          id: "legacy-foreign",
+          data: () => ({
+            workerId: "WORKER-9",
+            displayName: "Foreign Worker",
+            embedding,
+            ownerId: "another-user",
+          }),
+        },
+      ],
+    ],
+  });
+  await harness.client.ready;
+
+  const workers = await harness.client.getWorkerFaces();
+
+  assert.deepEqual(
+    workers.map((worker) => worker.workerId),
+    ["WORKER-7", "WORKER-8"],
+  );
+  assert.equal(workers.some((worker) => worker.displayName === "Foreign Worker"), false);
 });
 
 test("an enrollment portrait is stored as bounded bytes and read back as an image", async () => {

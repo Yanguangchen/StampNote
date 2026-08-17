@@ -4,6 +4,40 @@
   const MAX_RETRIEVED_FACTS = 24;
   const MATCHED_TOKEN_SCORE = 4;
   const METRIC_RANGE_DAYS = Object.freeze([7, 30, 90]);
+  const ROAD_WORDS = new Map([
+    ["ave", "avenue"],
+    ["avenue", "avenue"],
+    ["blvd", "boulevard"],
+    ["boulevard", "boulevard"],
+    ["dr", "drive"],
+    ["drive", "drive"],
+    ["ln", "lane"],
+    ["lane", "lane"],
+    ["rd", "road"],
+    ["road", "road"],
+    ["st", "street"],
+    ["street", "street"],
+  ]);
+  const QUERY_FILTER_STOP_WORDS = new Set([
+    "a", "about", "activity", "activities", "all", "also", "am", "an", "and", "any",
+    "anybody", "anyone", "anything", "are", "at", "attendance", "attend", "attended",
+    "attending", "attention", "be", "been", "being", "between", "by", "can", "check",
+    "check-in", "check-ins", "checked", "checking", "coordinate", "coordinates", "current",
+    "data", "delay", "delays", "did", "discrepancies", "discrepancy", "do", "does", "each",
+    "everybody", "everything", "explain", "flag", "flagged", "flagging", "flags", "for",
+    "from", "go", "gps", "graph", "graphs", "gust", "gusts", "had", "happen", "happened",
+    "happening", "has", "have", "hour", "hours", "how", "i", "impact", "in", "is", "it", "latest",
+    "location", "locations", "map", "me", "metric", "metrics", "most", "newest", "no",
+    "of", "on", "open", "operations", "or", "photo", "photos", "please", "present",
+    "lost", "missing", "need", "needed", "needing", "needs", "not", "overview", "problematic",
+    "rain", "recent", "record", "recorded", "records", "reference", "references", "review",
+    "session", "sessions", "show", "site", "sites", "someone", "statistics", "stats", "storm",
+    "summarize", "summary", "tell", "team", "sent", "my", "want", "know",
+    "than", "that", "the", "their", "then", "there", "these", "this", "those", "to", "today",
+    "truck", "was", "weather", "were", "what", "when", "where", "which", "who", "whom",
+    "whose", "why", "wind", "with", "work", "worked", "worker", "workers", "working", "wet",
+    "yesterday",
+  ]);
 
   function photoTimeMs(photo) {
     return Number(photo?.capturedAtMs) || Date.parse(photo?.capturedAt) || 0;
@@ -21,6 +55,146 @@
 
   function queryTokens(value) {
     return [...new Set(normalizeSearchText(value).split(" ").filter((token) => token.length > 1))];
+  }
+
+  function localDateKey(atMs = Date.now()) {
+    const date = new Date(Number(atMs));
+    if (!Number.isFinite(date.getTime())) return "";
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  function shiftDateKey(dateKey, days) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return "";
+    const date = new Date(`${dateKey}T12:00:00Z`);
+    date.setUTCDate(date.getUTCDate() + days);
+    return date.toISOString().slice(0, 10);
+  }
+
+  function questionDateKeys(question, currentDate) {
+    const normalized = normalizeSearchText(question);
+    const dates = question.match(/\b\d{4}-\d{2}-\d{2}\b/g) || [];
+    if (/\btoday\b/.test(normalized) && currentDate) dates.push(currentDate);
+    if (/\byesterday\b/.test(normalized) && currentDate) dates.push(shiftDateKey(currentDate, -1));
+    return [...new Set(dates.filter(Boolean))];
+  }
+
+  function identifyingQueryTokens(question, asksMetrics) {
+    return queryTokens(question).filter((token) => {
+      if (QUERY_FILTER_STOP_WORDS.has(token)) return false;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(token)) return false;
+      if (asksMetrics && /^\d+$/.test(token)) return false;
+      return true;
+    });
+  }
+
+  function explicitlyScopedQueryTokens(question, asksMetrics) {
+    const normalized = normalizeSearchText(question);
+    const fragments = [];
+    for (const match of String(question || "").matchAll(/["“]([^"”]+)["”]/g)) {
+      fragments.push(match[1]);
+    }
+    const scoped = normalized.match(
+      /\b(?:at|for|from|site|worker)\s+(?:the\s+)?(.+?)(?=\b(?:today|yesterday|on|during|session|sessions|check|checked|attendance|worker|workers)\b|$)/,
+    );
+    if (scoped?.[1]) fragments.push(scoped[1]);
+    const sentTo = String(question || "").match(/\bsent\b.{0,48}?\bto\s+([^,?.]+)/i);
+    if (sentTo?.[1]) fragments.push(sentTo[1]);
+    return identifyingQueryTokens(fragments.join(" "), asksMetrics);
+  }
+
+  function semanticSiteFeatures(value) {
+    const features = new Set();
+    queryTokens(value).forEach((token) => {
+      const road = ROAD_WORDS.get(token);
+      if (road) {
+        features.add(`road:${road}`);
+        return;
+      }
+      if (/^\d+$/.test(token)) {
+        features.add(`number:${token}`);
+        return;
+      }
+      const terminal = /^t([1-4])$/.exec(token) || /^terminal-?([1-4])$/.exec(token);
+      if (terminal) {
+        features.add("facility:airport");
+        features.add("facility:terminal");
+        features.add(`terminal:${terminal[1]}`);
+        return;
+      }
+      if (token === "airport") {
+        features.add("facility:airport");
+        return;
+      }
+      if (token === "terminal") {
+        features.add("facility:airport");
+        features.add("facility:terminal");
+        return;
+      }
+      if (!QUERY_FILTER_STOP_WORDS.has(token)) features.add(`term:${token}`);
+    });
+    return features;
+  }
+
+  function siteReasoningScore(queryText, siteText) {
+    const queryFeatures = semanticSiteFeatures(queryText);
+    const siteFeatures = semanticSiteFeatures(siteText);
+    const queryNumbers = [...queryFeatures]
+      .filter((feature) => feature.startsWith("number:"))
+      .map((feature) => Number(feature.slice(7)));
+    const siteNumbers = [...siteFeatures]
+      .filter((feature) => feature.startsWith("number:"))
+      .map((feature) => Number(feature.slice(7)));
+    const sharedMeaning = [...queryFeatures].filter(
+      (feature) =>
+        (feature.startsWith("term:") || feature.startsWith("facility:")) &&
+        siteFeatures.has(feature),
+    );
+    if (sharedMeaning.length === 0) return 0;
+
+    if (
+      queryNumbers.length > 0 &&
+      siteNumbers.length > 0 &&
+      !queryNumbers.some((queryNumber) =>
+        siteNumbers.some((siteNumber) => Math.abs(queryNumber - siteNumber) <= 2),
+      )
+    ) {
+      return 0;
+    }
+
+    let score = sharedMeaning.length;
+    score += [...queryFeatures].filter(
+      (feature) => feature.startsWith("road:") && siteFeatures.has(feature),
+    ).length * 0.25;
+    if (
+      queryNumbers.some((queryNumber) =>
+        siteNumbers.some((siteNumber) => queryNumber === siteNumber),
+      )
+    ) {
+      score += 1;
+    } else if (
+      queryNumbers.some((queryNumber) =>
+        siteNumbers.some((siteNumber) => Math.abs(queryNumber - siteNumber) <= 2),
+      )
+    ) {
+      score += 0.35;
+    }
+    return score;
+  }
+
+  function citedReferences(answer) {
+    return new Set(
+      [...String(answer || "").matchAll(/\bS(?:[1-9]|1\d|2[0-4])\b/g)].map(
+        (match) => match[0],
+      ),
+    );
+  }
+
+  function photoFlagsMentionedInAnswer(answer, sources = []) {
+    const cited = citedReferences(answer);
+    return sources.filter((source) => source.photoFlag && cited.has(source.ref));
   }
 
   function sessionTime(atMs) {
@@ -162,6 +336,7 @@
         sessions: [],
         facts: [],
         metricSeries: {},
+        currentDate: localDateKey(input.now),
         metrics: {
           sessionCount: 0,
           flaggedSessionCount: 0,
@@ -175,6 +350,7 @@
 
     const photos = input.photos || [];
     const attendance = input.attendance || [];
+    const currentDate = localDateKey(input.now);
     const metricSeries = buildMetricSeries(input, metricsApi);
     const sessions = coordinates.buildCoordinateSessions(
       { photos, attendance, savedSessions: input.savedSessions || [] },
@@ -216,6 +392,8 @@
       return {
         ...coordinateRecord,
         photos: session.photos,
+        flaggedPhotos,
+        coordinateFlaggedPhotos,
         attendance: session.attendance,
         photoCount: session.photos.length,
         flaggedPhotoCount: flaggedPhotos.length,
@@ -253,10 +431,12 @@
         hasAttendance: metadata.hasAttendance === true,
         session: metadata.session || null,
         map: metadata.map || null,
+        photoFlag: metadata.photoFlag || null,
         metricId: metadata.metricId || "",
         rangeDays: Number(metadata.rangeDays) || 0,
         priority: Number(metadata.priority) || 0,
         searchText: normalizeSearchText(`${text} ${metadata.keywords || ""}`),
+        siteSearchText: normalizeSearchText(metadata.siteKeywords || ""),
       });
     }
 
@@ -265,7 +445,8 @@
       `Loaded scope: ${metrics.sessionCount} sessions, ${metrics.flaggedSessionCount} flagged sessions, ` +
         `${metrics.weatherIssueCount} sessions with problematic weather, ${metrics.attendanceCheckIns} attendance ` +
         `check-ins across ${metrics.workerCount} workers, and ${metrics.photoCount} photos. ` +
-        `Date coverage: ${knownDates[0] || "unavailable"} through ${knownDates.at(-1) || "unavailable"}.`,
+        `Date coverage: ${knownDates[0] || "unavailable"} through ${knownDates.at(-1) || "unavailable"}. ` +
+        `Current local date: ${currentDate || "unavailable"}.`,
       { priority: 100 },
     );
 
@@ -299,12 +480,19 @@
       const flagText = record.flaggedForReview
         ? `Flagged for review: ${record.flagReasons.join("; ") || "review required"}.`
         : "Not flagged for review.";
+      const siteAliases = (record.aliases || []).filter(
+        (alias) => normalizeSearchText(alias) !== normalizeSearchText(record.location),
+      );
+      const aliasText = siteAliases.length
+        ? ` GPS-clustered address alias${siteAliases.length === 1 ? "" : "es"} for this same operational site: ${siteAliases.join(", ")}.`
+        : "";
+      const siteKeywords = `${record.location} ${siteAliases.join(" ")}`;
       addFact(
         "session",
         `Session ${record.sessionKey}. ${record.dateKey}, ${record.location}, ${record.sessionLabel}. ` +
           `${record.photoCount} photos (${record.flaggedPhotoCount} AI flags, ${record.coordinateFlaggedPhotoCount} photo location flags). ` +
           `${record.attendanceCount} attendance check-ins; workers: ${attendeeText}. ` +
-          `Weather: ${weatherDescription(record.weather)}. ` +
+          `Weather: ${weatherDescription(record.weather)}.${aliasText} ` +
           `GPS/truck comparison: ${comparisonDescription(record.comparison)}. ${flagText}`,
         {
           dateKey: record.dateKey,
@@ -314,11 +502,63 @@
           session: linkedSession,
           map: linkedMap,
           priority: record.flaggedForReview ? 12 : record.weatherIssue ? 9 : 4,
-          keywords: `${record.location} ${record.sessionLabel} ${record.attendees
+          keywords: `${siteKeywords} ${record.sessionLabel} ${record.attendees
             .map((entry) => `${entry.displayName} ${entry.workerId}`)
             .join(" ")}`,
+          siteKeywords,
         },
       );
+
+      const specificallyFlaggedPhotos = [
+        ...new Map(
+          [...record.flaggedPhotos, ...record.coordinateFlaggedPhotos].map((photo) => [
+            String(photo?.id || photo?.documentId || ""),
+            photo,
+          ]),
+        ).values(),
+      ].filter((photo) => photo?.id || photo?.documentId);
+      specificallyFlaggedPhotos.forEach((photo) => {
+        const photoId = String(photo.id || photo.documentId);
+        const flagDetails = [];
+        if (data.isFlagged(photo)) {
+          const reason = String(photo.aiReview?.reason || "").trim();
+          flagDetails.push(
+            `AI review recommended discard${reason ? ` because ${reason}` : ""}`,
+          );
+        }
+        if (data.isCoordinateFlagged?.(photo)) {
+          const distance = Number(photo.coordinateVerification?.distanceMeters);
+          const accuracy = Number(photo.coordinateVerification?.accuracyMeters);
+          flagDetails.push(
+            Number.isFinite(distance) && Number.isFinite(accuracy)
+              ? `photo GPS was ${distance} m from the truck location, beyond its ${accuracy} m accuracy`
+              : "photo and truck coordinates were outside the accepted GPS accuracy",
+          );
+        }
+        const detail = flagDetails.join("; ") || "review required";
+        addFact(
+          "flag",
+          `Specific photo flag ${photoId}: captured on ${record.dateKey} at ${record.location}, ` +
+            `${record.sessionLabel} session; ${detail}.`,
+          {
+            dateKey: record.dateKey,
+            flagged: true,
+            session: linkedSession,
+            map: linkedMap,
+            priority: 22,
+            keywords: `${siteKeywords} ${photoId} photo image ${detail}`,
+            siteKeywords,
+            photoFlag: {
+              photo,
+              photoId,
+              detail,
+              location: record.location,
+              dateKey: record.dateKey,
+              sessionLabel: record.sessionLabel,
+            },
+          },
+        );
+      });
 
       if (record.flaggedForReview) {
         addFact(
@@ -331,7 +571,8 @@
             session: linkedSession,
             map: linkedMap,
             priority: 18,
-            keywords: record.location,
+            keywords: siteKeywords,
+            siteKeywords,
           },
         );
       }
@@ -346,7 +587,8 @@
             session: linkedSession,
             map: linkedMap,
             priority: 16,
-            keywords: record.location,
+            keywords: siteKeywords,
+            siteKeywords,
           },
         );
       }
@@ -378,11 +620,12 @@
           session: attendanceSession,
           priority: 7,
           keywords: `${entry.displayName} ${entry.workerId} ${entry.location || ""} ${period.label}`,
+          siteKeywords: entry.location || "",
         },
       );
     });
 
-    return { sessions: records, facts, metrics, metricSeries };
+    return { sessions: records, facts, metrics, metricSeries, currentDate };
   }
 
   function rankKnowledge(question, knowledge, limit = MAX_RETRIEVED_FACTS) {
@@ -393,9 +636,10 @@
     const asksAttendance = /\b(attendance|attend|present|worker|who|check in|checked in)\b/.test(normalized);
     const asksRecent = /\b(latest|recent|today|newest|last)\b/.test(normalized);
     const asksMetrics = questionRequestsMetricAnalysis(question);
+    const candidateIdentifyingTokens = identifyingQueryTokens(question, asksMetrics);
     const requestedMetricIds = metricIdsForQuestion(question);
     const requestedMetricRange = metricRangeForQuestion(question);
-    const exactDates = question.match(/\b\d{4}-\d{2}-\d{2}\b/g) || [];
+    const requestedDates = questionDateKeys(question, knowledge.currentDate);
     const overview = knowledge.facts.find((fact) => fact.kind === "overview");
     const ranked = knowledge.facts
       .filter((fact) => fact !== overview)
@@ -404,7 +648,7 @@
         tokens.forEach((token) => {
           if (fact.searchText.includes(token)) score += MATCHED_TOKEN_SCORE;
         });
-        exactDates.forEach((dateKey) => {
+        requestedDates.forEach((dateKey) => {
           if (fact.dateKey === dateKey) score += 24;
         });
         if (asksFlags && fact.flagged) score += 28;
@@ -433,7 +677,102 @@
           right.fact.dateKey.localeCompare(left.fact.dateKey) ||
           left.fact.id.localeCompare(right.fact.id),
       );
-    const selected = [overview, ...ranked.slice(0, Math.max(0, limit - 1)).map((entry) => entry.fact)]
+
+    const matchedIdentifyingTokens = candidateIdentifyingTokens.filter((token) =>
+      ranked.some(({ fact }) => fact.searchText.includes(token)),
+    );
+    const scopedIdentifyingTokens = explicitlyScopedQueryTokens(question, asksMetrics);
+    const identifyingTokens = scopedIdentifyingTokens.length > 0
+      ? scopedIdentifyingTokens
+      : matchedIdentifyingTokens;
+
+    const filtered = ranked.filter(({ fact }) => {
+      if (
+        identifyingTokens.length > 0 &&
+        !identifyingTokens.every((token) => fact.searchText.includes(token))
+      ) {
+        return false;
+      }
+      if (
+        requestedDates.length > 0 &&
+        fact.kind !== "metric" &&
+        !requestedDates.includes(fact.dateKey)
+      ) {
+        return false;
+      }
+      return true;
+    });
+    const lookupWasConstrained = identifyingTokens.length > 0 || requestedDates.length > 0;
+    const reasoningQuery = scopedIdentifyingTokens.length > 0
+      ? scopedIdentifyingTokens.join(" ")
+      : candidateIdentifyingTokens.join(" ");
+    const reasoningCandidates = lookupWasConstrained && filtered.length === 0
+      ? ranked
+          .filter(({ fact }) => fact.kind === "session" && fact.siteSearchText)
+          .filter(
+            ({ fact }) =>
+              requestedDates.length === 0 || requestedDates.includes(fact.dateKey),
+          )
+          .map((entry) => ({
+            ...entry,
+            reasoningScore: siteReasoningScore(reasoningQuery, entry.fact.siteSearchText),
+          }))
+          .filter((entry) => entry.reasoningScore >= 1)
+          .sort(
+            (left, right) =>
+              right.reasoningScore - left.reasoningScore ||
+              right.score - left.score ||
+              right.fact.dateKey.localeCompare(left.fact.dateKey),
+          )
+          .slice(0, Math.max(1, Math.min(6, limit - 2)))
+      : [];
+    const reasoningNotice = reasoningCandidates.length > 0
+      ? {
+          id: "overview:reasoning-candidates",
+          kind: "overview",
+          text:
+            `No exact stored label matched ${identifyingTokens.join(" ")}. ` +
+            `${reasoningCandidates.length} plausible site session candidate(s) follow because their address or facility concepts are related. ` +
+            `These candidates require inference and are not confirmed aliases unless a session fact explicitly says they were GPS-clustered as the same operational site.`,
+          dateKey: requestedDates[0] || "",
+          flagged: false,
+          weatherIssue: false,
+          hasAttendance: false,
+          session: null,
+          map: null,
+          metricId: "",
+          rangeDays: 0,
+          priority: 98,
+          searchText: normalizeSearchText(reasoningQuery),
+          siteSearchText: "",
+        }
+      : null;
+    const zeroMatchFact = lookupWasConstrained && filtered.length === 0 && !reasoningNotice
+      ? {
+          id: "overview:query-zero-match",
+          kind: "overview",
+          text:
+            `Complete lookup across all ${knowledge.facts.length} loaded operational facts found 0 records` +
+            `${identifyingTokens.length ? ` matching identifying term(s): ${identifyingTokens.join(", ")}` : ""}` +
+            `${requestedDates.length ? ` on ${requestedDates.join(" or ")}` : ""}.`,
+          dateKey: requestedDates[0] || "",
+          flagged: false,
+          weatherIssue: false,
+          hasAttendance: false,
+          session: null,
+          map: null,
+          metricId: "",
+          rangeDays: 0,
+          priority: 99,
+          searchText: normalizeSearchText(`${identifyingTokens.join(" ")} ${requestedDates.join(" ")}`),
+        }
+      : null;
+    const relevantFacts = reasoningNotice
+      ? [reasoningNotice, ...reasoningCandidates.map((entry) => entry.fact)]
+      : zeroMatchFact
+      ? [zeroMatchFact]
+      : filtered.slice(0, Math.max(0, limit - 1)).map((entry) => entry.fact);
+    const selected = [overview, ...relevantFacts]
       .filter(Boolean)
       .slice(0, limit)
       .map((fact, index) => ({ ...fact, ref: `S${index + 1}` }));
@@ -702,6 +1041,7 @@
     metricChartsForQuestion,
     navigationActions,
     normalizeSearchText,
+    photoFlagsMentionedInAnswer,
     rankKnowledge,
     renderAnswer,
     resolveAssistantEndpoint,
@@ -789,6 +1129,65 @@
     });
     details.append(summary, list);
     return details;
+  }
+
+  function createFlaggedPhotoGallery(answer, sources = []) {
+    const mentioned = photoFlagsMentionedInAnswer(answer, sources);
+    if (mentioned.length === 0) return null;
+
+    const gallery = document.createElement("section");
+    gallery.className = "ai-flagged-photo-gallery";
+    gallery.setAttribute("aria-label", "Flagged photos mentioned in this answer");
+    mentioned.forEach((source) => {
+      const { photoFlag } = source;
+      const figure = document.createElement("figure");
+      const image = document.createElement("img");
+      const caption = document.createElement("figcaption");
+      const title = document.createElement("strong");
+      const context = document.createElement("span");
+      const reason = document.createElement("p");
+      figure.className = "ai-flagged-photo";
+      figure.dataset.state = "loading";
+      image.alt = `Flagged photo ${photoFlag.photoId} from ${photoFlag.location}`;
+      image.loading = "lazy";
+      image.decoding = "async";
+      title.textContent = `Flagged photo ${photoFlag.photoId}`;
+      context.textContent = [
+        photoFlag.location,
+        photoFlag.dateKey,
+        photoFlag.sessionLabel,
+      ].filter(Boolean).join(" · ");
+      reason.textContent = photoFlag.detail;
+      caption.append(title, context, reason);
+      figure.append(image, caption);
+      gallery.append(figure);
+
+      Promise.resolve(cloud.getPhotoBlob(photoFlag.photo))
+        .then((blob) => {
+          const url = globalScope.URL.createObjectURL(blob);
+          image.src = url;
+          figure.dataset.state = "ready";
+          image.addEventListener(
+            "load",
+            () => globalScope.URL.revokeObjectURL(url),
+            { once: true },
+          );
+          image.addEventListener(
+            "error",
+            () => globalScope.URL.revokeObjectURL(url),
+            { once: true },
+          );
+        })
+        .catch(() => {
+          figure.dataset.state = "error";
+          image.remove();
+          const unavailable = document.createElement("p");
+          unavailable.className = "ai-flagged-photo-unavailable";
+          unavailable.textContent = "The flagged image could not be opened.";
+          figure.prepend(unavailable);
+        });
+    });
+    return gallery;
   }
 
   function navigationLinks(actions) {
@@ -1217,6 +1616,8 @@
       if (!response.ok) throw new Error(result.error || `The assistant returned HTTP ${response.status}.`);
       renderAnswer(pending.body, result.answer);
       pending.article.dataset.state = "complete";
+      const flaggedPhotoGallery = createFlaggedPhotoGallery(result.answer, request.sources);
+      if (flaggedPhotoGallery) pending.article.append(flaggedPhotoGallery);
       metricChartsForQuestion(cleaned, knowledge).forEach((entry) => {
         const chart = createInlineMetricChart(entry);
         if (chart) pending.article.append(chart);

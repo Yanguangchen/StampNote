@@ -2,11 +2,35 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Team-wide access requested for StampNote: any authenticated Google user
-    // may read and write every document, including photos, attendance, and
-    // worker face templates. Anonymous visitors still have no Firestore access.
-    match /{document=**} {
+    // Account-scoped photos and face templates must never leak into another
+    // signed-in user's recognition roster.
+    match /users/{userId}/{document=**} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Legacy face templates remain readable only by the account that enrolled
+    // them, so the client can transition existing workers after re-enrollment.
+    match /workers/{workerId} {
+      allow read, delete: if request.auth != null && resource.data.ownerId == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.ownerId == request.auth.uid;
+      allow update: if request.auth != null
+        && resource.data.ownerId == request.auth.uid
+        && request.resource.data.ownerId == request.auth.uid;
+    }
+
+    // Operations AI, Metrics, and the attendance dashboard read all dated
+    // attendance subcollections with collectionGroup("entries"). Firestore
+    // requires an explicit recursive match for that query shape.
+    match /{path=**}/entries/{entryId} {
       allow read, write: if request.auth != null;
+    }
+
+    // Sessions and attendance remain team-visible. The two private collection
+    // roots above are deliberately excluded from this authenticated fallback.
+    match /{collection}/{document=**} {
+      allow read, write: if request.auth != null
+        && collection != "users"
+        && collection != "workers";
     }
   }
 }

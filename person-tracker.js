@@ -28,6 +28,8 @@
     faceTextureSampleMs: 1_000,
     faceEmbeddingReentryDistance: 0.55,
     faceEmbeddingMismatchDistance: 0.72,
+    faceIdentityMatchDistance: 0.55,
+    faceIdentityMargin: 0.08,
     faceEmbeddingGallerySize: 10,
     faceEmbeddingSampleMs: 1_000,
     velocitySmoothing: 0.2,
@@ -695,6 +697,31 @@
           : null;
       })
       .filter(Boolean);
+
+    function decideEnrolledIdentity(embedding) {
+      const candidate = normalizedFaceEmbedding(embedding);
+      if (!candidate) return null;
+      const ranked = enrolledIdentities
+        .map((identity) => ({
+          workerId: identity.workerId,
+          distance: identity.embeddings
+            .map((template) => faceEmbeddingDistance(template, candidate))
+            .filter(Number.isFinite)
+            .sort((left, right) => left - right)[0] ?? null,
+        }))
+        .filter((result) => Number.isFinite(result.distance))
+        .sort((left, right) => left.distance - right.distance);
+      const nearest = ranked[0];
+      if (!nearest || nearest.distance > settings.faceIdentityMatchDistance) return null;
+      if (
+        ranked[1] &&
+        ranked[1].distance - nearest.distance < settings.faceIdentityMargin
+      ) {
+        return null;
+      }
+      return nearest;
+    }
+
     let tracks = [];
     let nextId = 1;
     let appearanceCanvas = null;
@@ -759,6 +786,7 @@
         faceSignature: normalizedFaceSignature(body.faceSignature),
         faceTexture: normalizedFaceTexture(body.faceTexture) || faceTextureOf(body, frame),
         faceEmbedding: normalizedFaceEmbedding(body.faceEmbedding),
+        identityMatch: decideEnrolledIdentity(body.faceEmbedding),
       }));
       const claimedTracks = new Set();
       const claimedBodies = new Set();
@@ -768,9 +796,18 @@
         .filter(({ track }) => timestamp - track.lastSeenAt <= settings.missingMs)
         .map(({ trackIndex }) => trackIndex);
       const bodyIndexes = observations.map((_, bodyIndex) => bodyIndex);
-      assignGlobally(activeTrackIndexes, bodyIndexes, (trackIndex, bodyIndex) =>
-        matchCost(tracks[trackIndex], observations[bodyIndex], timestamp, settings),
-      ).forEach(({ trackIndex, bodyIndex }) => {
+      assignGlobally(activeTrackIndexes, bodyIndexes, (trackIndex, bodyIndex) => {
+        const track = tracks[trackIndex];
+        const observation = observations[bodyIndex];
+        if (
+          track.enrolled &&
+          observation.faceEmbedding &&
+          observation.identityMatch?.workerId !== track.workerId
+        ) {
+          return null;
+        }
+        return matchCost(track, observation, timestamp, settings);
+      }).forEach(({ trackIndex, bodyIndex }) => {
         claimedTracks.add(trackIndex);
         claimedBodies.add(bodyIndex);
         matches.set(bodyIndex, tracks[trackIndex]);
@@ -782,11 +819,17 @@
         .map((_, trackIndex) => trackIndex)
         .filter((trackIndex) => !claimedTracks.has(trackIndex));
       const returnBodyIndexes = bodyIndexes.filter((bodyIndex) => !claimedBodies.has(bodyIndex));
-      assignGlobally(returnTrackIndexes, returnBodyIndexes, (trackIndex, bodyIndex) =>
-        tracks[trackIndex].enrolled && !observations[bodyIndex].faceEmbedding
-          ? null
-          : reentryCost(tracks[trackIndex], observations[bodyIndex], timestamp, settings),
-      ).forEach(({ trackIndex, bodyIndex }) => {
+      assignGlobally(returnTrackIndexes, returnBodyIndexes, (trackIndex, bodyIndex) => {
+        const track = tracks[trackIndex];
+        const observation = observations[bodyIndex];
+        if (
+          track.enrolled &&
+          observation.identityMatch?.workerId !== track.workerId
+        ) {
+          return null;
+        }
+        return reentryCost(track, observation, timestamp, settings);
+      }).forEach(({ trackIndex, bodyIndex }) => {
         claimedTracks.add(trackIndex);
         claimedBodies.add(bodyIndex);
         matches.set(bodyIndex, tracks[trackIndex]);
@@ -801,6 +844,7 @@
           faceSignature,
           faceTexture,
           faceEmbedding,
+          identityMatch,
         } = observation;
         let track = matches.get(bodyIndex);
 
@@ -855,7 +899,12 @@
           rememberAppearance(track, appearance, timestamp, settings);
           rememberFaceSignature(track, faceSignature, timestamp, settings);
           rememberFaceTexture(track, faceTexture, timestamp, settings);
-          rememberFaceEmbedding(track, faceEmbedding, timestamp, settings);
+          // Enrollment templates are immutable for this run. Letting a merely
+          // close live observation replace one causes identity drift and makes
+          // a mistaken match increasingly self-reinforcing.
+          if (!track.enrolled) {
+            rememberFaceEmbedding(track, faceEmbedding, timestamp, settings);
+          }
           track.lastSeenAt = timestamp;
           track.seen = true;
         }
@@ -871,7 +920,9 @@
           ...publicBody,
           personId: track.id,
           ...(track.workerId ? { workerId: track.workerId } : {}),
-          ...(track.workerId && faceEmbedding ? { faceMatched: true } : {}),
+          ...(track.workerId && identityMatch?.workerId === track.workerId
+            ? { faceMatched: true }
+            : {}),
           personLabel: track.workerId || "TRACKING WORKER",
         };
       });

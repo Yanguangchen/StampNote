@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en" data-surface="agent-coordinates">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f3f5f1" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d1512" media="(prefers-color-scheme: dark)" />
+    <title>AI Coordinate Entry · StampNote</title>
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="icons/stampnote.svg" type="image/svg+xml" />
+    <link
+      rel="preload"
+      href="vendor/fonts/outfit-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="vendor/fonts/jetbrains-mono-latin-wght-normal.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="vendor/fonts/outfit.css" />
+    <link rel="stylesheet" href="vendor/fonts/jetbrains-mono.css" />
+    <link rel="stylesheet" href="sidebar.css" />
+    <link rel="stylesheet" href="admin.css" />
+    <link rel="stylesheet" href="agent-coordinates.css" />
+    <script>
+      try {
+        const saved = localStorage.getItem("stampnote-theme");
+        if (saved === "dark" || saved === "light") {
+          document.documentElement.dataset.theme = saved;
+        }
+      } catch (error) {
+        /* A blocked storage jar leaves the operating-system theme in charge. */
+      }
+    </script>
+    <script src="observability.js" defer></script>
+    <script src="photo-cloud.js" defer></script>
+    <script src="firebase.js" defer></script>
+    <script src="coordinates.js" defer></script>
+    <script src="agent-coordinates.js" defer></script>
+    <script src="sidebar.js" defer></script>
+  </head>
+  <body>
+    <header class="admin-header" data-sidebar-mount>
+      <a class="brand" href="index.html" aria-label="Back to StampNote capture">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>StampNote</span>
+      </a>
+      <div class="account-actions">
+        <span class="account-name" id="agent-account-name"></span>
+        <button
+          class="button button-quiet sign-out"
+          id="agent-sign-out"
+          type="button"
+          title="Sign out"
+          hidden
+        >
+          <svg class="sign-out-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M9.5 4.6H6.4A1.9 1.9 0 0 0 4.5 6.5v11a1.9 1.9 0 0 0 1.9 1.9h3.1" />
+            <path d="M10.2 12h9.3" />
+            <path d="m16.2 8.4 3.3 3.6-3.3 3.6" />
+          </svg>
+          <span class="sign-out-label">Sign out</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="agent-main">
+      <section class="agent-intro" aria-labelledby="agent-title">
+        <p class="agent-eyebrow">AI Agent Coordinate Workspace</p>
+        <h1 id="agent-title">Session Coordinates</h1>
+        <p class="agent-subtitle">
+          Direct input and search of truck X (longitude) and Y (latitude) coordinates for every recorded session.
+        </p>
+      </section>
+
+      <p class="agent-status" id="agent-status" role="status" aria-live="polite"></p>
+
+      <section class="auth-gate" id="agent-auth-gate" aria-labelledby="agent-auth-title">
+        <div class="auth-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" focusable="false">
+            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2" />
+            <path d="M12 3v4m0 10v4M3 12h4m10 0h4" stroke="currentColor" stroke-width="2" />
+          </svg>
+        </div>
+        <h2 id="agent-auth-title">Sign in to edit session coordinates</h2>
+        <p>Google account authentication is required to read and update session coordinates.</p>
+        <button class="button button-primary" id="agent-sign-in" type="button">
+          Continue with Google
+        </button>
+      </section>
+
+      <section class="agent-workspace" id="agent-workspace" hidden>
+        <!-- Search and Quick Filter Bar -->
+        <div class="agent-search-section">
+          <div class="agent-search-bar">
+            <label class="visually-hidden" for="agent-search-input">Search sessions</label>
+            <div class="agent-search-input-wrap">
+              <span class="agent-search-glyph" aria-hidden="true">⌕</span>
+              <input
+                id="agent-search-input"
+                type="search"
+                placeholder="Search by address, date (YYYY-MM-DD), session, or status…"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button
+                class="agent-search-clear"
+                id="agent-search-clear"
+                type="button"
+                aria-label="Clear search query"
+                hidden
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          <div class="agent-filter-row">
+            <div class="agent-filter-chips" id="agent-filter-chips" role="group" aria-label="Filter sessions by coordinate status">
+              <button class="filter-chip is-active" data-filter="all" type="button">
+                All <span class="chip-count" id="count-all">0</span>
+              </button>
+              <button class="filter-chip" data-filter="missing" type="button">
+                Missing X/Y <span class="chip-count" id="count-missing">0</span>
+              </button>
+              <button class="filter-chip" data-filter="set" type="button">
+                Coordinates Set <span class="chip-count" id="count-set">0</span>
+              </button>
+              <button class="filter-chip" data-filter="flagged" type="button">
+                Flagged (>25 m) <span class="chip-count" id="count-flagged">0</span>
+              </button>
+            </div>
+
+            <div class="agent-actions-group">
+              <output class="agent-result-count" id="agent-result-count">0 sessions</output>
+              <button class="button button-quiet" id="agent-copy-json" type="button" title="Copy visible sessions as JSON to clipboard">
+                <svg class="copy-icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false">
+                  <rect x="9" y="9" width="13" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" fill="none" stroke="currentColor" stroke-width="2" />
+                </svg>
+                <span id="agent-copy-json-label">Copy JSON</span>
+              </button>
+              <button class="button button-quiet" id="agent-batch-toggle" type="button" aria-expanded="false" aria-controls="agent-batch-panel">
+                Batch JSON Mode
+              </button>
+              <button class="button button-quiet" id="agent-refresh" type="button" title="Refresh session data">
+                Refresh
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Batch JSON Panel for AI Agents & RPA -->
+        <section class="agent-batch-panel" id="agent-batch-panel" aria-labelledby="agent-batch-heading" hidden>
+          <div class="batch-panel-header">
+            <div>
+              <h2 id="agent-batch-heading">Batch Coordinate Input / Export</h2>
+              <p class="batch-panel-desc">
+                AI agents can inspect all sessions as JSON or submit batch updates formatted as:
+                <code>[{"sessionKey": "...", "x": 103.8545, "y": 1.2868}, ...]</code>
+              </p>
+            </div>
+            <button class="batch-panel-close" id="agent-batch-close" type="button" aria-label="Close batch panel">
+              ✕
+            </button>
+          </div>
+          <label class="visually-hidden" for="agent-batch-input">Batch coordinate JSON</label>
+          <textarea
+            id="agent-batch-input"
+            class="agent-batch-textarea"
+            rows="6"
+            placeholder='[&#10;  {&#10;    "sessionKey": "10-marina-bay:2026-08-17:morning",&#10;    "x": 103.8545,&#10;    "y": 1.2868&#10;  }&#10;]'
+            spellcheck="false"
+          ></textarea>
+          <div class="batch-panel-footer">
+            <button class="button button-primary" id="agent-batch-apply" type="button">
+              Apply Batch Coordinates
+            </button>
+            <button class="button button-quiet" id="agent-batch-export" type="button">
+              Load Current Sessions into JSON
+            </button>
+            <button class="button button-quiet" id="agent-batch-copy" type="button">
+              Copy JSON to Clipboard
+            </button>
+            <span class="batch-status" id="agent-batch-status" role="status"></span>
+          </div>
+        </section>
+
+        <!-- Dynamic Session List -->
+        <div
+          class="agent-session-list"
+          id="agent-session-list"
+          aria-label="Session coordinate entries"
+        ></div>
+
+        <!-- Empty State -->
+        <div class="agent-empty" id="agent-empty" hidden>
+          <p class="agent-empty-title">No sessions found</p>
+          <p class="agent-empty-desc">No sessions match your search or filter criteria.</p>
+          <button class="button button-quiet" id="agent-empty-reset" type="button">
+            Reset search and filters
+          </button>
+        </div>
+
+        <!-- Stable Machine-Readable Index for Headless / AI Agents -->
+        <script id="agent-data" type="application/json">[]</script>
+      </section>
+    </main>
+  </body>
+</html>

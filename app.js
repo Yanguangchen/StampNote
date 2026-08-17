@@ -15,6 +15,7 @@
   const cameraFacing = window.StampNoteCameraFacing;
   const triage = window.StampNoteTriage;
   const autoCapture = window.StampNoteAutoCapture;
+  const REQUIRED_ATTENDANCE_MATCH_VOTES = 3;
   const addressField = document.querySelector("#address-field");
   const status = document.querySelector("#location-status");
   const addressPanel = document.querySelector("#address-panel");
@@ -648,7 +649,7 @@
 
       const votes = (attendanceMatchVotesForSession.get(workerId) || 0) + 1;
       attendanceMatchVotesForSession.set(workerId, votes);
-      if (votes < 2) return;
+      if (votes < REQUIRED_ATTENDANCE_MATCH_VOTES) return;
 
       saveMatchedAttendance({
         workerId,

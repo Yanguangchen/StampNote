@@ -470,6 +470,18 @@ button {
   white-space: nowrap;
 }
 
+.ai-page-guide-link {
+  flex: none;
+  color: var(--ai-muted);
+  font-size: 11px;
+  text-decoration-color: color-mix(in srgb, currentcolor 45%, transparent);
+  text-underline-offset: 3px;
+}
+
+.ai-page-guide-link:hover {
+  color: var(--ai-text);
+}
+
 .ai-message-list {
   display: flex;
   min-height: 320px;
@@ -676,6 +688,77 @@ button {
 
 .ai-sources strong {
   color: var(--ai-accent);
+}
+
+.ai-flagged-photo-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.ai-flagged-photo {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--ai-danger) 28%, var(--ai-line));
+  border-radius: 14px;
+  background: var(--ai-field);
+}
+
+.ai-flagged-photo img,
+.ai-flagged-photo-unavailable {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+}
+
+.ai-flagged-photo img {
+  object-fit: contain;
+  background: #0b0e0d;
+}
+
+.ai-flagged-photo[data-state="loading"] img {
+  background:
+    linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--ai-accent) 10%, transparent) 50%, transparent 70%),
+    var(--ai-field);
+  background-size: 220% 100%;
+  animation: ai-flagged-photo-loading 1.4s ease-in-out infinite;
+}
+
+.ai-flagged-photo figcaption {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px 12px;
+}
+
+.ai-flagged-photo figcaption strong {
+  color: var(--ai-ink);
+  font-size: 12px;
+}
+
+.ai-flagged-photo figcaption span {
+  color: var(--ai-muted);
+  font-size: 10px;
+}
+
+.ai-flagged-photo figcaption p,
+.ai-flagged-photo-unavailable {
+  margin: 0;
+  color: var(--ai-danger);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ai-flagged-photo-unavailable {
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  text-align: center;
+}
+
+@keyframes ai-flagged-photo-loading {
+  to { background-position: -120% 0; }
 }
 
 .ai-answer-actions {

@@ -9,6 +9,12 @@
     <link rel="manifest" href="manifest.json" />
     <link rel="icon" href="icons/stampnote.svg" type="image/svg+xml" />
     <link
+      rel="help"
+      href="OPERATIONS_AI_GUIDE.md"
+      type="text/markdown"
+      title="Operations AI page guide"
+    />
+    <link
       rel="preload"
       href="vendor/fonts/outfit-latin.woff2"
       as="font"
@@ -17,7 +23,7 @@
     />
     <link rel="stylesheet" href="vendor/fonts/outfit.css" />
     <link rel="stylesheet" href="sidebar.css" />
-    <link rel="stylesheet" href="ai-dashboard.css?v=20260817-4" />
+    <link rel="stylesheet" href="ai-dashboard.css?v=20260817-5" />
     <script>
       try {
         const saved = localStorage.getItem("stampnote-theme");
@@ -31,7 +37,7 @@
     <script src="firebase.js?v=20260816-2" defer></script>
     <script src="coordinates.js?v=20260817-1" defer></script>
     <script src="metrics.js?v=20260817-1" defer></script>
-    <script src="ai-dashboard.js?v=20260817-4" defer></script>
+    <script src="ai-dashboard.js?v=20260817-5" defer></script>
     <script src="sidebar.js" defer></script>
   </head>
   <body>
@@ -99,6 +105,12 @@
             <h2 id="ai-chat-title">Operations conversation</h2>
             <div class="ai-chat-heading-actions">
               <span id="ai-scope-label">Loading records…</span>
+              <a
+                class="ai-page-guide-link"
+                href="OPERATIONS_AI_GUIDE.md"
+                type="text/markdown"
+                rel="help"
+              >Agent guide</a>
               <button class="ai-icon-button" id="ai-refresh" type="button" title="Refresh records">
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                   <path d="M19.2 8.2A8 8 0 1 0 20 14" />

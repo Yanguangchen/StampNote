@@ -98,3 +98,20 @@ test("matching keeps representative views instead of relying on a blurred centro
     "the averaged vector alone is too far from either representative view",
   );
 });
+
+test("a nearest face is rejected when another worker is inside the safety margin", () => {
+  const live = [1, ...Array.from({ length: 127 }, () => 0)];
+  const closeRunnerUp = [
+    Math.cos(0.03),
+    Math.sin(0.03),
+    ...Array.from({ length: 126 }, () => 0),
+  ];
+
+  assert.equal(
+    workerFace.match(live, [
+      { workerId: "WORKER-1", embedding: live },
+      { workerId: "WORKER-2", embedding: closeRunnerUp },
+    ]),
+    null,
+  );
+});

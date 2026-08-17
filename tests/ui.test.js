@@ -751,8 +751,12 @@ test("cloud photos require sign-in and the admin dashboard groups them by place 
   assert.equal(existsSync(resolve(projectRoot, "storage.rules")), false);
   assert.match(firebase, /maxEdge = 512/);
   assert.match(firebase, /imageData:/);
-  assert.match(firestoreRules, /match \/\{document=\*\*\}/);
-  assert.match(firestoreRules, /allow read, write: if request\.auth != null/);
+  assert.match(firestoreRules, /match \/users\/\{userId\}\/\{document=\*\*\}/);
+  assert.match(firestoreRules, /request\.auth\.uid == userId/);
+  assert.match(firestoreRules, /resource\.data\.ownerId == request\.auth\.uid/);
+  assert.match(firestoreRules, /match \/\{path=\*\*\}\/entries\/\{entryId\}/);
+  assert.match(firestoreRules, /collection != "users"/);
+  assert.match(firestoreRules, /collection != "workers"/);
   assert.equal(/allow read, write: if true/.test(firestoreRules), false);
 });
 

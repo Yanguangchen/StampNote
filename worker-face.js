@@ -2,7 +2,8 @@
   "use strict";
 
   const EMBEDDING_LENGTH = 128;
-  const MATCH_THRESHOLD = 0.68;
+  const MATCH_THRESHOLD = 0.55;
+  const MATCH_MARGIN = 0.08;
   const MAX_TEMPLATES = 7;
 
   function normalizeWorkerId(value) {
@@ -123,7 +124,7 @@
       ? options.threshold
       : MATCH_THRESHOLD;
 
-    return workers
+    const ranked = workers
       .map((worker) => {
         const workerId = normalizeWorkerId(worker?.workerId);
         const workerEmbeddings = normalizeEmbeddings(worker?.embeddings, worker?.embedding);
@@ -141,12 +142,18 @@
           : null;
       })
       .filter((result) => result && result.distance <= threshold)
-      .sort((left, right) => left.distance - right.distance)[0] || null;
+      .sort((left, right) => left.distance - right.distance);
+    const nearest = ranked[0];
+    if (!nearest) return null;
+    const margin = Number.isFinite(options.margin) ? options.margin : MATCH_MARGIN;
+    if (ranked[1] && ranked[1].distance - nearest.distance < margin) return null;
+    return nearest;
   }
 
   const api = Object.freeze({
     EMBEDDING_LENGTH,
     MAX_TEMPLATES,
+    MATCH_MARGIN,
     MATCH_THRESHOLD,
     averageEmbeddings,
     distance,

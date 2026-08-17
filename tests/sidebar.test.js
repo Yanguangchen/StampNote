@@ -10,6 +10,7 @@ const sidebarCss = readFileSync(resolve(root, "sidebar.css"), "utf8");
 const captureHtml = readFileSync(resolve(root, "index.html"), "utf8");
 const adminHtml = readFileSync(resolve(root, "admin.html"), "utf8");
 const coordinatesHtml = readFileSync(resolve(root, "coordinates.html"), "utf8");
+const agentCoordinatesHtml = readFileSync(resolve(root, "agent-coordinates.html"), "utf8");
 const aiDashboardHtml = readFileSync(resolve(root, "ai-dashboard.html"), "utf8");
 const onboardingHtml = readFileSync(resolve(root, "onboarding.html"), "utf8");
 const workerPhotosHtml = readFileSync(resolve(root, "worker-photos.html"), "utf8");
@@ -126,7 +127,7 @@ function createSidebarHarness(pathname, options = {}) {
 }
 
 test("every switchable page loads the drawer and marks where its toggle goes", () => {
-  [captureHtml, adminHtml, coordinatesHtml, aiDashboardHtml, onboardingHtml, workerPhotosHtml].forEach((html) => {
+  [captureHtml, adminHtml, coordinatesHtml, agentCoordinatesHtml, aiDashboardHtml, onboardingHtml, workerPhotosHtml].forEach((html) => {
     assert.match(html, /<link rel="stylesheet" href="sidebar\.css" \/>/);
     assert.match(html, /<script src="sidebar\.js" defer><\/script>/);
     assert.match(html, /<header[^>]*data-sidebar-mount/);
@@ -147,6 +148,7 @@ test("sign-out is a door icon on every account control", () => {
   [
     ["admin.html", adminHtml],
     ["coordinates.html", coordinatesHtml],
+    ["agent-coordinates.html", agentCoordinatesHtml],
     ["onboarding.html", onboardingHtml],
     ["worker-photos.html", workerPhotosHtml],
     ["ai-dashboard.html", aiDashboardHtml],
@@ -206,6 +208,7 @@ test("the drawer lists every page and marks the one being viewed", () => {
       "worker-photos.html",
       "onboarding.html",
       "coordinates.html",
+      "agent-coordinates.html",
       "ai-dashboard.html",
       "admin.html",
       "metrics.html",
@@ -215,9 +218,13 @@ test("the drawer lists every page and marks the one being viewed", () => {
     links.find((link) => link.href === "coordinates.html")?.textContent,
     "Geographic Surveillence",
   );
+  assert.equal(
+    links.find((link) => link.href === "agent-coordinates.html")?.textContent,
+    "Coordinate entry",
+  );
   assert.deepEqual(
     links.map((link) => link.getAttribute("aria-current")),
-    [null, null, "page", null, null, null, null],
+    [null, null, "page", null, null, null, null, null],
   );
 
   // Each link carries an icon and its label, with no extra hint descriptions.
@@ -236,11 +243,12 @@ test("the drawer lists every page and marks the one being viewed", () => {
   assert.match(sidebarCss, /\.sidebar-heading:not\(:first-child\)/);
 
   // cleanUrls serves /admin without an extension, and a bare path is capture.
-  assert.equal(createSidebarHarness("/admin").links[5].getAttribute("aria-current"), "page");
+  assert.equal(createSidebarHarness("/admin").links[6].getAttribute("aria-current"), "page");
   assert.equal(createSidebarHarness("/coordinates").links[3].getAttribute("aria-current"), "page");
-  assert.equal(createSidebarHarness("/ai-dashboard").links[4].getAttribute("aria-current"), "page");
+  assert.equal(createSidebarHarness("/agent-coordinates").links[4].getAttribute("aria-current"), "page");
+  assert.equal(createSidebarHarness("/ai-dashboard").links[5].getAttribute("aria-current"), "page");
   assert.equal(createSidebarHarness("/worker-photos").links[1].getAttribute("aria-current"), "page");
-  assert.equal(createSidebarHarness("/metrics").links[6].getAttribute("aria-current"), "page");
+  assert.equal(createSidebarHarness("/metrics").links[7].getAttribute("aria-current"), "page");
   assert.equal(createSidebarHarness("/").links[0].getAttribute("aria-current"), "page");
 });
 

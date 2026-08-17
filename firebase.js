@@ -362,6 +362,8 @@
     const portrait = decodeProfilePhoto(input?.profilePhoto);
     const reference = cloud.firestoreSdk.doc(
       cloud.db,
+      "users",
+      user.uid,
       "workers",
       worker.workerId,
     );
@@ -403,24 +405,46 @@
   async function getWorkerFaces() {
     const cloud = services || (await ready);
     const user = requireUser(cloud, "Sign in with Google to load enrolled workers.");
-    const reference = cloud.firestoreSdk.collection(cloud.db, "workers");
-    const snapshot = await cloud.firestoreSdk.getDocs(reference);
+    const scopedReference = cloud.firestoreSdk.collection(
+      cloud.db,
+      "users",
+      user.uid,
+      "workers",
+    );
+    const legacyReference = cloud.firestoreSdk.query(
+      cloud.firestoreSdk.collection(cloud.db, "workers"),
+      cloud.firestoreSdk.where("ownerId", "==", user.uid),
+    );
+    const [scopedSnapshot, legacySnapshot] = await Promise.all([
+      cloud.firestoreSdk.getDocs(scopedReference),
+      cloud.firestoreSdk.getDocs(legacyReference),
+    ]);
+    const workers = new Map();
 
-    return snapshot.docs
-      .map((entry) => {
-        try {
-          const data = entry.data();
-          return {
-            documentId: entry.id,
-            ...workerRecord(data),
-            profilePhoto: encodeProfilePhoto(data),
-          };
-        } catch {
-          return null;
-        }
-      })
-      .filter(Boolean)
-      .sort((left, right) => left.workerId.localeCompare(right.workerId));
+    function addWorker(entry, { legacy = false } = {}) {
+      try {
+        const data = entry.data();
+        // The query enforces this in Firestore; repeat it here so an injected
+        // client or stale cache cannot feed another account's legacy template
+        // into face matching.
+        if (legacy && String(data?.ownerId || "") !== user.uid) return;
+        const worker = {
+          documentId: entry.id,
+          ...workerRecord(data),
+          profilePhoto: encodeProfilePhoto(data),
+        };
+        workers.set(worker.workerId, worker);
+      } catch {
+        // A malformed template is ignored without blocking the valid roster.
+      }
+    }
+
+    legacySnapshot.docs.forEach((entry) => addWorker(entry, { legacy: true }));
+    // Account-scoped records win over their legacy copy after re-enrollment.
+    scopedSnapshot.docs.forEach((entry) => addWorker(entry));
+    return [...workers.values()].sort((left, right) =>
+      left.workerId.localeCompare(right.workerId),
+    );
   }
 
   async function deleteWorkerFace(workerId) {
@@ -430,9 +454,32 @@
     if (!/^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(normalized)) {
       throw new Error("The worker enrollment has no valid ID.");
     }
-    await cloud.firestoreSdk.deleteDoc(
-      cloud.firestoreSdk.doc(cloud.db, "workers", normalized),
+    const scopedReference = cloud.firestoreSdk.doc(
+      cloud.db,
+      "users",
+      user.uid,
+      "workers",
+      normalized,
     );
+    const legacySnapshot = await cloud.firestoreSdk.getDocs(
+      cloud.firestoreSdk.query(
+        cloud.firestoreSdk.collection(cloud.db, "workers"),
+        cloud.firestoreSdk.where("ownerId", "==", user.uid),
+      ),
+    );
+    const legacyReferences = legacySnapshot.docs
+      .filter((entry) => {
+        const value = entry.data();
+        return (
+          String(value?.ownerId || "") === user.uid &&
+          String(value?.workerId || entry.id).trim().toUpperCase() === normalized
+        );
+      })
+      .map((entry) => cloud.firestoreSdk.doc(cloud.db, "workers", entry.id));
+    await Promise.all([
+      cloud.firestoreSdk.deleteDoc(scopedReference),
+      ...legacyReferences.map((reference) => cloud.firestoreSdk.deleteDoc(reference)),
+    ]);
   }
 
   async function saveAttendance(input) {

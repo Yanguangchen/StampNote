@@ -49,7 +49,15 @@ test("Gemini receives a grounded, read-only operations question", async () => {
   assert.equal(call.maxOutputTokens, 1_400);
   assert.match(call.instructions, /read-only assistant/);
   assert.match(call.instructions, /Never invent a worker, session, date, location, count/);
+  assert.match(call.instructions, /Reason across the retrieved facts/);
+  assert.match(call.instructions, /GPS-clustered alias is strong evidence/);
+  assert.match(call.instructions, /Do not answer "no records" merely because the stored label differs/);
+  assert.match(call.instructions, /name its photo ID and cite that photo's specific flag fact/);
+  assert.match(call.instructions, /display the authenticated photo inside the same chat answer/);
   assert.match(call.instructions, /same definitions and daily ranges as the StampNote Metrics page/);
+  assert.match(call.instructions, /Do not pad an answer with nearby facts/);
+  assert.match(call.instructions, /No check-ins were recorded at Airport today/);
+  assert.match(call.instructions, /current local date stated in the overview fact/);
   assert.match(call.messages.at(-1).content, /\[S2\] \(flag\)/);
   assert.match(call.messages.at(-1).content, /Which sessions are flagged/);
 });

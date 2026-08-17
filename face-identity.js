@@ -9,7 +9,7 @@
     minimumEyePixels: 12,
     modelPath: "./vendor/face-api/model",
     sampleMs: 1_000,
-    enrollmentSamples: 2,
+    enrollmentSamples: 3,
     enrollmentMinimumEyePixels: 52,
     enrollmentMinimumEyeRatio: 0.055,
     enrollmentMaximumRoll: 0.16,
@@ -17,12 +17,12 @@
     enrollmentMaximumScaleShift: 0.28,
     enrollmentMaximumRollShift: 0.14,
     enrollmentConsistencyThreshold: 0.72,
-    // Unit normalization makes front/rear-camera distances comparable. Two
-    // samples must both agree, keeping the check quick without allowing one
-    // loose descriptor to name a worker.
-    knownIdentityThreshold: 0.68,
-    knownIdentityMargin: 0.05,
-    knownIdentityVotes: 2,
+    // Unit normalization makes front/rear-camera distances comparable. Three
+    // independently sampled views must agree, and the nearest worker must be
+    // clearly separated from the runner-up on every accepted view.
+    knownIdentityThreshold: 0.55,
+    knownIdentityMargin: 0.08,
+    knownIdentityVotes: 3,
   });
 
   // One page, one recognition network.
@@ -230,13 +230,11 @@
       ranked[1] &&
       ranked[1].distance - nearest.distance < settings.knownIdentityMargin
     ) {
-      // One frame can be close to two workers, especially when every worker
-      // has several enrollment views. Keep its nearest candidate so the
-      // two-frame check can resolve the ambiguity. A single ambiguous
-      // descriptor is never enough to identify anyone: the same worker must
-      // still win both independent samples.
+      // Repeated ambiguity is still ambiguity. Returning the nearest worker as
+      // a match here allowed the same uncertain candidate to collect enough
+      // votes to record attendance under the wrong name.
       return {
-        match: { ...nearest.identity, distance: nearest.distance, ambiguous: true },
+        match: null,
         nearest,
         runnerUp: ranked[1],
         reason: "ambiguous",

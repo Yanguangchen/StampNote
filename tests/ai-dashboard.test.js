@@ -17,6 +17,7 @@ const css = readFileSync(resolve(root, "ai-dashboard.css"), "utf8");
 const source = readFileSync(resolve(root, "ai-dashboard.js"), "utf8");
 const adminSource = readFileSync(resolve(root, "admin.js"), "utf8");
 const coordinatesSource = readFileSync(resolve(root, "coordinates.js"), "utf8");
+const operationsAiGuide = readFileSync(resolve(root, "OPERATIONS_AI_GUIDE.md"), "utf8");
 
 function knowledgeFixture() {
   const location = "10 Marina Bay";
@@ -89,6 +90,17 @@ test("the AI dashboard is the conversation, its prompts, and its sources", () =>
   assert.match(html, /data-ai-question="Show me the flagged sessions/);
   assert.match(html, /data-ai-question="Show the last 30 days of Metrics statistics and graphs/);
   assert.match(html, /<script src="metrics\.js\?v=/);
+  assert.match(
+    html,
+    /<link\s+rel="help"\s+href="OPERATIONS_AI_GUIDE\.md"\s+type="text\/markdown"/,
+  );
+  assert.match(
+    html,
+    /class="ai-page-guide-link"[\s\S]*?href="OPERATIONS_AI_GUIDE\.md"[\s\S]*?rel="help"/,
+  );
+  assert.match(operationsAiGuide, /#ai-prompt/);
+  assert.match(operationsAiGuide, /data-state="complete"/);
+  assert.match(operationsAiGuide, /assistant is read-only/i);
   assert.doesNotMatch(html, /Try asking|ai-suggested-questions/);
   assert.match(
     html,
@@ -124,6 +136,10 @@ test("the knowledge index joins flags, weather, photos, sessions, and attendance
   assert.equal(knowledge.sessions[0].flaggedForReview, true);
   assert.equal(knowledge.sessions[0].weatherIssue, true);
   assert.ok(knowledge.facts.some((fact) => fact.kind === "flag"));
+  const photoFlag = knowledge.facts.find((fact) => fact.photoFlag?.photoId === "photo-1");
+  assert.ok(photoFlag, "the flagged image has its own citable fact");
+  assert.match(photoFlag.text, /Specific photo flag photo-1/);
+  assert.match(photoFlag.text, /Unusable/);
   assert.ok(knowledge.facts.some((fact) => fact.kind === "weather"));
   assert.ok(
     knowledge.facts.some(
@@ -134,6 +150,37 @@ test("the knowledge index joins flags, weather, photos, sessions, and attendance
   assert.equal(knowledge.metricSeries[30].find((entry) => entry.id === "attendance").total, 1);
   assert.equal(knowledge.metricSeries[30].find((entry) => entry.id === "flags").total, 1);
   assert.ok(knowledge.facts.some((fact) => fact.kind === "metric" && fact.rangeDays === 30));
+});
+
+test("only specifically cited photo flags are selected for inline display", () => {
+  const knowledge = knowledgeFixture();
+  const request = dashboard.createAssistantPayload(
+    "Why was photo-1 flagged?",
+    [],
+    knowledge,
+  );
+  const photoSource = request.sources.find((fact) => fact.photoFlag?.photoId === "photo-1");
+  const transmitted = request.payload.facts.find((fact) => /photo-1/.test(fact.text));
+
+  assert.ok(photoSource);
+  assert.equal(Object.hasOwn(transmitted, "photoFlag"), false, "image data stays in the browser");
+  assert.deepEqual(
+    dashboard.photoFlagsMentionedInAnswer(
+      `Photo photo-1 was unusable [${photoSource.ref}].`,
+      request.sources,
+    ).map((fact) => fact.photoFlag.photoId),
+    ["photo-1"],
+  );
+  assert.deepEqual(
+    dashboard.photoFlagsMentionedInAnswer(
+      "The session has one photo flag [S1].",
+      request.sources,
+    ),
+    [],
+  );
+  assert.match(source, /createFlaggedPhotoGallery\(result\.answer, request\.sources\)/);
+  assert.match(source, /cloud\.getPhotoBlob\(photoFlag\.photo\)/);
+  assert.match(css, /\.ai-flagged-photo-gallery\s*\{/);
 });
 
 test("metrics questions retrieve exact Metrics-page series and choose truthful graphs", () => {
@@ -184,6 +231,132 @@ test("retrieval favors the requested operational evidence and returns bounded ci
   assert.equal(request.payload.scope.retrieved, request.payload.facts.length);
   assert.equal(request.payload.scope.flaggedSessions, 1);
   assert.ok(request.payload.facts.some((fact) => fact.kind === "flag"));
+});
+
+test("a location with no activity today does not retrieve unrelated sites", () => {
+  const knowledge = knowledgeFixture();
+  const retrieval = dashboard.rankKnowledge(
+    "Were there any attendance check-ins at Airport today?",
+    knowledge,
+  );
+
+  assert.equal(knowledge.currentDate, "2026-08-17");
+  assert.deepEqual(retrieval.facts.map((fact) => fact.kind), ["overview", "overview"]);
+  assert.match(retrieval.facts[0].text, /Current local date: 2026-08-17/);
+  assert.match(retrieval.facts[1].text, /found 0 records/);
+  assert.match(retrieval.facts[1].text, /airport/);
+  assert.match(retrieval.facts[1].text, /on 2026-08-17/);
+  assert.doesNotMatch(retrieval.facts[1].text, /10 Marina Bay/);
+
+  const phrasedWithFor = dashboard.rankKnowledge(
+    "Were there any attendance check-ins for Airport today?",
+    knowledge,
+  );
+  assert.match(phrasedWithFor.facts[1].text, /found 0 records/);
+  assert.doesNotMatch(phrasedWithFor.facts[1].text, /10 Marina Bay/);
+});
+
+test("a differently worded airport address reaches Gemini as a reasoning candidate", () => {
+  const capturedAtMs = Date.parse("2026-08-16T09:10:00.000Z");
+  const knowledge = dashboard.buildKnowledgeBase(
+    {
+      photos: [
+        {
+          id: "airport-photo",
+          capturedAtMs,
+          dateKey: "2026-08-16",
+          location: "65 T1 Boulevard",
+          gpsLocation: { latitude: 1.3644, longitude: 103.9915, accuracyMeters: 8 },
+        },
+        {
+          id: "parbury-photo",
+          capturedAtMs,
+          dateKey: "2026-08-16",
+          location: "34 Parbury Avenue",
+          gpsLocation: { latitude: 1.31, longitude: 103.92, accuracyMeters: 8 },
+        },
+      ],
+      attendance: [],
+      savedSessions: [],
+      now: Date.parse("2026-08-17T09:00:00.000Z"),
+    },
+    data,
+    coordinates,
+    metrics,
+  );
+
+  const retrieval = dashboard.rankKnowledge(
+    "What happened at 64 Airport Blvd?",
+    knowledge,
+  );
+
+  assert.equal(retrieval.facts[1].kind, "overview");
+  assert.match(retrieval.facts[1].text, /plausible site session candidate/);
+  assert.ok(retrieval.facts.some((fact) => /65 T1 Boulevard/.test(fact.text)));
+  assert.equal(retrieval.facts.some((fact) => /34 Parbury Avenue/.test(fact.text)), false);
+  assert.equal(retrieval.facts.some((fact) => /found 0 records/.test(fact.text)), false);
+});
+
+test("GPS-clustered address aliases are explicit same-site evidence", () => {
+  const capturedAtMs = Date.parse("2026-08-16T09:10:00.000Z");
+  const knowledge = dashboard.buildKnowledgeBase(
+    {
+      photos: [
+        {
+          id: "canonical-1",
+          capturedAtMs,
+          dateKey: "2026-08-16",
+          location: "65 T1 Boulevard",
+          gpsLocation: { latitude: 1.3644, longitude: 103.9915, accuracyMeters: 8 },
+        },
+        {
+          id: "canonical-2",
+          capturedAtMs: capturedAtMs + 1_000,
+          dateKey: "2026-08-16",
+          location: "65 T1 Boulevard",
+          gpsLocation: { latitude: 1.36441, longitude: 103.9915, accuracyMeters: 8 },
+        },
+        {
+          id: "alias",
+          capturedAtMs: capturedAtMs + 2_000,
+          dateKey: "2026-08-16",
+          location: "64 Airport Blvd",
+          gpsLocation: { latitude: 1.36442, longitude: 103.99151, accuracyMeters: 8 },
+        },
+      ],
+      attendance: [],
+      savedSessions: [],
+      now: Date.parse("2026-08-17T09:00:00.000Z"),
+    },
+    data,
+    coordinates,
+    metrics,
+  );
+
+  const retrieval = dashboard.rankKnowledge(
+    "I sent my team to 64 Airport Blvd, what happened in that session?",
+    knowledge,
+  );
+  const session = retrieval.facts.find((fact) => fact.kind === "session");
+
+  assert.match(session.text, /65 T1 Boulevard/);
+  assert.match(session.text, /GPS-clustered address alias.*64 Airport Blvd/);
+});
+
+test("a named worker or site retrieves only directly matching records", () => {
+  const knowledge = knowledgeFixture();
+  const worker = dashboard.rankKnowledge("When did Jane Tan check in?", knowledge);
+  const site = dashboard.rankKnowledge("What happened at 10 Marina Bay?", knowledge);
+
+  assert.ok(worker.facts.slice(1).some((fact) => /Jane Tan/.test(fact.text)));
+  assert.ok(worker.facts.slice(1).every((fact) => /jane|tan/.test(fact.searchText)));
+  assert.ok(site.facts.slice(1).some((fact) => /10 Marina Bay/.test(fact.text)));
+  assert.ok(site.facts.slice(1).every((fact) => /10|marina|bay/.test(fact.searchText)));
+  const latest = dashboard.rankKnowledge(
+    "Summarize the latest recorded site activity and anything needing attention.",
+    knowledge,
+  );
+  assert.ok(latest.facts.slice(1).some((fact) => fact.kind === "session"));
 });
 
 test("local Live Server uses the deployed API and reports connection failures clearly", () => {
