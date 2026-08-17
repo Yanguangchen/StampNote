@@ -78,15 +78,19 @@
 }
 
 html {
+  height: 100%;
   min-height: 100%;
   background: var(--ai-paper);
 }
 
 body {
+  display: flex;
   min-width: 320px;
   min-height: 100dvh;
+  height: 100dvh;
+  flex-direction: column;
   margin: 0;
-  overflow-x: hidden;
+  overflow: hidden;
   background: var(--ai-paper);
   color: var(--ai-ink);
   font-family: "Outfit", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -192,6 +196,7 @@ button {
   top: 0;
   z-index: 20;
   display: flex;
+  flex: none;
   min-height: 68px;
   align-items: center;
   gap: 14px;
@@ -289,9 +294,14 @@ button {
 }
 
 .ai-main {
-  width: min(1540px, 100%);
-  margin: 0 auto;
-  padding: clamp(28px, 4vw, 58px) clamp(16px, 3.5vw, 52px) 64px;
+  display: flex;
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
 }
 
 .ai-eyebrow {
@@ -316,10 +326,12 @@ button {
 
 .ai-dashboard-status {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 9px;
   min-height: 22px;
-  margin: 0 0 16px;
+  margin: 0;
+  padding: 8px clamp(16px, 4vw, 40px);
   color: var(--ai-muted);
   font-size: 12px;
   animation: ai-fade-enter 420ms var(--ai-ease) both;
@@ -341,10 +353,10 @@ button {
 
 .ai-auth-gate {
   display: grid;
-  width: min(560px, 100%);
+  width: min(560px, calc(100% - 32px));
   justify-items: center;
   gap: 12px;
-  margin: clamp(48px, 9vh, 110px) auto 0;
+  margin: auto;
   padding: clamp(28px, 5vw, 48px);
   border: 1px solid var(--ai-line);
   border-radius: 24px;
@@ -390,19 +402,11 @@ button {
 }
 
 .ai-workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 18px;
-  align-items: start;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
   animation: ai-fade-enter 620ms var(--ai-ease) 140ms both;
-}
-
-.ai-chat-panel {
-  border: 1px solid var(--ai-line);
-  border-radius: 22px;
-  background: var(--ai-surface-soft);
-  box-shadow: var(--ai-card-shadow);
-  backdrop-filter: blur(18px);
 }
 
 .ai-chat-heading {
@@ -439,17 +443,65 @@ button {
 
 
 .ai-chat-panel {
+  position: relative;
   display: flex;
-  min-height: min(730px, calc(100dvh - 150px));
+  min-height: 0;
+  flex: 1;
   flex-direction: column;
   overflow: hidden;
-  animation: ai-panel-right-enter 820ms var(--ai-ease) 260ms both;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  animation: ai-fade-enter 620ms var(--ai-ease) 180ms both;
+}
+
+.ai-scroll-bottom {
+  position: absolute;
+  right: 20px;
+  bottom: 124px;
+  z-index: 10;
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--ai-line-strong);
+  border-radius: 50%;
+  background: var(--ai-surface);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  color: var(--ai-ink);
+  cursor: pointer;
+  opacity: 0.95;
+  transition: opacity 180ms ease, transform 180ms ease, background 180ms ease;
+  animation: ai-fade-enter 220ms var(--ai-ease) both;
+}
+
+.ai-scroll-bottom:hover {
+  opacity: 1;
+  transform: translateY(-2px);
+  background: var(--ai-field);
+  color: var(--ai-accent);
+}
+
+.ai-scroll-bottom[hidden] {
+  display: none !important;
+}
+
+.ai-scroll-bottom svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .ai-chat-heading {
-  padding: 18px 20px;
+  padding: 14px clamp(16px, 4vw, 40px);
   border-bottom: 1px solid var(--ai-line);
-  background: color-mix(in srgb, var(--ai-surface) 82%, transparent);
+  background: color-mix(in srgb, var(--ai-paper) 78%, transparent);
 }
 
 .ai-chat-heading-actions {
@@ -491,7 +543,7 @@ button {
      separate without a rule or a box drawn between them. */
   gap: 26px;
   margin: 0;
-  padding: clamp(18px, 3vw, 32px);
+  padding: clamp(18px, 3vw, 32px) clamp(16px, 6vw, 80px);
   overflow-y: auto;
   overscroll-behavior: contain;
   scroll-behavior: smooth;
@@ -606,6 +658,13 @@ button {
   padding-left: 3px;
 }
 
+/* A list nested inside an item is part of that item, so it sits under the
+   parent's text rather than floating away from it. */
+.ai-message-body li > ul,
+.ai-message-body li > ol {
+  margin-top: 6px;
+}
+
 .ai-message-body li::marker {
   color: var(--ai-muted);
 }
@@ -688,6 +747,44 @@ button {
 
 .ai-sources strong {
   color: var(--ai-accent);
+}
+
+.ai-external-geography {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--ai-accent) 22%, var(--ai-line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ai-accent-soft) 58%, transparent);
+  color: var(--ai-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.ai-external-geography > strong {
+  color: var(--ai-ink);
+  font-size: 11px;
+}
+
+.ai-external-geography p,
+.ai-external-geography ul {
+  margin: 0;
+}
+
+.ai-external-geography ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.ai-external-geography a {
+  color: var(--ai-accent);
+  font-weight: 700;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
 }
 
 .ai-flagged-photo-gallery {
@@ -958,6 +1055,26 @@ button {
   --ai-chart-color: var(--ai-danger);
 }
 
+.ai-inline-chart[data-series="workers"] {
+  --ai-chart-color: #6366f1;
+}
+
+:root[data-theme="dark"] .ai-inline-chart[data-series="workers"] {
+  --ai-chart-color: #818cf8;
+}
+
+.ai-inline-chart[data-series="locationFlags"] {
+  --ai-chart-color: #e11d48;
+}
+
+:root[data-theme="dark"] .ai-inline-chart[data-series="locationFlags"] {
+  --ai-chart-color: #f43f5e;
+}
+
+.ai-inline-chart[data-series="weatherImpact"] {
+  --ai-chart-color: var(--ai-weather);
+}
+
 .ai-inline-chart figcaption {
   display: flex;
   align-items: flex-start;
@@ -1079,13 +1196,321 @@ button {
   text-align: right;
 }
 
+/* The recorded weather, drawn. Each scene is the same sky with different
+   weather in it, and every colour comes from the scene it belongs to, so a
+   storm reads as a storm before a single figure is read. */
+.ai-weather-scene {
+  --ai-sky-top: #cfe4f5;
+  --ai-sky-bottom: #eef4f8;
+  --ai-scene-ink: #2f6ea8;
+  --ai-cloud: rgba(255, 255, 255, 0.94);
+  display: grid;
+  gap: 10px;
+  margin: 14px 0 2px;
+  padding: 12px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--ai-scene-ink) 30%, var(--ai-line));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--ai-field) 92%, var(--ai-scene-ink) 8%);
+  animation: ai-chart-enter 540ms var(--ai-ease) both;
+}
+
+.ai-weather-scene[data-scene="clear"] {
+  --ai-sky-top: #7ec2ef;
+  --ai-sky-bottom: #d9eefb;
+  --ai-scene-ink: #1f7fbe;
+}
+
+.ai-weather-scene[data-scene="partly"] {
+  --ai-sky-top: #8fc9ee;
+  --ai-sky-bottom: #e2eff8;
+  --ai-scene-ink: #2b83bb;
+}
+
+.ai-weather-scene[data-scene="overcast"],
+.ai-weather-scene[data-scene="fog"] {
+  --ai-sky-top: #b4c0c8;
+  --ai-sky-bottom: #dfe5e9;
+  --ai-scene-ink: #5c6f7c;
+  --ai-cloud: rgba(255, 255, 255, 0.88);
+}
+
+.ai-weather-scene[data-scene="drizzle"] {
+  --ai-sky-top: #9db6c8;
+  --ai-sky-bottom: #d5e1e9;
+  --ai-scene-ink: #3d7a9c;
+}
+
+.ai-weather-scene[data-scene="rain"] {
+  --ai-sky-top: #7891a5;
+  --ai-sky-bottom: #b9cbd8;
+  --ai-scene-ink: #2f6484;
+  --ai-cloud: rgba(238, 244, 248, 0.92);
+}
+
+.ai-weather-scene[data-scene="storm"] {
+  --ai-sky-top: #414f60;
+  --ai-sky-bottom: #7b8b9b;
+  --ai-scene-ink: var(--ai-danger);
+  --ai-cloud: rgba(214, 224, 233, 0.9);
+}
+
+.ai-weather-scene[data-scene="snow"] {
+  --ai-sky-top: #9fb2c4;
+  --ai-sky-bottom: #e6edf3;
+  --ai-scene-ink: #56789a;
+}
+
+.ai-weather-scene figcaption {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.ai-weather-scene figcaption > div {
+  display: grid;
+  gap: 2px;
+}
+
+.ai-weather-scene figcaption span {
+  color: var(--ai-muted);
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.ai-weather-scene figcaption strong {
+  font-size: 13px;
+}
+
+.ai-weather-scene figcaption p {
+  margin: 0;
+  color: var(--ai-scene-ink);
+  font-size: 10px;
+  font-weight: 760;
+  text-align: right;
+}
+
+.ai-weather-scene svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--ai-line);
+  border-radius: 11px;
+}
+
+.ai-weather-sky-top {
+  stop-color: var(--ai-sky-top);
+}
+
+.ai-weather-sky-bottom {
+  stop-color: var(--ai-sky-bottom);
+}
+
+.ai-weather-sun-disc {
+  fill: #ffd66b;
+}
+
+.ai-weather-rays line {
+  stroke: rgba(255, 214, 107, 0.85);
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+
+.ai-weather-rays {
+  transform-origin: 0 0;
+  animation: ai-weather-rays 26s linear infinite;
+}
+
+.ai-weather-scene[data-scene="overcast"] .ai-weather-sun,
+.ai-weather-scene[data-scene="rain"] .ai-weather-sun,
+.ai-weather-scene[data-scene="storm"] .ai-weather-sun,
+.ai-weather-scene[data-scene="snow"] .ai-weather-sun {
+  opacity: 0.32;
+}
+
+.ai-weather-cloud ellipse {
+  fill: var(--ai-cloud);
+}
+
+/* The deck drifts rather than travels: an overcast sky that emptied itself
+   across the frame would stop being overcast halfway through. */
+.ai-weather-cloud {
+  animation: ai-weather-drift 38s ease-in-out infinite alternate;
+}
+
+.ai-weather-drop {
+  stroke: color-mix(in srgb, var(--ai-scene-ink) 70%, #ffffff);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  animation: ai-weather-fall 1s linear infinite;
+}
+
+.ai-weather-flake {
+  fill: #ffffff;
+  animation: ai-weather-flake 5s linear infinite;
+}
+
+.ai-weather-fog {
+  fill: rgba(255, 255, 255, 0.62);
+  animation: ai-weather-fog 24s ease-in-out infinite;
+}
+
+.ai-weather-bolt {
+  fill: #ffe27a;
+  transform-box: fill-box;
+  transform-origin: center top;
+  animation: ai-weather-bolt 4.2s steps(1, end) infinite;
+}
+
+.ai-weather-flash {
+  fill: #fff6d8;
+  opacity: 0;
+  animation: ai-weather-flash 4.2s steps(1, end) infinite;
+}
+
+.ai-weather-ground {
+  fill: color-mix(in srgb, var(--ai-scene-ink) 24%, #20321f);
+}
+
+.ai-weather-horizon {
+  stroke: rgba(255, 255, 255, 0.32);
+  stroke-width: 1.5;
+}
+
+.ai-weather-figures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ai-weather-figures span {
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--ai-scene-ink) 26%, var(--ai-line));
+  border-radius: 999px;
+  background: var(--ai-surface);
+  color: var(--ai-ink);
+  font-size: 10px;
+  font-weight: 720;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes ai-weather-drift {
+  from {
+    transform: translateX(-26px);
+  }
+
+  to {
+    transform: translateX(26px);
+  }
+}
+
+@keyframes ai-weather-rays {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes ai-weather-fall {
+  from {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+
+  12% {
+    opacity: 1;
+  }
+
+  to {
+    transform: translate(-16px, 86px);
+    opacity: 0;
+  }
+}
+
+@keyframes ai-weather-flake {
+  from {
+    transform: translate(0, 0);
+    opacity: 0;
+  }
+
+  14% {
+    opacity: 1;
+  }
+
+  50% {
+    transform: translate(11px, 44px);
+  }
+
+  to {
+    transform: translate(-7px, 86px);
+    opacity: 0;
+  }
+}
+
+@keyframes ai-weather-fog {
+  0%,
+  100% {
+    transform: translateX(-64px);
+  }
+
+  50% {
+    transform: translateX(64px);
+  }
+}
+
+/* A strike, then a long wait: lightning that flickered continuously would be
+   decoration rather than a reading of a storm. */
+@keyframes ai-weather-bolt {
+  0%,
+  4%,
+  9% {
+    opacity: 1;
+  }
+
+  6%,
+  11%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes ai-weather-flash {
+  0%,
+  9% {
+    opacity: 0.34;
+  }
+
+  6%,
+  11%,
+  100% {
+    opacity: 0;
+  }
+}
+
+:root[data-theme="dark"] .ai-weather-scene,
+:root[data-theme="dark"] .ai-weather-scene[data-scene="clear"],
+:root[data-theme="dark"] .ai-weather-scene[data-scene="partly"] {
+  --ai-scene-ink: #7cc0ee;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ai-weather-scene,
+  :root:not([data-theme="light"]) .ai-weather-scene[data-scene="clear"],
+  :root:not([data-theme="light"]) .ai-weather-scene[data-scene="partly"] {
+    --ai-scene-ink: #7cc0ee;
+  }
+}
+
 .ai-prompt-suggestions {
   position: relative;
   z-index: 3;
   display: flex;
   flex: none;
   gap: 7px;
-  margin: 0 clamp(18px, 3vw, 28px) -2px;
+  width: min(920px, calc(100% - 24px));
+  margin: 0 auto -2px;
   padding: 10px 2px 8px;
   overflow-x: auto;
   overscroll-behavior-inline: contain;
@@ -1137,7 +1562,8 @@ button {
   display: flex;
   align-items: flex-end;
   gap: 10px;
-  margin: 0 clamp(14px, 2.5vw, 24px);
+  width: min(920px, calc(100% - 24px));
+  margin: 0 auto max(32px, calc(20px + env(safe-area-inset-bottom)));
   padding: 10px;
   border: 1px solid var(--ai-line-strong);
   border-radius: 17px;
@@ -1294,7 +1720,8 @@ button {
 }
 
 .ai-voice-status {
-  margin: 7px clamp(20px, 3vw, 30px) 0;
+  width: min(920px, calc(100% - 24px));
+  margin: 7px auto 0;
   color: var(--ai-muted);
   font-size: 9px;
   line-height: 1.4;
@@ -1306,6 +1733,7 @@ button {
 .ai-listen:focus-visible,
 .ai-mic-button:focus-visible,
 .ai-send-button:focus-visible,
+.ai-external-geography a:focus-visible,
 .ai-sources summary:focus-visible {
   outline: 2px solid var(--ai-accent);
   outline-offset: 2px;
@@ -1383,16 +1811,6 @@ button {
   to { transform: rotate(360deg); }
 }
 
-@media (max-width: 980px) {
-  .ai-workspace {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .ai-chat-panel {
-    min-height: 680px;
-  }
-}
-
 @media (max-width: 680px) {
   .ai-header {
     padding-inline: 12px;
@@ -1409,15 +1827,18 @@ button {
   }
 
   .ai-main {
-    padding-inline: 12px;
-  }
-
-  .ai-workspace {
-    gap: 12px;
+    padding: 0;
   }
 
   .ai-chat-panel {
-    border-radius: 17px;
+    min-height: 0;
+  }
+
+  .ai-scroll-bottom {
+    right: 14px;
+    bottom: 112px;
+    width: 34px;
+    height: 34px;
   }
 
   .ai-chat-heading {
@@ -1432,8 +1853,10 @@ button {
     padding: 16px 12px;
   }
 
-  .ai-prompt-suggestions {
-    margin-inline: 12px;
+  .ai-prompt-suggestions,
+  .ai-chat-form {
+    width: min(920px, calc(100% - 16px));
+    margin-inline: auto;
   }
 
   .ai-message-user {
@@ -1494,6 +1917,16 @@ button {
     .ai-inline-map,
     .ai-inline-chart,
     .ai-stat-bar,
+  /* The weather still reads as a still picture: the drops and clouds simply
+     stop where they were drawn. */
+  .ai-weather-scene,
+  .ai-weather-cloud,
+  .ai-weather-rays,
+  .ai-weather-drop,
+  .ai-weather-flake,
+  .ai-weather-fog,
+  .ai-weather-bolt,
+  .ai-weather-flash,
   .ai-prompt-suggestions button,
   .ai-mic-button[data-state="listening"] {
     animation: none !important;

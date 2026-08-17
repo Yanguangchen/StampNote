@@ -2,6 +2,7 @@
   "use strict";
 
   const MAX_RETRIEVED_FACTS = 24;
+  const MAX_PUBLIC_SITE_CANDIDATES = 6;
   const MATCHED_TOKEN_SCORE = 4;
   const METRIC_RANGE_DAYS = Object.freeze([7, 30, 90]);
   const ROAD_WORDS = new Map([
@@ -23,7 +24,7 @@
     "anybody", "anyone", "anything", "are", "at", "attendance", "attend", "attended",
     "attending", "attention", "be", "been", "being", "between", "by", "can", "check",
     "check-in", "check-ins", "checked", "checking", "coordinate", "coordinates", "current",
-    "data", "delay", "delays", "did", "discrepancies", "discrepancy", "do", "does", "each",
+    "data", "delay", "delays", "did", "discrepancies", "discrepancy", "do", "does", "during", "each",
     "everybody", "everything", "explain", "flag", "flagged", "flagging", "flags", "for",
     "from", "go", "gps", "graph", "graphs", "gust", "gusts", "had", "happen", "happened",
     "happening", "has", "have", "hour", "hours", "how", "i", "impact", "in", "is", "it", "latest",
@@ -100,9 +101,66 @@
       /\b(?:at|for|from|site|worker)\s+(?:the\s+)?(.+?)(?=\b(?:today|yesterday|on|during|session|sessions|check|checked|attendance|worker|workers)\b|$)/,
     );
     if (scoped?.[1]) fragments.push(scoped[1]);
+    if (!/\b(?:is|are)\s+.{1,120}\s+(?:in|near|within)\b/.test(normalized)) {
+      const geographicScope = normalized.match(
+        /\b(?:in|near|around|within)\s+(?:the\s+)?(.+?)(?=\b(?:today|yesterday|on|during|session|sessions|check|checked|attendance|worker|workers)\b|$)/,
+      );
+      if (geographicScope?.[1]) fragments.push(geographicScope[1]);
+    }
     const sentTo = String(question || "").match(/\bsent\b.{0,48}?\bto\s+([^,?.]+)/i);
     if (sentTo?.[1]) fragments.push(sentTo[1]);
     return identifyingQueryTokens(fragments.join(" "), asksMetrics);
+  }
+
+  function questionRequestsIntendedSiteComparison(question) {
+    const normalized = normalizeSearchText(question);
+    const asksForMismatch =
+      /\b(discrep\w*|mismatch\w*|compare|comparison|different|difference|wrong location|off site|offsite)\b/.test(
+        normalized,
+      );
+    const namesIntendedPlace =
+      /\b(intended|assigned|planned|expected|supposed|destination|site|address)\b/.test(normalized);
+    const namesObservedPlace =
+      /\b(staff|worker|workers|team|crew|photo gps|gps|truck|vehicle)\b/.test(normalized);
+    const asksThreeWay =
+      /\b(?:staff|worker|workers|team|crew)\b.{0,80}\b(?:truck|vehicle)\b/.test(normalized) ||
+      /\b(?:truck|vehicle)\b.{0,80}\b(?:staff|worker|workers|team|crew)\b/.test(normalized);
+    return (
+      (asksForMismatch && namesObservedPlace) ||
+      (namesIntendedPlace && namesObservedPlace && (asksForMismatch || asksThreeWay))
+    );
+  }
+
+  function questionRequestsPublicGeography(question, unmatchedSiteLookup = false) {
+    const normalized = normalizeSearchText(question);
+    if (questionRequestsIntendedSiteComparison(question)) return true;
+    const asksForRelationship =
+      /\b(where is|where are|located|is in|are in|belongs to|part of|locality|district|neighborhood|neighbourhood|region|city|country|public address)\b/.test(
+        normalized,
+      ) || /\b(?:is|are)\s+.{1,120}\s+(?:in|near|within)\b/.test(normalized);
+    if (asksForRelationship) return true;
+    return (
+      unmatchedSiteLookup &&
+      /\b(?:at|in|near|around|within)\s+[a-z0-9]/.test(normalized)
+    );
+  }
+
+  function isPublicSiteLabel(value) {
+    const label = String(value || "").trim();
+    if (
+      label.length < 2 ||
+      label.length > 160 ||
+      /[\r\n<>]/.test(label) ||
+      /https?:\/\//i.test(label) ||
+      /[\w.+-]+@[\w.-]+\.[a-z]{2,}/i.test(label)
+    ) {
+      return false;
+    }
+    const normalized = normalizeSearchText(label);
+    return (
+      /\d/.test(normalized) ||
+      /\b(?:airport|terminal|avenue|ave|boulevard|blvd|drive|lane|road|street)\b/.test(normalized)
+    );
   }
 
   function semanticSiteFeatures(value) {
@@ -271,6 +329,46 @@
     };
   }
 
+  // The intended site is the session's stored location label. Staff position
+  // comes from the best recorded session-start or photo GPS reading; an
+  // attendance event does not create a separate staff coordinate.
+  function intendedSiteSnapshot(record) {
+    const label = String(record?.location || "").trim();
+    if (!label) return null;
+    const reference = record?.reference;
+    const truck = record?.truckLocation;
+    const staffGps =
+      Number.isFinite(reference?.latitude) && Number.isFinite(reference?.longitude)
+        ? {
+            latitude: Number(reference.latitude),
+            longitude: Number(reference.longitude),
+            accuracyMeters: Math.max(0, Number(reference.accuracyMeters) || 0),
+          }
+        : null;
+    const truckPosition =
+      Number.isFinite(truck?.y) && Number.isFinite(truck?.x)
+        ? { latitude: Number(truck.y), longitude: Number(truck.x) }
+        : null;
+    return {
+      sessionKey: String(record.sessionKey || ""),
+      label,
+      staffGps,
+      truck: truckPosition,
+    };
+  }
+
+  function intendedLocationDescription(record) {
+    const snapshot = intendedSiteSnapshot(record);
+    if (!snapshot) return "Intended site is not recorded.";
+    const staff = snapshot.staffGps
+      ? `staff/session GPS reference ${snapshot.staffGps.latitude.toFixed(6)}, ${snapshot.staffGps.longitude.toFixed(6)} with ±${snapshot.staffGps.accuracyMeters} m recorded accuracy`
+      : "staff/session GPS reference not recorded";
+    const truck = snapshot.truck
+      ? `truck position ${snapshot.truck.latitude.toFixed(6)}, ${snapshot.truck.longitude.toFixed(6)}`
+      : "truck position not recorded";
+    return `Three-way location evidence: intended site ${snapshot.label}; ${staff}; ${truck}`;
+  }
+
   function buildMetricSeries(input, metricsApi) {
     if (typeof metricsApi?.buildDailyMetrics !== "function") return {};
     return Object.fromEntries(
@@ -431,6 +529,7 @@
         hasAttendance: metadata.hasAttendance === true,
         session: metadata.session || null,
         map: metadata.map || null,
+        intendedSite: metadata.intendedSite || null,
         photoFlag: metadata.photoFlag || null,
         metricId: metadata.metricId || "",
         rangeDays: Number(metadata.rangeDays) || 0,
@@ -474,6 +573,7 @@
     records.forEach((record) => {
       const linkedSession = sessionMetadata(record);
       const linkedMap = mapSnapshot(record);
+      const linkedIntendedSite = intendedSiteSnapshot(record);
       const attendeeText = record.attendees.length
         ? record.attendees.map((entry) => `${entry.displayName} (${entry.workerId})`).join(", ")
         : "none recorded";
@@ -493,6 +593,7 @@
           `${record.photoCount} photos (${record.flaggedPhotoCount} AI flags, ${record.coordinateFlaggedPhotoCount} photo location flags). ` +
           `${record.attendanceCount} attendance check-ins; workers: ${attendeeText}. ` +
           `Weather: ${weatherDescription(record.weather)}.${aliasText} ` +
+          `${intendedLocationDescription(record)}. ` +
           `GPS/truck comparison: ${comparisonDescription(record.comparison)}. ${flagText}`,
         {
           dateKey: record.dateKey,
@@ -501,6 +602,7 @@
           hasAttendance: record.attendanceCount > 0,
           session: linkedSession,
           map: linkedMap,
+          intendedSite: linkedIntendedSite,
           priority: record.flaggedForReview ? 12 : record.weatherIssue ? 9 : 4,
           keywords: `${siteKeywords} ${record.sessionLabel} ${record.attendees
             .map((entry) => `${entry.displayName} ${entry.workerId}`)
@@ -545,6 +647,7 @@
             flagged: true,
             session: linkedSession,
             map: linkedMap,
+            intendedSite: linkedIntendedSite,
             priority: 22,
             keywords: `${siteKeywords} ${photoId} photo image ${detail}`,
             siteKeywords,
@@ -570,6 +673,7 @@
             flagged: true,
             session: linkedSession,
             map: linkedMap,
+            intendedSite: linkedIntendedSite,
             priority: 18,
             keywords: siteKeywords,
             siteKeywords,
@@ -666,6 +770,7 @@
         ) {
           score += 24;
         }
+        if (!asksMetrics && fact.kind === "metric") score -= 15;
         if (asksRecent && /^\d{4}-\d{2}-\d{2}$/.test(fact.dateKey)) {
           score += Number(fact.dateKey.replaceAll("-", "")) / 10_000_000;
         }
@@ -703,6 +808,10 @@
       return true;
     });
     const lookupWasConstrained = identifyingTokens.length > 0 || requestedDates.length > 0;
+    const geographyLookupSuggested = questionRequestsPublicGeography(
+      question,
+      lookupWasConstrained && filtered.length === 0,
+    );
     const reasoningQuery = scopedIdentifyingTokens.length > 0
       ? scopedIdentifyingTokens.join(" ")
       : candidateIdentifyingTokens.join(" ");
@@ -747,7 +856,51 @@
           siteSearchText: "",
         }
       : null;
-    const zeroMatchFact = lookupWasConstrained && filtered.length === 0 && !reasoningNotice
+    const geographyCandidatePool =
+      geographyLookupSuggested &&
+      filtered.length === 0 &&
+      reasoningCandidates.length === 0 &&
+      requestedDates.length > 0
+        ? ranked.filter(
+            ({ fact }) =>
+              fact.kind === "session" &&
+              fact.session?.location &&
+              requestedDates.includes(fact.dateKey) &&
+              isPublicSiteLabel(fact.session.location),
+          )
+        : [];
+    const geographySiteLabels = [
+      ...new Set(
+        geographyCandidatePool.map(({ fact }) => normalizeSearchText(fact.session.location)),
+      ),
+    ].slice(0, MAX_PUBLIC_SITE_CANDIDATES);
+    const geographyCandidates = geographyCandidatePool
+      .filter(({ fact }) => geographySiteLabels.includes(normalizeSearchText(fact.session.location)))
+      .slice(0, Math.max(0, limit - 2));
+    const geographyNotice = geographyCandidates.length > 0
+      ? {
+          id: "overview:geography-candidates",
+          kind: "overview",
+          text:
+            `No exact stored site label matched ${identifyingTokens.join(" ")}. ` +
+            `${geographySiteLabels.length} same-date public site candidate(s) follow so Google Maps can verify whether an address belongs to the requested locality. ` +
+            `Do not treat the public geographic relationship as proof of attendance or other operational details without the corresponding session facts.`,
+          dateKey: requestedDates[0] || "",
+          flagged: false,
+          weatherIssue: false,
+          hasAttendance: false,
+          session: null,
+          map: null,
+          intendedSite: null,
+          metricId: "",
+          rangeDays: 0,
+          priority: 98,
+          searchText: normalizeSearchText(reasoningQuery),
+          siteSearchText: "",
+        }
+      : null;
+    const zeroMatchFact =
+      lookupWasConstrained && filtered.length === 0 && !reasoningNotice && !geographyNotice
       ? {
           id: "overview:query-zero-match",
           kind: "overview",
@@ -769,6 +922,8 @@
       : null;
     const relevantFacts = reasoningNotice
       ? [reasoningNotice, ...reasoningCandidates.map((entry) => entry.fact)]
+      : geographyNotice
+      ? [geographyNotice, ...geographyCandidates.map((entry) => entry.fact)]
       : zeroMatchFact
       ? [zeroMatchFact]
       : filtered.slice(0, Math.max(0, limit - 1)).map((entry) => entry.fact);
@@ -780,12 +935,44 @@
       facts: selected,
       retrieved: selected.length,
       totalFacts: knowledge.facts.length,
+      geographyLookupSuggested,
     };
   }
 
   function createAssistantPayload(question, history, knowledge) {
     const retrieval = rankKnowledge(question, knowledge);
     const metrics = knowledge.metrics;
+    const comparesIntendedSite = questionRequestsIntendedSiteComparison(question);
+    const seenPublicSites = new Set();
+    const publicSites = retrieval.geographyLookupSuggested
+      ? retrieval.facts
+          .filter(
+            (fact) =>
+              (fact.kind === "session" || fact.kind === "flag") &&
+              fact.intendedSite &&
+              isPublicSiteLabel(fact.intendedSite.label),
+          )
+          .sort((left, right) => Number(right.kind === "session") - Number(left.kind === "session"))
+          .filter((fact) => {
+            const key = comparesIntendedSite
+              ? fact.intendedSite.sessionKey || fact.ref
+              : normalizeSearchText(fact.intendedSite.label);
+            if (seenPublicSites.has(key)) return false;
+            seenPublicSites.add(key);
+            return true;
+          })
+          .slice(0, MAX_PUBLIC_SITE_CANDIDATES)
+          .map((fact) => ({
+            ref: fact.ref,
+            label: fact.intendedSite.label,
+            ...(comparesIntendedSite && fact.intendedSite.staffGps
+              ? { staffGps: fact.intendedSite.staffGps }
+              : {}),
+            ...(comparesIntendedSite && fact.intendedSite.truck
+              ? { truck: fact.intendedSite.truck }
+              : {}),
+          }))
+      : [];
     return {
       payload: {
         question: String(question || "").trim(),
@@ -793,6 +980,7 @@
           role: message.role,
           content: String(message.content || "").slice(0, 2_400),
         })),
+        publicSites,
         facts: retrieval.facts.map((fact) => ({ ref: fact.ref, kind: fact.kind, text: fact.text })),
         scope: {
           sessions: metrics.sessionCount,
@@ -928,6 +1116,15 @@
 
   function describeAssistantError(error, endpoint = "") {
     if (error?.code === "auth-required") return "Sign in before asking about operations data.";
+    if (error?.code === "admin-required") {
+      return "Operations AI is available to administrators only. Sign out and sign in with the administrator Google account.";
+    }
+    if (
+      error?.code === "permission-denied" ||
+      /insufficient permissions/i.test(String(error?.message || ""))
+    ) {
+      return "Firebase denied this Google account. Every current StampNote account is a superadmin. Sign out, sign in again with the same Gmail, and reload so the ID token refreshes.";
+    }
     if (error instanceof TypeError && /fetch|network|load/i.test(String(error.message || ""))) {
       return endpoint.startsWith("https://stampnote-omega.vercel.app")
         ? "The Operations AI API is not deployed or could not be reached."
@@ -937,11 +1134,11 @@
   }
 
   // The assistant answers in a small, predictable subset of Markdown: bold,
-  // bullets, numbers, short code spans, and the [S3, S4] markers that point at
-  // the retrieved facts below. It is rendered by building nodes — never by
+  // bullets, numbers, short code spans, [S3, S4] operational markers, and [G1]
+  // verified public geography. It is rendered by building nodes — never by
   // assigning HTML — because this text comes from a model and must never be
   // able to introduce markup of its own.
-  const INLINE_PATTERN = /(\*\*[^*]+\*\*|`[^`]+`|\[S\d+(?:\s*,\s*S\d+)*\])/g;
+  const INLINE_PATTERN = /(\*\*[^*]+\*\*|`[^`]+`|\[(?:S|G)\d+(?:\s*,\s*(?:S|G)\d+)*\])/g;
 
   function renderInline(parent, text) {
     const owner = parent.ownerDocument;
@@ -966,7 +1163,7 @@
 
         // The markers become chips keyed to the retrieved facts, so a claim and
         // its evidence stay visibly attached without a bracket in the prose.
-        if (/^\[S\d/.test(part)) {
+        if (/^\[(?:S|G)\d/.test(part)) {
           const group = owner.createElement("span");
           group.className = "ai-citations";
           part
@@ -1037,11 +1234,15 @@
     createAssistantPayload,
     comparisonMapGeometry,
     describeAssistantError,
+    externalGeographyDisclosure,
     inlineMapForQuestion,
+    isPublicSiteLabel,
     metricChartsForQuestion,
     navigationActions,
     normalizeSearchText,
     photoFlagsMentionedInAnswer,
+    questionRequestsIntendedSiteComparison,
+    questionRequestsPublicGeography,
     rankKnowledge,
     renderAnswer,
     resolveAssistantEndpoint,
@@ -1129,6 +1330,56 @@
     });
     details.append(summary, list);
     return details;
+  }
+
+  function externalGeographyDisclosure(geography, owner = document) {
+    if (
+      geography?.ref !== "G1" ||
+      geography?.provider !== "Google Maps" ||
+      !String(geography.text || "").trim() ||
+      !Array.isArray(geography.sources) ||
+      geography.sources.length === 0
+    ) {
+      return null;
+    }
+
+    const section = owner.createElement("section");
+    const heading = owner.createElement("strong");
+    const evidence = owner.createElement("p");
+    const links = owner.createElement("ul");
+    const provider = owner.createElement("span");
+    section.className = "ai-external-geography";
+    section.setAttribute("aria-label", "Verified public geography sources");
+    provider.textContent = "Google Maps";
+    provider.setAttribute("translate", "no");
+    heading.append("Verified with ", provider);
+    renderInline(evidence, `[${geography.ref}] ${String(geography.text).trim()}`);
+
+    geography.sources.slice(0, 8).forEach((source) => {
+      try {
+        const url = new URL(String(source.url || ""));
+        const hostname = url.hostname.toLowerCase();
+        if (
+          url.protocol !== "https:" ||
+          !(hostname === "google.com" || hostname.endsWith(".google.com"))
+        ) {
+          return;
+        }
+        const item = owner.createElement("li");
+        const link = owner.createElement("a");
+        link.href = url.href;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = String(source.title || "Google Maps place").slice(0, 160);
+        item.append(link);
+        links.append(item);
+      } catch {
+        // The API already filters these URLs; the browser checks once more.
+      }
+    });
+    if (links.childElementCount === 0) return null;
+    section.append(heading, evidence, links);
+    return section;
   }
 
   function createFlaggedPhotoGallery(answer, sources = []) {
@@ -1616,6 +1867,8 @@
       if (!response.ok) throw new Error(result.error || `The assistant returned HTTP ${response.status}.`);
       renderAnswer(pending.body, result.answer);
       pending.article.dataset.state = "complete";
+      const externalGeography = externalGeographyDisclosure(result.geography);
+      if (externalGeography) pending.article.append(externalGeography);
       const flaggedPhotoGallery = createFlaggedPhotoGallery(result.answer, request.sources);
       if (flaggedPhotoGallery) pending.article.append(flaggedPhotoGallery);
       metricChartsForQuestion(cleaned, knowledge).forEach((entry) => {
@@ -1825,12 +2078,32 @@
     telemetry?.event("cloud.auth.state", {
       status: user ? "signed_in" : "signed_out",
     });
-    if (user) loadKnowledge();
-    else {
+    if (!user) {
       knowledge = null;
       setStatus("");
       renderMetrics({ sessionCount: 0, flaggedSessionCount: 0, weatherIssueCount: 0, attendanceCheckIns: 0 });
       setBusy();
+      return;
     }
+    Promise.resolve(cloud.getAccess?.(user))
+      .then((access) => {
+        if (access && access.canAccessAdmin === false) {
+          knowledge = null;
+          setStatus(
+            describeError({
+              code: "admin-required",
+              message: "Operations AI is available to administrators only.",
+            }),
+            "error",
+          );
+          setBusy();
+          return;
+        }
+        return loadKnowledge();
+      })
+      .catch((accessError) => {
+        setStatus(describeError(accessError), "error");
+        setBusy();
+      });
   });
 })(typeof window !== "undefined" ? window : globalThis);

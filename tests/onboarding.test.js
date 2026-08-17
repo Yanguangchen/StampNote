@@ -166,8 +166,14 @@ test("worker onboarding pre-caches static assets and registers the service worke
   assert.match(app, /cacheStaticAssets\(\)/);
 
   const swContent = readFileSync(resolve(root, "sw.js"), "utf8");
-  assert.match(swContent, /stampnote-onboarding-v1/);
+  assert.match(swContent, /stampnote-onboarding-v2/);
   assert.match(swContent, /addEventListener\("install"/);
   assert.match(swContent, /addEventListener\("fetch"/);
+
+  // Code is read from the network first, so a shipped fix reaches a browser
+  // that already visited the app; only fonts and vision models stay cache-first.
+  assert.match(swContent, /CODE_EXTENSIONS = \[[^\]]*"\.js"/);
+  assert.match(swContent, /IMMUTABLE_EXTENSIONS = \[[^\]]*"\.woff2"/);
+  assert.doesNotMatch(swContent, /caches\s*\n?\s*\.match\(event\.request\)\.then\(\(cachedResponse\)/);
 });
 

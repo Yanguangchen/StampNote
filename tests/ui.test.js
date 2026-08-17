@@ -751,7 +751,9 @@ test("cloud photos require sign-in and the admin dashboard groups them by place 
   assert.equal(existsSync(resolve(projectRoot, "storage.rules")), false);
   assert.match(firebase, /maxEdge = 512/);
   assert.match(firebase, /imageData:/);
-  assert.match(firestoreRules, /match \/users\/\{userId\}\/\{document=\*\*\}/);
+  assert.match(firestoreRules, /match \/users\/\{userId\}\/photos\/\{photoId\}/);
+  assert.match(firestoreRules, /match \/users\/\{userId\}\/workers\/\{workerId\}/);
+  assert.match(firestoreRules, /request\.auth\.token\.stampnoteRole != "worker"/);
   assert.match(firestoreRules, /request\.auth\.uid == userId/);
   assert.match(firestoreRules, /resource\.data\.ownerId == request\.auth\.uid/);
   assert.match(firestoreRules, /match \/\{path=\*\*\}\/entries\/\{entryId\}/);
@@ -769,8 +771,14 @@ test("Realtime Database rules deny anonymous access and are registered for deplo
   );
 
   assert.equal(firebaseConfig.database.rules, "database.rules.json");
-  assert.equal(databaseRules.rules[".read"], "auth != null");
-  assert.equal(databaseRules.rules[".write"], "auth != null");
+  assert.equal(
+    databaseRules.rules[".read"],
+    "auth != null && auth.token.stampnoteRole !== 'worker'",
+  );
+  assert.equal(
+    databaseRules.rules[".write"],
+    "auth != null && auth.token.stampnoteRole !== 'worker'",
+  );
   assert.deepEqual(databaseRules.rules.attendanceDays.$date.entries[".indexOn"], [
     "checkedInAtMs",
     "workerId",
@@ -789,11 +797,22 @@ test("Firestore attendance collection-group index is registered for deployment",
   );
 
   assert.equal(firebaseConfig.firestore.indexes, "firestore.indexes.json");
+  assert.deepEqual(firestoreIndexes.indexes, []);
   assert.deepEqual(firestoreIndexes.fieldOverrides, [
     {
       collectionGroup: "entries",
       fieldPath: "checkedInAtMs",
       indexes: [{ order: "DESCENDING", queryScope: "COLLECTION_GROUP" }],
+    },
+    {
+      collectionGroup: "photos",
+      fieldPath: "capturedAtMs",
+      indexes: [{ order: "DESCENDING", queryScope: "COLLECTION_GROUP" }],
+    },
+    {
+      collectionGroup: "photos",
+      fieldPath: "dateKey",
+      indexes: [{ order: "ASCENDING", queryScope: "COLLECTION_GROUP" }],
     },
   ]);
 });

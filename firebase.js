@@ -16,6 +16,8 @@
     const scope = options.globalScope || globalScope;
     const loadSdk = options.loadSdk || ((url) => import(url));
     let services = null;
+    let photosReadUid = "";
+    let photosReadFallbackToOwner = false;
 
     const ready = Promise.all([
       loadSdk(`${SDK_BASE}/firebase-app.js`),
@@ -66,6 +68,50 @@
       const user = cloud.auth.currentUser;
       if (!user) {
         throw Object.assign(new Error(message), { code: "auth-required" });
+      }
+      return user;
+    }
+
+    function isWorkerRole(role) {
+      return String(role || "").toLowerCase() === "worker";
+    }
+
+    function roleFromClaims(claims) {
+      return isWorkerRole(claims?.stampnoteRole) ? "worker" : "admin";
+    }
+
+    function isPermissionDenied(error) {
+      const code = String(error?.code || "");
+      const message = String(error?.message || "");
+      return (
+        code.includes("permission-denied") ||
+        /insufficient permissions/i.test(message)
+      );
+    }
+
+    async function resolveAccess(user) {
+      if (!user) {
+        return { role: "signed_out", canAccessAdmin: false };
+      }
+      if (typeof user.getIdTokenResult !== "function") {
+        return { role: "admin", canAccessAdmin: true };
+      }
+      const result = await user.getIdTokenResult(true);
+      const role = roleFromClaims(result?.claims);
+      return { role, canAccessAdmin: role === "admin" };
+    }
+
+    async function getAccess(user) {
+      if (user) return resolveAccess(user);
+      const cloud = services || (await ready);
+      return resolveAccess(cloud.auth.currentUser);
+    }
+
+    async function requireAdmin(cloud, message) {
+      const user = requireUser(cloud, message);
+      const access = await resolveAccess(user);
+      if (!access.canAccessAdmin) {
+        throw Object.assign(new Error(message), { code: "admin-required" });
       }
       return user;
     }
@@ -356,7 +402,7 @@
 
   async function saveWorkerFace(input) {
     const cloud = services || (await ready);
-    const user = requireUser(cloud, "Sign in with Google before enrolling a worker.");
+    const user = await requireAdmin(cloud, "Administrator access is required to enroll a worker.");
     const worker = workerRecord(input);
     const { embeddings, ...documentWorker } = worker;
     const portrait = decodeProfilePhoto(input?.profilePhoto);
@@ -405,6 +451,36 @@
   async function getWorkerFaces() {
     const cloud = services || (await ready);
     const user = requireUser(cloud, "Sign in with Google to load enrolled workers.");
+    const access = await resolveAccess(user);
+    const workers = new Map();
+
+    function addWorker(entry, { ownerUid = null } = {}) {
+      try {
+        const data = entry.data();
+        // Administrators keep matching against their own roster. Field staff
+        // read the shared team templates, including another account's enrollments.
+        if (ownerUid && String(data?.ownerId || "") !== ownerUid) return;
+        const worker = {
+          documentId: entry.id,
+          ...workerRecord(data),
+          profilePhoto: encodeProfilePhoto(data),
+        };
+        workers.set(worker.workerId, worker);
+      } catch {
+        // A malformed template is ignored without blocking the valid roster.
+      }
+    }
+
+    if (!access.canAccessAdmin) {
+      const snapshot = await cloud.firestoreSdk.getDocs(
+        cloud.firestoreSdk.collectionGroup(cloud.db, "workers"),
+      );
+      snapshot.docs.forEach((entry) => addWorker(entry));
+      return [...workers.values()].sort((left, right) =>
+        left.workerId.localeCompare(right.workerId),
+      );
+    }
+
     const scopedReference = cloud.firestoreSdk.collection(
       cloud.db,
       "users",
@@ -419,27 +495,8 @@
       cloud.firestoreSdk.getDocs(scopedReference),
       cloud.firestoreSdk.getDocs(legacyReference),
     ]);
-    const workers = new Map();
 
-    function addWorker(entry, { legacy = false } = {}) {
-      try {
-        const data = entry.data();
-        // The query enforces this in Firestore; repeat it here so an injected
-        // client or stale cache cannot feed another account's legacy template
-        // into face matching.
-        if (legacy && String(data?.ownerId || "") !== user.uid) return;
-        const worker = {
-          documentId: entry.id,
-          ...workerRecord(data),
-          profilePhoto: encodeProfilePhoto(data),
-        };
-        workers.set(worker.workerId, worker);
-      } catch {
-        // A malformed template is ignored without blocking the valid roster.
-      }
-    }
-
-    legacySnapshot.docs.forEach((entry) => addWorker(entry, { legacy: true }));
+    legacySnapshot.docs.forEach((entry) => addWorker(entry, { ownerUid: user.uid }));
     // Account-scoped records win over their legacy copy after re-enrollment.
     scopedSnapshot.docs.forEach((entry) => addWorker(entry));
     return [...workers.values()].sort((left, right) =>
@@ -449,7 +506,7 @@
 
   async function deleteWorkerFace(workerId) {
     const cloud = services || (await ready);
-    const user = requireUser(cloud, "Sign in with Google before deleting an enrollment.");
+    const user = await requireAdmin(cloud, "Administrator access is required to delete an enrollment.");
     const normalized = String(workerId || "").trim().toUpperCase();
     if (!/^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(normalized)) {
       throw new Error("The worker enrollment has no valid ID.");
@@ -513,7 +570,7 @@
 
   async function getAttendance(options = {}) {
     const cloud = services || (await ready);
-    requireUser(cloud, "Sign in with Google to view attendance.");
+    await requireAdmin(cloud, "Administrator access is required to view attendance.");
     const requestedSize = Math.floor(Number(options.pageSize) || 500);
     const pageSize = Math.min(500, Math.max(1, requestedSize));
     const entries = options.dateKey
@@ -545,7 +602,7 @@
 
   async function getDashboardSessions() {
     const cloud = services || (await ready);
-    requireUser(cloud, "Sign in with Google to load dashboard sessions.");
+    await requireAdmin(cloud, "Administrator access is required to load dashboard sessions.");
     const reference = cloud.firestoreSdk.collection(cloud.db, "dashboardSessions");
     const snapshot = await cloud.firestoreSdk.getDocs(reference);
 
@@ -568,7 +625,7 @@
   // record is already final.
   async function updateSessionWeather(sessionInput, input) {
     const cloud = services || (await ready);
-    const user = requireUser(cloud, "Sign in with Google before recording session weather.");
+    const user = await requireAdmin(cloud, "Administrator access is required to record session weather.");
     const data = requireCloudData();
     const session = dashboardSessionRecord(sessionInput);
     const weather = data.cleanSessionWeather(input);
@@ -597,7 +654,7 @@
 
   async function renameSession(input) {
     const cloud = services || (await ready);
-    const user = requireUser(cloud, "Sign in with Google before renaming a session.");
+    const user = await requireAdmin(cloud, "Administrator access is required to rename a session.");
     const session = dashboardSessionRecord(input, { requireLabel: true });
     const reference = cloud.firestoreSdk.doc(cloud.db, "dashboardSessions", session.key);
 
@@ -619,7 +676,7 @@
 
   async function deleteScope(input, options = {}) {
     const cloud = services || (await ready);
-    const user = requireUser(cloud, "Sign in with Google before deleting a session.");
+    const user = await requireAdmin(cloud, "Administrator access is required to delete a session.");
     const data = requireCloudData();
     const scope = deleteScopeRecord(input, options);
     // A day's check-ins live under that day, so a whole site has to be swept out
@@ -627,12 +684,7 @@
     const attendanceSource = scope.dateKey
       ? cloud.firestoreSdk.collection(cloud.db, "attendanceDays", scope.dateKey, "entries")
       : cloud.firestoreSdk.collectionGroup(cloud.db, "entries");
-    const photoCollection = cloud.firestoreSdk.collection(
-      cloud.db,
-      "users",
-      user.uid,
-      "photos",
-    );
+    const photoCollection = cloud.firestoreSdk.collectionGroup(cloud.db, "photos");
     // Photographs whose timestamp could not be read carry no usable date, so for
     // those the whole collection is read and narrowed by location instead.
     const photoSource = scope.dateKey && scope.dateKey !== "unknown-date"
@@ -665,7 +717,13 @@
         ),
       ),
       ...photoDocuments.map((entry) =>
-        cloud.firestoreSdk.doc(cloud.db, "users", user.uid, "photos", entry.id),
+        cloud.firestoreSdk.doc(
+          cloud.db,
+          "users",
+          String(entry.data()?.ownerId || user.uid),
+          "photos",
+          entry.id,
+        ),
       ),
       ...sessionKeys.map((key) => cloud.firestoreSdk.doc(cloud.db, "dashboardSessions", key)),
     ];
@@ -868,7 +926,7 @@
 
   async function updateSessionTruckLocation(sessionInput, input) {
     const cloud = services || (await ready);
-    const user = requireUser(cloud, "Sign in with Google before editing the truck location.");
+    const user = await requireAdmin(cloud, "Administrator access is required to edit the truck location.");
     const data = requireCloudData();
     const session = dashboardSessionRecord(sessionInput);
     const truckLocation = data.cleanTruckLocation(input);
@@ -969,10 +1027,39 @@
       clauses.splice(1, 0, cloud.firestoreSdk.startAfter(options.after));
     }
 
-    const photos = cloud.firestoreSdk.collection(cloud.db, "users", user.uid, "photos");
-    const snapshot = await cloud.firestoreSdk.getDocs(
-      cloud.firestoreSdk.query(photos, ...clauses),
-    );
+    const access = await resolveAccess(user);
+    if (photosReadUid !== user.uid) {
+      photosReadUid = user.uid;
+      photosReadFallbackToOwner = false;
+    }
+
+    const ownerPhotos = () =>
+      cloud.firestoreSdk.collection(cloud.db, "users", user.uid, "photos");
+    const useOwnerCollection = !access.canAccessAdmin || photosReadFallbackToOwner;
+    const photos = useOwnerCollection
+      ? ownerPhotos()
+      : cloud.firestoreSdk.collectionGroup(cloud.db, "photos");
+
+    let snapshot;
+    try {
+      snapshot = await cloud.firestoreSdk.getDocs(
+        cloud.firestoreSdk.query(photos, ...clauses),
+      );
+    } catch (error) {
+      if (!access.canAccessAdmin || photosReadFallbackToOwner || !isPermissionDenied(error)) {
+        throw error;
+      }
+      // Live rules historically allowed users/{uid}/photos but not
+      // collectionGroup("photos"). Keep Metrics / Operations AI usable.
+      photosReadFallbackToOwner = true;
+      snapshot = await cloud.firestoreSdk.getDocs(
+        cloud.firestoreSdk.query(
+          ownerPhotos(),
+          cloud.firestoreSdk.orderBy("capturedAtMs", "desc"),
+          cloud.firestoreSdk.limit(pageSize),
+        ),
+      );
+    }
 
     return {
       photos: snapshot.docs.map((entry) => ({ documentId: entry.id, ...entry.data() })),
@@ -996,8 +1083,18 @@
       throw new Error("The cloud photo has no ID.");
     }
 
+    const ownerId = String(record?.ownerId || user.uid);
+    if (ownerId !== user.uid) {
+      const access = await resolveAccess(user);
+      if (!access.canAccessAdmin) {
+        throw Object.assign(new Error("Only administrators can delete another account's photos."), {
+          code: "admin-required",
+        });
+      }
+    }
+
     await cloud.firestoreSdk.deleteDoc(
-      cloud.firestoreSdk.doc(cloud.db, "users", user.uid, "photos", photoId),
+      cloud.firestoreSdk.doc(cloud.db, "users", ownerId, "photos", photoId),
     );
   }
 
@@ -1023,6 +1120,7 @@
       deleteWorkerFace,
       deleteScope,
       deleteSession,
+      getAccess,
       getAttendance,
       getDashboardSessions,
       getSessionLabels,

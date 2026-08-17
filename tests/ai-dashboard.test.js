@@ -146,7 +146,7 @@ test("the knowledge index joins flags, weather, photos, sessions, and attendance
       (fact) => fact.kind === "attendance" && /Jane Tan \(W001\)/.test(fact.text),
     ),
   );
-  assert.equal(knowledge.metricSeries[30].length, 3);
+  assert.equal(knowledge.metricSeries[30].length, 6);
   assert.equal(knowledge.metricSeries[30].find((entry) => entry.id === "attendance").total, 1);
   assert.equal(knowledge.metricSeries[30].find((entry) => entry.id === "flags").total, 1);
   assert.ok(knowledge.facts.some((fact) => fact.kind === "metric" && fact.rangeDays === 30));
@@ -231,6 +231,52 @@ test("retrieval favors the requested operational evidence and returns bounded ci
   assert.equal(request.payload.scope.retrieved, request.payload.facts.length);
   assert.equal(request.payload.scope.flaggedSessions, 1);
   assert.ok(request.payload.facts.some((fact) => fact.kind === "flag"));
+});
+
+test("intended-site questions send a bounded three-way location case for Maps verification", () => {
+  const knowledge = knowledgeFixture();
+  const request = dashboard.createAssistantPayload(
+    "Compare the intended site, staff GPS, and truck at 10 Marina Bay for discrepancies.",
+    [],
+    knowledge,
+  );
+
+  assert.equal(dashboard.questionRequestsIntendedSiteComparison(request.payload.question), true);
+  assert.equal(request.payload.publicSites.length, 1);
+  assert.deepEqual(request.payload.publicSites[0], {
+    ref: request.payload.publicSites[0].ref,
+    label: "10 Marina Bay",
+    staffGps: { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 8 },
+    truck: { latitude: 1.2868, longitude: 103.8645 },
+  });
+  assert.match(
+    request.payload.facts.find((fact) => fact.ref === request.payload.publicSites[0].ref).text,
+    /Three-way location evidence: intended site 10 Marina Bay/,
+  );
+  assert.deepEqual(Object.keys(request.payload.publicSites[0]).sort(), [
+    "label",
+    "ref",
+    "staffGps",
+    "truck",
+  ]);
+});
+
+test("public geography can browse without exposing coordinates for an ordinary place question", () => {
+  const knowledge = knowledgeFixture();
+  const request = dashboard.createAssistantPayload(
+    "Is 10 Marina Bay in Singapore?",
+    [],
+    knowledge,
+  );
+
+  assert.equal(dashboard.questionRequestsPublicGeography(request.payload.question), true);
+  assert.equal(request.payload.publicSites.length, 1);
+  assert.deepEqual(Object.keys(request.payload.publicSites[0]).sort(), ["label", "ref"]);
+  assert.deepEqual(
+    dashboard.createAssistantPayload("Summarize the flagged sessions.", [], knowledge).payload
+      .publicSites,
+    [],
+  );
 });
 
 test("a location with no activity today does not retrieve unrelated sites", () => {
@@ -375,6 +421,20 @@ test("local Live Server uses the deployed API and reports connection failures cl
     ),
     "The Operations AI API is not deployed or could not be reached.",
   );
+  assert.match(
+    dashboard.describeAssistantError({
+      code: "permission-denied",
+      message: "Missing or insufficient permissions.",
+    }),
+    /superadmin/i,
+  );
+  assert.match(
+    dashboard.describeAssistantError({
+      code: "admin-required",
+      message: "Administrator access is required to view attendance.",
+    }),
+    /administrators only/i,
+  );
 });
 
 test("coordinate questions return a grounded inline map and safe deep links", () => {
@@ -475,6 +535,9 @@ function fakeNode(tag) {
     replaceChildren() {
       node.children = [];
     },
+    setAttribute(name, value) {
+      node[name] = String(value);
+    },
     get childElementCount() {
       return node.children.filter((child) => child && child.tagName).length;
     },
@@ -537,6 +600,46 @@ test("an answer is rendered as blocks, never as markup from the model", () => {
   );
 });
 
+test("verified geography and operational references render as separate citation chips", () => {
+  const container = fakeNode("div");
+  dashboard.renderAnswer(
+    container,
+    "The intended site matches staff GPS, but the truck is elsewhere [G1, S2].",
+  );
+
+  const citations = container.children[0].children.find(
+    (child) => child?.className === "ai-citations",
+  );
+  assert.deepEqual(
+    citations.children.map((chip) => chip.textContent),
+    ["G1", "S2"],
+  );
+});
+
+test("verified Google Maps evidence is displayed with safe source attribution", () => {
+  const owner = fakeNode("div").ownerDocument;
+  const section = dashboard.externalGeographyDisclosure(
+    {
+      ref: "G1",
+      provider: "Google Maps",
+      text: "10 Marina Bay is in Singapore.",
+      sources: [
+        { title: "Marina Bay", url: "https://maps.google.com/?cid=123" },
+        { title: "Unsafe", url: "https://untrusted.example/place" },
+      ],
+    },
+    owner,
+  );
+
+  assert.equal(section.className, "ai-external-geography");
+  assert.match(section.textContent, /Verified with Google Maps/);
+  assert.match(section.textContent, /10 Marina Bay is in Singapore/);
+  const links = section.children[2];
+  assert.equal(links.children.length, 1);
+  assert.equal(links.children[0].children[0].href, "https://maps.google.com/?cid=123");
+  assert.equal(links.children[0].children[0].rel, "noopener noreferrer");
+});
+
 test("the renderer never lets a model's text become markup", () => {
   const container = fakeNode("div");
   dashboard.renderAnswer(container, "A worker <img src=x onerror=alert(1)> and `code` and **bold**.");
@@ -597,10 +700,8 @@ test("the transcript reads as a conversation rather than two columns of boxes", 
 
 test("the dashboard has eased entrances, responsive chat, dark mode, and reduced motion", () => {
   assert.match(css, /:root\[data-theme="dark"\]/);
-  assert.match(css, /\.ai-workspace\s*\{[^}]*grid-template-columns:/);
-  assert.match(css, /animation: ai-panel-right-enter 820ms var\(--ai-ease\) 260ms both/);
+  assert.match(css, /\.ai-workspace\s*\{[^}]*display:\s*flex/);
   assert.match(css, /\.ai-message-row\s*\{[^}]*animation: ai-message-enter/);
-  assert.match(css, /@media \(max-width: 980px\)[\s\S]*\.ai-workspace\s*\{\s*grid-template-columns: minmax\(0, 1fr\)/);
   assert.match(css, /prefers-reduced-motion: reduce[\s\S]*?\.ai-chat-panel,[\s\S]*?animation: none !important/);
   assert.match(css, /prefers-reduced-motion: reduce[\s\S]*?\.ai-inline-map,[\s\S]*?animation: none !important/);
 });

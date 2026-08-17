@@ -21,7 +21,15 @@ function createHarness(options = {}) {
   };
   const auth = {
     currentUser:
-      options.user === undefined ? { uid: "user-1", email: "owner@example.com" } : options.user,
+      options.user === undefined
+        ? {
+            uid: "user-1",
+            email: "owner@example.com",
+            async getIdTokenResult() {
+              return { claims: { stampnoteRole: options.stampnoteRole || "admin" } };
+            },
+          }
+        : options.user,
   };
   const app = { name: "stampnote" };
   const db = { name: "firestore" };
@@ -159,6 +167,15 @@ function createHarness(options = {}) {
     },
     async getDocs(query) {
       calls.queries.push(query);
+      if (
+        options.denyCollectionGroupPhotos &&
+        query.collection?.kind === "collectionGroup" &&
+        query.collection?.name === "photos"
+      ) {
+        throw Object.assign(new Error("Missing or insufficient permissions."), {
+          code: "permission-denied",
+        });
+      }
       const docs = queryResults?.length ? queryResults.shift() : options.documents || [
         { id: "firestore-1", data: () => ({ id: "photo-1", capturedAtMs: 2 }) },
         { id: "firestore-2", data: () => ({ id: "photo-2", capturedAtMs: 1 }) },
@@ -1339,12 +1356,10 @@ test("cloud photo pagination clamps page size and preserves the Firestore cursor
   assert.equal(page.photos[0].id, "photo-1");
   assert.equal(page.after.id, "firestore-2");
   assert.equal(page.hasMore, true);
-  assert.deepEqual(harness.calls.queries[0].collection.segments, [
-    harness.calls.queries[0].collection.segments[0],
-    "users",
-    "user-1",
-    "photos",
-  ]);
+  assert.deepEqual(harness.calls.queries[0].collection, {
+    kind: "collectionGroup",
+    name: "photos",
+  });
   assert.deepEqual(harness.calls.queries[0].clauses, [
     { kind: "orderBy", field: "capturedAtMs", direction: "desc" },
     { kind: "startAfter", value: cursor },
@@ -1359,6 +1374,32 @@ test("cloud photo pagination clamps page size and preserves the Firestore cursor
     harness.client.getPhotosPage(),
     (error) => error.code === "auth-required",
   );
+});
+
+test("admin photo browse falls back to the signed-in account when collection-group reads are denied", async () => {
+  const harness = createHarness({ denyCollectionGroupPhotos: true });
+  await harness.client.ready;
+  const page = await harness.client.getPhotosPage({ pageSize: 48, after: { id: "stale-group-cursor" } });
+
+  assert.equal(page.photos[0].id, "photo-1");
+  assert.equal(harness.calls.queries.length, 2);
+  assert.deepEqual(harness.calls.queries[0].collection, {
+    kind: "collectionGroup",
+    name: "photos",
+  });
+  assert.deepEqual(harness.calls.queries[1].collection.segments.slice(1), [
+    "users",
+    "user-1",
+    "photos",
+  ]);
+  assert.deepEqual(harness.calls.queries[1].clauses, [
+    { kind: "orderBy", field: "capturedAtMs", direction: "desc" },
+    { kind: "limit", value: 48 },
+  ]);
+
+  await harness.client.getPhotosPage({ pageSize: 48, after: page.after });
+  assert.equal(harness.calls.queries.length, 3);
+  assert.equal(harness.calls.queries[2].collection.kind, "collection");
 });
 
 test("cloud photos can be opened and deleted only while authenticated", async () => {
@@ -1392,4 +1433,96 @@ test("cloud photos can be opened and deleted only while authenticated", async ()
     harness.client.getPhotoBlob({}),
     (error) => error.code === "auth-required",
   );
+});
+
+test("field staff load the shared worker roster and cannot use admin writes", async () => {
+  const embedding = Array.from({ length: 128 }, (unused, index) => index / 1000);
+  const fieldUser = {
+    uid: "worker-1",
+    email: "field@example.com",
+    async getIdTokenResult() {
+      return { claims: { stampnoteRole: "worker" } };
+    },
+  };
+  const roster = createHarness({
+    user: fieldUser,
+    queryResults: [
+      [
+        {
+          id: "WORKER-7",
+          data: () => ({
+            workerId: "WORKER-7",
+            displayName: "Team Ari",
+            embedding,
+            ownerId: "admin-1",
+          }),
+        },
+      ],
+    ],
+  });
+  await roster.client.ready;
+  const workers = await roster.client.getWorkerFaces();
+  assert.deepEqual(
+    workers.map((worker) => worker.workerId),
+    ["WORKER-7"],
+  );
+  assert.deepEqual(roster.calls.queries[0], { kind: "collectionGroup", name: "workers" });
+
+  const denied = createHarness({ user: fieldUser });
+  await denied.client.ready;
+  await assert.rejects(
+    denied.client.saveWorkerFace({
+      workerId: "WORKER-7",
+      displayName: "Ari",
+      embedding,
+    }),
+    (error) => error.code === "admin-required",
+  );
+  await assert.rejects(
+    denied.client.getAttendance(),
+    (error) => error.code === "admin-required",
+  );
+
+  const photos = createHarness({ user: fieldUser });
+  await photos.client.ready;
+  await photos.client.getPhotosPage();
+  assert.deepEqual(photos.calls.queries[0].collection.segments.slice(1), [
+    "users",
+    "worker-1",
+    "photos",
+  ]);
+
+  assert.deepEqual(await roster.client.getAccess(fieldUser), {
+    role: "worker",
+    canAccessAdmin: false,
+  });
+});
+
+test("signed-in accounts without a worker claim are superadmins", async () => {
+  const omitted = {
+    uid: "owner-1",
+    email: "owner@example.com",
+    async getIdTokenResult() {
+      return { claims: {} };
+    },
+  };
+  const superadmin = {
+    uid: "owner-2",
+    email: "super@example.com",
+    async getIdTokenResult() {
+      return { claims: { stampnoteRole: "superadmin" } };
+    },
+  };
+  const omittedHarness = createHarness({ user: omitted });
+  const superHarness = createHarness({ user: superadmin });
+  await omittedHarness.client.ready;
+  await superHarness.client.ready;
+  assert.deepEqual(await omittedHarness.client.getAccess(omitted), {
+    role: "admin",
+    canAccessAdmin: true,
+  });
+  assert.deepEqual(await superHarness.client.getAccess(superadmin), {
+    role: "admin",
+    canAccessAdmin: true,
+  });
 });

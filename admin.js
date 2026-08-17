@@ -196,7 +196,7 @@
       case "auth/operation-not-allowed":
         return "Enable the Google provider in Firebase Authentication.";
       case "permission-denied":
-        return "Firebase denied access. Check that the project rules are deployed and this is the capture account.";
+        return "Firebase denied access. Sign out and sign in again with this Gmail. If it continues, Firestore photo rules may not be deployed yet.";
       case "failed-precondition":
         return "Firestore needs an index for this dashboard query. Deploy the checked-in Firestore indexes, then reload this page.";
       default:

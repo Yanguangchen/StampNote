@@ -57,12 +57,18 @@ test("the range is every day in it, oldest first, zeros included", () => {
 });
 
 test("each measure is counted on its own day and its own terms", () => {
-  const [attendance, flags, sessions] = metrics.buildDailyMetrics({
-    attendance: [checkIn(2), checkIn(2), checkIn(0)],
+  const [attendance, flags, sessions, workers, locationFlags, weatherImpact] = metrics.buildDailyMetrics({
+    attendance: [
+      checkIn(2, "10 Marina Bay", 9),
+      { workerId: "WORKER-8", location: "10 Marina Bay", checkedInAtMs: at(2, 10) },
+      checkIn(0, "10 Marina Bay", 9),
+    ],
     photos: [
       photo(2),
       photo(2, { id: "flagged-1", aiReview: { action: "review", recommendation: "discard", confidence: 0.7 } }),
       photo(1, { id: "flagged-2", aiReview: { action: "review", recommendation: "discard", confidence: 0.6 } }),
+      photo(2, { id: "loc-flag", coordinateVerification: { flagged: true } }),
+      photo(1, { id: "weather-disrupt", weather: { severity: "storm", impactPercent: 60 } }),
     ],
     days: 3,
     now: NOW,
@@ -77,10 +83,21 @@ test("each measure is counted on its own day and its own terms", () => {
   assert.equal(flags.total, 2);
 
   // A session is a location and one of the day's periods, counted once however
-  // much happened inside it: two check-ins and two photos at one site on one
-  // morning and afternoon are two sessions, not four.
+  // much happened inside it.
   assert.equal(sessions.title, "Sessions created");
   assert.deepEqual(sessions.values, [2, 1, 1]);
+
+  // Active workers counts distinct workerIds per day.
+  assert.equal(workers.title, "Active workers");
+  assert.deepEqual(workers.values, [2, 0, 1]);
+
+  // Location flags counts photos flagged by coordinate/GPS verification.
+  assert.equal(locationFlags.title, "Location flags");
+  assert.deepEqual(locationFlags.values, [1, 0, 0]);
+
+  // Weather disruptions counts sessions affected by severe weather/storms.
+  assert.equal(weatherImpact.title, "Weather disruptions");
+  assert.deepEqual(weatherImpact.values, [0, 1, 0]);
 });
 
 test("sessions separate by place as well as by period", () => {
@@ -100,7 +117,7 @@ test("sessions separate by place as well as by period", () => {
   assert.deepEqual(sessions.values, [3, 0]);
 });
 
-test("the three measures keep their own colour, and the palette is a validated set", () => {
+test("the six measures keep their own colour, and the palette is a validated set", () => {
   // Colour follows the measure, not its rank, so a range change never repaints.
   assert.deepEqual(
     metrics.SERIES.map((entry) => [entry.id, entry.slot]),
@@ -108,20 +125,26 @@ test("the three measures keep their own colour, and the palette is a validated s
       ["attendance", 1],
       ["flags", 2],
       ["sessions", 3],
+      ["workers", 4],
+      ["locationFlags", 5],
+      ["weatherImpact", 6],
     ],
   );
 
-  // Categorical slots 1-3, validated all-pairs against this page's own two
-  // surfaces. The dark column is the same three hues stepped for the dark
-  // surface rather than an automatic flip.
+  // Categorical slots 1-6, validated all-pairs against this page's own two
+  // surfaces.
   assert.match(css, /--series-1:\s*#2a78d6/);
   assert.match(css, /--series-2:\s*#eb6834/);
   assert.match(css, /--series-3:\s*#1baf7a/);
+  assert.match(css, /--series-4:\s*#6366f1/);
+  assert.match(css, /--series-5:\s*#e11d48/);
+  assert.match(css, /--series-6:\s*#d97706/);
   assert.match(css, /:root\[data-theme="dark"\][\s\S]*?--series-1:\s*#3987e5/);
   assert.match(css, /@media \(prefers-color-scheme: dark\)[\s\S]*?--series-3:\s*#199e70/);
 
   // The mark wears the colour; every label on the page wears ink.
   assert.match(css, /\.metric-panel\[data-slot="1"\] \.chart-bar\s*\{\s*fill:\s*var\(--series-1\)/);
+  assert.match(css, /\.metric-panel\[data-slot="6"\] \.chart-bar\s*\{\s*fill:\s*var\(--series-6\)/);
   assert.doesNotMatch(css, /\.chart-tick\s*\{[^}]*var\(--series/);
 });
 
@@ -149,12 +172,14 @@ test("every value is reachable without a pointer", () => {
   assert.match(source, /target\.addEventListener\("focus", show\)/);
   assert.match(source, /tabindex: "0"/);
 
-  // The tooltip enhances; the table twin is what keeps it from gating. Three
-  // light-mode slots sit under 3:1, so the table is required relief, not a nicety.
+  // The tooltip enhances; the table twin is what keeps it from gating.
   assert.match(html, /id="metrics-table"/);
   assert.match(html, /<th scope="col">Attendance taken<\/th>/);
   assert.match(html, /<th scope="col">Flags raised<\/th>/);
   assert.match(html, /<th scope="col">Sessions created<\/th>/);
+  assert.match(html, /<th scope="col">Active workers<\/th>/);
+  assert.match(html, /<th scope="col">Location flags<\/th>/);
+  assert.match(html, /<th scope="col">Weather disruptions<\/th>/);
 
   // One filter row above everything it scopes, never one per chart.
   assert.ok(html.indexOf('class="metrics-filters"') < html.indexOf('id="metrics-panels"'));

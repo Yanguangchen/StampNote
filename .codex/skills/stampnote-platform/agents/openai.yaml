@@ -1,0 +1,7 @@
+interface:
+  display_name: "StampNote Platform"
+  short_description: "Navigate StampNote via Operations AI"
+  default_prompt: "Use $stampnote-platform. Open https://stampnote-omega.vercel.app/ai-dashboard, sign in with Google/Gmail if the gate is shown, then ask Operations AI first."
+
+policy:
+  allow_implicit_invocation: true

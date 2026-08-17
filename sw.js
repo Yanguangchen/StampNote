@@ -1,5 +1,7 @@
 // Service worker for StampNote offline and static asset caching.
-const CACHE_NAME = "stampnote-onboarding-v1";
+// Bumping this name purges every earlier cache on activation, which is the
+// only way a browser holding a stale copy of the app's code lets go of it.
+const CACHE_NAME = "stampnote-onboarding-v2";
 
 const ONBOARDING_STATIC_ASSETS = [
   "onboarding.html",
@@ -53,6 +55,28 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// The app's own code changes whenever StampNote ships; the fonts and vision
+// models it loads never change under the same URL. So code is read from the
+// network first and only falls back to the cache when the site is unreachable,
+// while the heavy immutable assets are still served from the cache instantly.
+const CODE_EXTENSIONS = [".js", ".css", ".html", ".json"];
+const IMMUTABLE_EXTENSIONS = [".woff2", ".wasm", ".task", ".tflite", ".svg"];
+
+function isCode(pathname) {
+  return CODE_EXTENSIONS.some((extension) => pathname.endsWith(extension));
+}
+
+function isImmutableAsset(pathname) {
+  return IMMUTABLE_EXTENSIONS.some((extension) => pathname.endsWith(extension)) || pathname.includes("shard");
+}
+
+function store(request, response) {
+  if (!response || response.status !== 200) return response;
+  const copy = response.clone();
+  caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+  return response;
+}
+
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
@@ -60,30 +84,25 @@ self.addEventListener("fetch", (event) => {
   // Only handle same-origin requests
   if (url.origin !== self.location.origin) return;
 
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) return cachedResponse;
+  const navigating = event.request.mode === "navigate";
+  if (!navigating && !isCode(url.pathname) && !isImmutableAsset(url.pathname)) return;
 
-      return fetch(event.request).then((networkResponse) => {
-        if (
-          networkResponse &&
-          networkResponse.status === 200 &&
-          (url.pathname.endsWith(".js") ||
-            url.pathname.endsWith(".css") ||
-            url.pathname.endsWith(".html") ||
-            url.pathname.endsWith(".svg") ||
-            url.pathname.endsWith(".woff2") ||
-            url.pathname.endsWith(".json") ||
-            url.pathname.endsWith(".wasm") ||
-            url.pathname.endsWith(".task") ||
-            url.pathname.endsWith(".tflite") ||
-            url.pathname.includes("shard"))
-        ) {
-          const responseClone = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
-        }
-        return networkResponse;
-      });
-    }),
+  if (isImmutableAsset(url.pathname)) {
+    event.respondWith(
+      caches
+        .match(event.request)
+        .then((cached) => cached || fetch(event.request).then((response) => store(event.request, response))),
+    );
+    return;
+  }
+
+  event.respondWith(
+    fetch(event.request)
+      .then((response) => store(event.request, response))
+      .catch(() =>
+        caches
+          .match(event.request)
+          .then((cached) => cached || Promise.reject(new Error("StampNote is offline and this page is not cached."))),
+      ),
   );
 });

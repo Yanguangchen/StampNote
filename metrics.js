@@ -9,7 +9,7 @@
 
   const DAY_MS = 86_400_000;
 
-  // Three measures, three fixed slots. The colour belongs to the measure, so a
+  // Six measures, six fixed slots. The colour belongs to the measure, so a
   // change of range never repaints them.
   const SERIES = Object.freeze([
     Object.freeze({
@@ -32,6 +32,27 @@
       title: "Sessions created",
       unit: "session",
       description: "Distinct location, day and time period worked.",
+    }),
+    Object.freeze({
+      id: "workers",
+      slot: 4,
+      title: "Active workers",
+      unit: "worker",
+      description: "Distinct workers checked in on site.",
+    }),
+    Object.freeze({
+      id: "locationFlags",
+      slot: 5,
+      title: "Location flags",
+      unit: "flag",
+      description: "Photos with GPS references conflicting with site coordinates or truck telemetry.",
+    }),
+    Object.freeze({
+      id: "weatherImpact",
+      slot: 6,
+      title: "Weather disruptions",
+      unit: "session",
+      description: "Sessions conducted during storms, heavy rain, or productivity loss.",
     }),
   ]);
 
@@ -80,6 +101,57 @@
     return keys.map((key) => seen.get(key).size);
   }
 
+  function countDistinctWorkersByDay(keys, attendance) {
+    const seen = new Map(keys.map((key) => [key, new Set()]));
+    (attendance || []).forEach((entry) => {
+      const atMs = Number(entry?.checkedInAtMs);
+      if (!Number.isFinite(atMs) || atMs <= 0) return;
+      const key = data.createDateKey(new Date(atMs));
+      if (!seen.has(key)) return;
+      const workerId = entry?.workerId || entry?.displayName;
+      if (workerId) seen.get(key).add(String(workerId));
+    });
+    return keys.map((key) => seen.get(key).size);
+  }
+
+  function countLocationFlagsByDay(keys, photos) {
+    const flagged = (photos || []).filter((photo) =>
+      Boolean(
+        data.isCoordinateFlagged?.(photo) === true ||
+          photo?.coordinateVerification?.flagged === true ||
+          photo?.coordinateFlagged === true,
+      ),
+    );
+    return countByDay(keys, flagged, photoTimeMs);
+  }
+
+  function isWeatherDisrupted(weather) {
+    if (!weather) return false;
+    const severity = String(weather.severity || "").toLowerCase();
+    const impactPercent = Number(weather.impactPercent) || 0;
+    const lostHours = Number(weather.lostHours) || 0;
+    return severity === "storm" || severity === "wet" || impactPercent >= 25 || lostHours > 0;
+  }
+
+  function countWeatherDisruptionsByDay(keys, attendance, photos) {
+    const seen = new Map(keys.map((key) => [key, new Set()]));
+    const add = (atMs, location, weather) => {
+      if (!Number.isFinite(atMs) || atMs <= 0) return;
+      if (!isWeatherDisrupted(weather)) return;
+      const key = data.createDateKey(new Date(atMs));
+      if (!seen.has(key)) return;
+      seen
+        .get(key)
+        .add(`${data.createLocationKey(location)}|${data.sessionDefinitionFor(atMs).id}`);
+    };
+
+    (photos || []).forEach((photo) => add(photoTimeMs(photo), photo?.location, photo?.weather));
+    (attendance || []).forEach((entry) =>
+      add(Number(entry?.checkedInAtMs), entry?.location, entry?.weather),
+    );
+    return keys.map((key) => seen.get(key).size);
+  }
+
   // One slice, read the same way by every panel and by the table.
   function buildDailyMetrics(input = {}) {
     const attendance = input.attendance || [];
@@ -89,13 +161,16 @@
       attendance: countByDay(keys, attendance, (entry) => Number(entry?.checkedInAtMs)),
       flags: countByDay(keys, photos.filter((photo) => data.isFlagged(photo)), photoTimeMs),
       sessions: countSessionsByDay(keys, attendance, photos),
+      workers: countDistinctWorkersByDay(keys, attendance),
+      locationFlags: countLocationFlagsByDay(keys, photos),
+      weatherImpact: countWeatherDisruptionsByDay(keys, attendance, photos),
     };
 
     return SERIES.map((definition) => ({
       ...definition,
       keys,
-      values: values[definition.id],
-      total: values[definition.id].reduce((sum, value) => sum + value, 0),
+      values: values[definition.id] || keys.map(() => 0),
+      total: (values[definition.id] || []).reduce((sum, value) => sum + value, 0),
     }));
   }
 
@@ -143,7 +218,7 @@
   function describeError(error) {
     switch (error?.code) {
       case "permission-denied":
-        return "Firebase denied access. Check that this is the capture account.";
+        return "Firebase denied access. Sign out and sign in again with this Gmail. If it continues, Firestore photo rules may not be deployed yet.";
       case "failed-precondition":
         return "Firestore needs an index for this query. Deploy the checked-in indexes and reload.";
       default:

@@ -23,7 +23,7 @@
     />
     <link rel="stylesheet" href="vendor/fonts/outfit.css" />
     <link rel="stylesheet" href="sidebar.css" />
-    <link rel="stylesheet" href="ai-dashboard.css?v=20260817-5" />
+    <link rel="stylesheet" href="ai-dashboard.css?v=20260818-4" />
     <script>
       try {
         const saved = localStorage.getItem("stampnote-theme");
@@ -34,10 +34,10 @@
     </script>
     <script src="observability.js" defer></script>
     <script src="photo-cloud.js?v=20260816-1" defer></script>
-    <script src="firebase.js?v=20260816-2" defer></script>
+    <script src="firebase.js?v=20260818-2" defer></script>
     <script src="coordinates.js?v=20260817-1" defer></script>
-    <script src="metrics.js?v=20260817-1" defer></script>
-    <script src="ai-dashboard.js?v=20260817-5" defer></script>
+    <script src="metrics.js?v=20260818-2" defer></script>
+    <script src="ai-dashboard.js?v=20260818-7" defer></script>
     <script src="sidebar.js" defer></script>
   </head>
   <body>
@@ -140,7 +140,7 @@
             <button type="button" data-ai-question="Show me the flagged sessions and explain each flag.">
               Flagged sessions
             </button>
-            <button type="button" data-ai-question="Show the location discrepancies between photo GPS references and truck locations.">
+            <button type="button" data-ai-question="Compare the intended session sites with staff GPS and truck locations, and show every discrepancy.">
               Location discrepancies
             </button>
             <button type="button" data-ai-question="Which sessions had problematic weather and what was the impact?">
@@ -185,6 +185,19 @@
               </button>
             </div>
           </form>
+          <button
+            class="ai-scroll-bottom"
+            id="ai-scroll-bottom"
+            type="button"
+            title="Jump to latest message"
+            aria-label="Jump to latest message"
+            hidden
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <path d="m6 9 6 6 6-6" />
+            </svg>
+            <span class="visually-hidden">Jump to latest message</span>
+          </button>
           <p class="ai-voice-status" id="ai-voice-status" aria-live="polite"></p>
         </section>
       </section>

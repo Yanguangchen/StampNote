@@ -7,6 +7,7 @@
   const GROUPS = [
     {
       heading: "Worker workspace",
+      access: "worker",
       pages: [
         {
           file: "index.html", label: "Recording",
@@ -20,6 +21,7 @@
     },
     {
       heading: "Admin workspace",
+      access: "admin",
       pages: [
         {
           file: "onboarding.html", label: "Worker onboarding",
@@ -91,6 +93,8 @@
 
   const nav = document.createElement("nav");
   const links = [];
+  const renderedGroups = [];
+  let accessGate = null;
 
   GROUPS.forEach((group) => {
     const heading = document.createElement("p");
@@ -98,6 +102,7 @@
     heading.textContent = group.heading;
     nav.append(heading);
 
+    const groupLinks = [];
     group.pages.forEach((page) => {
       const link = document.createElement("a");
       link.className = "sidebar-link";
@@ -116,7 +121,9 @@
       if (pageName(page.file) === current) link.setAttribute("aria-current", "page");
       nav.append(link);
       links.push(link);
+      groupLinks.push(link);
     });
+    renderedGroups.push({ access: group.access, heading, links: groupLinks });
   });
 
   sidebar.append(nav);
@@ -145,7 +152,8 @@
 
     if (open) {
       // Focus lands on somewhere you can actually go, not the page already open.
-      (links.find((link) => !link.hasAttribute("aria-current")) || links[0])?.focus();
+      const available = links.filter((link) => !link.hidden);
+      (available.find((link) => !link.hasAttribute("aria-current")) || available[0])?.focus();
       return;
     }
 
@@ -165,7 +173,103 @@
     if (event.key === "Escape" && sidebar.dataset.open === "true") setOpen(false);
   });
 
+  function currentPageRequiresAdmin() {
+    return renderedGroups.some(
+      (group) =>
+        group.access === "admin" &&
+        group.links.some((link) => link.hasAttribute("aria-current")),
+    );
+  }
+
+  function ensureAccessGate() {
+    if (accessGate) return accessGate;
+    accessGate = document.createElement("div");
+    accessGate.className = "access-gate";
+    accessGate.setAttribute("role", "alertdialog");
+    accessGate.setAttribute("aria-labelledby", "access-gate-title");
+    accessGate.hidden = true;
+
+    const title = document.createElement("h1");
+    title.id = "access-gate-title";
+    title.textContent = "This page is for administrators";
+    const copy = document.createElement("p");
+    copy.textContent = "Your account can open Recording and Worker photos.";
+    const recording = document.createElement("a");
+    recording.className = "access-gate-link";
+    recording.href = "index.html";
+    recording.textContent = "Go to Recording";
+    const photos = document.createElement("a");
+    photos.className = "access-gate-link";
+    photos.href = "worker-photos.html";
+    photos.textContent = "Go to Worker photos";
+    accessGate.append(title, copy, recording, photos);
+    document.body.append(accessGate);
+    return accessGate;
+  }
+
+  function applyRole(role) {
+    const currentRole = role === "admin" || role === "worker" ? role : "signed_out";
+    renderedGroups.forEach((group) => {
+      const hidden = currentRole === "worker" && group.access === "admin";
+      group.heading.hidden = hidden;
+      group.links.forEach((link) => {
+        link.hidden = hidden;
+      });
+    });
+
+    const blocked = currentRole === "worker" && currentPageRequiresAdmin();
+    const gate = ensureAccessGate();
+    gate.hidden = !blocked;
+    if (document.documentElement?.dataset) {
+      document.documentElement.dataset.pageAccess = blocked ? "denied" : "allowed";
+    }
+    if (blocked && sidebar.dataset.open === "true") setOpen(false);
+  }
+
+  function bindCloudAccess(cloud) {
+    if (!cloud?.subscribeAuth) return;
+    cloud.subscribeAuth(async (user, error) => {
+      if (error || !user) {
+        applyRole("signed_out");
+        return;
+      }
+      if (typeof cloud.getAccess !== "function") {
+        applyRole("signed_out");
+        return;
+      }
+      try {
+        const access = await cloud.getAccess(user);
+        applyRole(access.role === "admin" ? "admin" : "worker");
+      } catch {
+        applyRole("worker");
+      }
+    });
+  }
+
+  if (window.StampNoteFirebase) {
+    bindCloudAccess(window.StampNoteFirebase);
+  } else {
+    let currentFirebase;
+    Object.defineProperty(window, "StampNoteFirebase", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        return currentFirebase;
+      },
+      set(value) {
+        currentFirebase = value;
+        bindCloudAccess(value);
+      },
+    });
+  }
+
+  window.StampNoteSidebar = Object.freeze({
+    setRole: applyRole,
+    pageName,
+  });
+
   mount.prepend(toggle);
   document.body.append(scrim, sidebar);
   sidebar.inert = true;
+  applyRole("signed_out");
 })();

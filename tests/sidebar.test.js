@@ -83,6 +83,15 @@ class FakeElement {
     return this.attributes.has(name);
   }
 
+  get hidden() {
+    return this.attributes.has("hidden");
+  }
+
+  set hidden(value) {
+    if (value) this.setAttribute("hidden", "");
+    else this.attributes.delete("hidden");
+  }
+
   setAttribute(name, value) {
     this.attributes.set(name, String(value));
   }
@@ -95,10 +104,12 @@ function descendants(element) {
 function createSidebarHarness(pathname, options = {}) {
   const mount = new FakeElement("header");
   const body = new FakeElement("body");
+  const documentElement = new FakeElement("html");
   const documentListeners = new Map();
   const document = {
     activeElement: null,
     body,
+    documentElement,
     addEventListener(name, callback) {
       documentListeners.set(name, callback);
     },
@@ -122,8 +133,18 @@ function createSidebarHarness(pathname, options = {}) {
   const toggle = mount.children[0];
   const drawer = body.children.find((child) => child.id === "app-sidebar");
   const scrim = body.children.find((child) => child.className === "sidebar-scrim");
+  const gate = body.children.find((child) => child.className === "access-gate");
   const links = descendants(drawer).filter((node) => node.className === "sidebar-link");
-  return { toggle, drawer, scrim, links, documentListeners };
+  return {
+    toggle,
+    drawer,
+    scrim,
+    gate,
+    links,
+    documentListeners,
+    documentElement,
+    sidebarApi: context.window.StampNoteSidebar,
+  };
 }
 
 test("every switchable page loads the drawer and marks where its toggle goes", () => {
@@ -250,6 +271,36 @@ test("the drawer lists every page and marks the one being viewed", () => {
   assert.equal(createSidebarHarness("/worker-photos").links[1].getAttribute("aria-current"), "page");
   assert.equal(createSidebarHarness("/metrics").links[7].getAttribute("aria-current"), "page");
   assert.equal(createSidebarHarness("/").links[0].getAttribute("aria-current"), "page");
+});
+
+test("field staff only see Recording and Worker photos, and cannot stay on admin pages", () => {
+  const { links, gate, documentElement, sidebarApi } = createSidebarHarness("/admin.html");
+  sidebarApi.setRole("worker");
+
+  assert.deepEqual(
+    links.filter((link) => !link.hidden).map((link) => link.href),
+    ["index.html", "worker-photos.html"],
+  );
+  assert.equal(gate.hidden, false);
+  assert.equal(documentElement.dataset.pageAccess, "denied");
+  assert.equal(
+    descendants(gate).find((node) => node.id === "access-gate-title")?.textContent,
+    "This page is for administrators",
+  );
+
+  const recording = createSidebarHarness("/index.html");
+  recording.sidebarApi.setRole("worker");
+  assert.equal(recording.gate.hidden, true);
+  assert.equal(recording.documentElement.dataset.pageAccess, "allowed");
+  assert.equal(
+    recording.links.filter((link) => !link.hidden).length,
+    2,
+  );
+
+  const admin = createSidebarHarness("/onboarding.html");
+  admin.sidebarApi.setRole("admin");
+  assert.equal(admin.gate.hidden, true);
+  assert.equal(admin.links.filter((link) => link.hidden).length, 0);
 });
 
 test("the dashboard theme toggle is placed in the left drawer", () => {
