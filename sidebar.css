@@ -198,8 +198,86 @@
   display: inline;
 }
 
+.sidebar-footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--line, #d5dad7);
+}
+
+.sidebar-tools + .sidebar-footer {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: none;
+}
+
+.sidebar-skills-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--line, #d5dad7);
+  border-radius: 9px;
+  background: var(--surface-solid, var(--surface, #fff));
+  color: var(--ink, #17201c);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition:
+    background var(--motion-fast, 140ms) var(--ease, ease-in-out),
+    border-color var(--motion-fast, 140ms) var(--ease, ease-in-out),
+    color var(--motion-fast, 140ms) var(--ease, ease-in-out),
+    transform var(--motion-fast, 140ms) var(--ease, ease-in-out);
+}
+
+.sidebar-skills-button:hover {
+  border-color: var(--line-strong, #b9c8c0);
+  background: var(--chip, rgba(127, 140, 134, 0.12));
+}
+
+.sidebar-skills-button:active {
+  transform: scale(0.99);
+}
+
+.sidebar-skills-button[aria-current="page"] {
+  background: var(--accent-soft, rgba(23, 97, 70, 0.1));
+  border-color: var(--accent, #176146);
+  color: var(--accent, #176146);
+}
+
+.sidebar-skills-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--muted, #68726d);
+}
+
+.sidebar-skills-button[aria-current="page"] .sidebar-skills-icon {
+  color: var(--accent, #176146);
+}
+
+.sidebar-skills-icon svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.sidebar-skills-label {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
 .sidebar-toggle:focus-visible,
 .sidebar-link:focus-visible,
+.sidebar-skills-button:focus-visible,
 .sidebar-tools .theme-toggle:focus-visible {
   outline: 2px solid var(--accent, #176146);
   outline-offset: 2px;

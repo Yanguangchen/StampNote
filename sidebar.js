@@ -142,6 +142,31 @@
     sidebar.append(tools);
   }
 
+  const footer = document.createElement("div");
+  footer.className = "sidebar-footer";
+  const skillsButton = document.createElement("a");
+  skillsButton.className = "sidebar-skills-button";
+  skillsButton.href = "skills.html";
+  skillsButton.setAttribute("title", "Skills Playbook (skills.md)");
+  skillsButton.setAttribute("aria-label", "Skills Playbook");
+  if (current === "skills") {
+    skillsButton.setAttribute("aria-current", "page");
+  }
+
+  const skillsIcon = document.createElement("span");
+  skillsIcon.className = "sidebar-skills-icon";
+  skillsIcon.setAttribute("aria-hidden", "true");
+  skillsIcon.innerHTML =
+    '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>';
+
+  const skillsLabel = document.createElement("span");
+  skillsLabel.className = "sidebar-skills-label";
+  skillsLabel.textContent = "skills.md";
+
+  skillsButton.append(skillsIcon, skillsLabel);
+  footer.append(skillsButton);
+  sidebar.append(footer);
+
   function setOpen(open) {
     sidebar.dataset.open = String(open);
     scrim.dataset.open = String(open);

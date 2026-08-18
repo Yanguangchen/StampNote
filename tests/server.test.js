@@ -98,6 +98,17 @@ test("the local server exposes public assets and every API boundary without expo
     assert.match(operationsAiGuide.headers.get("content-type"), /^text\/markdown/);
     assert.match(await operationsAiGuide.text(), /# StampNote Operations AI page guide/);
 
+    const skills = await fetch(`${origin}/skills.html`);
+    assert.equal(skills.status, 200);
+    assert.match(await skills.text(), /StampNote Platform Skills/);
+    assert.equal((await fetch(`${origin}/skills.css`)).status, 200);
+    assert.equal((await fetch(`${origin}/skills.js`)).status, 200);
+
+    const skillsMdFile = await fetch(`${origin}/skills.md`);
+    assert.equal(skillsMdFile.status, 200);
+    assert.match(skillsMdFile.headers.get("content-type"), /^text\/markdown/);
+    assert.match(await skillsMdFile.text(), /# StampNote platform/);
+
     const manifest = await fetch(`${origin}/manifest.json`);
     assert.equal(manifest.status, 200);
     assert.match(manifest.headers.get("content-type"), /^application\/manifest\+json/);
