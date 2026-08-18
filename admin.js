@@ -5,6 +5,8 @@
   const data = window.StampNoteCloudData;
   const telemetry = window.StampNoteObservability;
   const weather = window.StampNoteWeather;
+  const adminScope = window.StampNoteAdminScope;
+  const operationsData = window.StampNoteOperationsData?.createOperationsDataService(cloud);
   const themeToggle = document.querySelector("#theme-toggle");
   const themeToggleIcon = document.querySelector("#theme-toggle-icon");
   const themeToggleLabel = document.querySelector("#theme-toggle-label");
@@ -29,6 +31,7 @@
   const dialogReview = document.querySelector("#dialog-review");
   const attendanceRefresh = document.querySelector("#attendance-refresh");
   const attendanceWorkerFilter = document.querySelector("#attendance-worker-filter");
+  const streetOptions = document.querySelector("#street-options");
   const locationOptions = document.querySelector("#location-options");
   const dateOptions = document.querySelector("#date-options");
   const datePicker = document.querySelector("#date-picker");
@@ -51,6 +54,7 @@
   const sessionRenameError = document.querySelector("#session-rename-error");
   const sessionRenameCancel = document.querySelector("#session-rename-cancel");
   const sessionRenameSave = document.querySelector("#session-rename-save");
+  const locationStep = document.querySelector("#location-step");
   const dateStep = document.querySelector("#date-step");
   const sessionStep = document.querySelector("#session-step");
   const detailColumn = document.querySelector("#detail-column");
@@ -93,29 +97,12 @@
   // Only the newest few are worth a button; the calendar beside them reaches the
   // rest without the rail growing a row taller for every day that passes.
   const RECENT_DATE_LIMIT = 6;
-  // Nothing is chosen until it is chosen. A null session means the third step
+  // Nothing is chosen until it is chosen. A null session means the fourth step
   // has not been answered yet; "all" is the reader having picked "Whole day".
-  const selection = { locationKey: null, dateKey: null, sessionId: null };
+  const selection = { streetKey: null, locationKey: null, dateKey: null, sessionId: null };
 
   function readNavigationRequest(location = window.location) {
-    try {
-      const params = new URLSearchParams(location.search || "");
-      const section = String(location.hash || "").replace(/^#/, "");
-      const allowedSections = new Set([
-        "attendance-panel",
-        "photos-panel",
-        "session-facts",
-        "session-truck-location",
-      ]);
-      return {
-        locationKey: String(params.get("location") || "").slice(0, 96),
-        dateKey: String(params.get("date") || "").slice(0, 16),
-        sessionId: String(params.get("session") || "").slice(0, 32),
-        section: allowedSections.has(section) ? section : "session-facts",
-      };
-    } catch (error) {
-      return { locationKey: "", dateKey: "", sessionId: "", section: "session-facts" };
-    }
+    return adminScope.readNavigationRequest(location);
   }
 
   const navigationRequest = readNavigationRequest();
@@ -190,18 +177,7 @@
   }
 
   function describeError(error) {
-    switch (error?.code) {
-      case "auth/unauthorized-domain":
-        return "Add this domain to Firebase Authentication → Settings → Authorized domains.";
-      case "auth/operation-not-allowed":
-        return "Enable the Google provider in Firebase Authentication.";
-      case "permission-denied":
-        return "Firebase denied access. Sign out and sign in again with this Gmail. If it continues, Firestore photo rules may not be deployed yet.";
-      case "failed-precondition":
-        return "Firestore needs an index for this dashboard query. Deploy the checked-in Firestore indexes, then reload this page.";
-      default:
-        return error?.message || "The dashboard data could not be loaded.";
-    }
+    return adminScope.describeError(error);
   }
 
   function revokePhotoUrls() {
@@ -258,40 +234,15 @@
   }
 
   function workerInitials(worker) {
-    return String(worker.displayName || worker.workerId)
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0])
-      .join("")
-      .toUpperCase();
+    return adminScope.workerInitials(worker);
   }
 
   function summarizeAttendance(entries) {
-    const workers = new Map();
-    entries.forEach((entry) => {
-      const saved = workers.get(entry.workerId) || {
-        workerId: entry.workerId,
-        displayName: entry.displayName,
-        firstInAtMs: entry.checkedInAtMs,
-        latestAtMs: entry.checkedInAtMs,
-        checkIns: 0,
-        location: entry.location || null,
-      };
-      saved.displayName = entry.displayName || saved.displayName;
-      saved.firstInAtMs = Math.min(saved.firstInAtMs, entry.checkedInAtMs);
-      if (entry.checkedInAtMs >= saved.latestAtMs) {
-        saved.latestAtMs = entry.checkedInAtMs;
-        saved.location = entry.location || saved.location;
-      }
-      saved.checkIns += 1;
-      workers.set(entry.workerId, saved);
-    });
-    return [...workers.values()].sort((left, right) => right.latestAtMs - left.latestAtMs);
+    return adminScope.summarizeAttendance(entries);
   }
 
   function photoTimeMs(photo) {
-    return Number(photo?.capturedAtMs) || Date.parse(photo?.capturedAt) || 0;
+    return adminScope.photoTimeMs(photo);
   }
 
   function sessionDefinitionFor(value) {
@@ -299,180 +250,32 @@
   }
 
   function countWorkers(entries) {
-    return new Set(entries.map((entry) => entry.workerId)).size;
+    return adminScope.countWorkers(entries);
   }
 
   function plural(count, noun) {
-    return `${count} ${noun}${count === 1 ? "" : "s"}`;
+    return adminScope.plural(count, noun);
   }
 
-  // Check-ins and photographs share one location → date → session tree so the
-  // dashboard only ever shows one site's work at a time.
   function buildScope() {
-    const locations = new Map();
-    // Photographs carry the coordinates, so they decide which addresses are one
-    // site. Attendance has only the address it was written with, and follows.
-    const sites = data.createSiteIndex(photos);
-
-    function locationNode(rawLocation, atMs) {
-      const site = sites.siteFor(rawLocation);
-      if (!locations.has(site.locationKey)) {
-        locations.set(site.locationKey, {
-          location: site.location,
-          locationKey: site.locationKey,
-          // Where the site is, so the weather can be asked about this place.
-          point: site.point,
-          aliases: site.aliases,
-          aliasKeys: site.aliasKeys,
-          latestAtMs: 0,
-          dates: new Map(),
-        });
-      }
-      const node = locations.get(site.locationKey);
-      node.latestAtMs = Math.max(node.latestAtMs, atMs || 0);
-      return node;
-    }
-
-    function dateNode(location, rawDateKey, atMs) {
-      const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(rawDateKey || "")
-        ? rawDateKey
-        : "unknown-date";
-      if (!location.dates.has(dateKey)) {
-        location.dates.set(dateKey, {
-          dateKey,
-          latestAtMs: 0,
-          entries: [],
-          photos: [],
-          sessions: new Map(),
-        });
-      }
-      const node = location.dates.get(dateKey);
-      node.latestAtMs = Math.max(node.latestAtMs, atMs || 0);
-      return node;
-    }
-
-    function sessionNode(dateGroup, atMs) {
-      const definition = sessionDefinitionFor(atMs);
-      if (!dateGroup.sessions.has(definition.id)) {
-        dateGroup.sessions.set(definition.id, { ...definition, entries: [], photos: [] });
-      }
-      return dateGroup.sessions.get(definition.id);
-    }
-
-    attendance.forEach((entry) => {
-      const location = locationNode(entry.location, entry.checkedInAtMs);
-      const dateGroup = dateNode(location, entry.dateKey, entry.checkedInAtMs);
-      dateGroup.entries.push(entry);
-      sessionNode(dateGroup, entry.checkedInAtMs).entries.push(entry);
+    return adminScope.buildScope({
+      photos,
+      attendance,
+      data,
+      dashboardSessions,
+      sessionDefinitions: SESSIONS,
     });
-
-    photos.forEach((photo) => {
-      const atMs = photoTimeMs(photo);
-      const location = locationNode(photo.location, atMs);
-      const dateGroup = dateNode(location, photo.dateKey, atMs);
-      dateGroup.photos.push(photo);
-      sessionNode(dateGroup, atMs).photos.push(photo);
-    });
-
-    return [...locations.values()]
-      .sort(
-        (left, right) =>
-          right.latestAtMs - left.latestAtMs ||
-          left.location.localeCompare(right.location),
-      )
-      .map((location) => {
-        const dates = [...location.dates.values()]
-          .sort((left, right) => right.dateKey.localeCompare(left.dateKey))
-          .map((dateGroup) => ({
-            ...dateGroup,
-            sessions: SESSIONS.map((definition) => dateGroup.sessions.get(definition.id))
-              .filter(Boolean)
-              .map((session) => {
-                const key = data.createSessionKey({
-                  locationKey: location.locationKey,
-                  dateKey: dateGroup.dateKey,
-                  sessionId: session.id,
-                });
-                // Anything saved before two addresses were read as one site is
-                // filed under the address of the day, so those keys are tried
-                // too. A later save writes to the site's own key.
-                const savedSession =
-                  dashboardSessions.get(key) ||
-                  (location.aliasKeys || [])
-                    .map((aliasKey) =>
-                      dashboardSessions.get(
-                        data.createSessionKey({
-                          locationKey: aliasKey,
-                          dateKey: dateGroup.dateKey,
-                          sessionId: session.id,
-                        }),
-                      ),
-                    )
-                    .find(Boolean);
-                return {
-                  ...session,
-                  key,
-                  label: savedSession?.label || session.label,
-                  truckLocation: data.cleanTruckLocation(savedSession?.truckLocation),
-                  weather: data.cleanSessionWeather(savedSession?.weather),
-                  entries: [...session.entries].sort(
-                    (left, right) => left.checkedInAtMs - right.checkedInAtMs,
-                  ),
-                };
-              }),
-          }));
-
-        return {
-          ...location,
-          dates,
-          entries: dates.flatMap((dateGroup) => dateGroup.entries),
-          photos: dates.flatMap((dateGroup) => dateGroup.photos),
-        };
-      });
   }
 
-  // Only what has actually been chosen resolves. A step whose choice has since
-  // been deleted falls back to nothing rather than to the first row, so the rail
-  // never answers a question on the reader's behalf.
   function resolveSelection(scope) {
-    const location = selection.locationKey
-      ? scope.find((entry) => entry.locationKey === selection.locationKey) || null
-      : null;
-    const dateGroup =
-      location && selection.dateKey
-        ? location.dates.find((entry) => entry.dateKey === selection.dateKey) || null
-        : null;
-    const session = dateGroup
-      ? dateGroup.sessions.find((entry) => entry.id === selection.sessionId) || null
-      : null;
-
-    selection.locationKey = location?.locationKey || null;
-    selection.dateKey = dateGroup?.dateKey || null;
-    // "Whole day" survives as an answer in its own right; a session that no
-    // longer exists takes the third step back to unanswered.
-    if (!dateGroup) selection.sessionId = null;
-    else if (selection.sessionId !== "all") selection.sessionId = session?.id || null;
-
-    return { location, dateGroup, session };
+    return adminScope.resolveSelection(scope, selection);
   }
 
   function applyNavigationRequest(scope) {
-    if (
-      navigationApplied ||
-      !navigationRequest.locationKey ||
-      !navigationRequest.dateKey ||
-      !navigationRequest.sessionId
-    ) {
-      return;
+    if (navigationApplied) return;
+    if (adminScope.applyNavigationRequest(scope, navigationRequest, selection)) {
+      navigationApplied = true;
     }
-    const location = scope.find((entry) => entry.locationKey === navigationRequest.locationKey);
-    const dateGroup = location?.dates.find((entry) => entry.dateKey === navigationRequest.dateKey);
-    const session = dateGroup?.sessions.find((entry) => entry.id === navigationRequest.sessionId);
-    if (!location || !dateGroup || !session) return;
-    selection.locationKey = location.locationKey;
-    selection.dateKey = dateGroup.dateKey;
-    selection.sessionId = session.id;
-    navigationApplied = true;
   }
 
   function revealNavigationTarget(view) {
@@ -487,28 +290,22 @@
     });
   }
 
-  // The detail side is a reward for finishing the rail: a location, a date, and
-  // an answer to the third step, whether that answer is one session or the day.
+  // The detail side is a reward for finishing the rail: a street, an address, a
+  // date, and an answer to the fourth step, whether one session or the day.
   function isScopeChosen(view) {
-    return Boolean(view.location && view.dateGroup && selection.sessionId);
+    return adminScope.isScopeChosen(view, selection.sessionId);
   }
 
   function scopeGuidance(view, scope) {
-    if (scope.length === 0) return "No site has reported attendance or photos yet.";
-    // Step one needs no sentence. The location list is numbered, and at this point
-    // it is the only thing on the page — a panel underneath it saying to pick a
-    // location was describing the one choice already on offer.
-    if (!view.location) return "";
-    if (!view.dateGroup) return "Now pick a date.";
-    return "Now pick a time session, or the whole day.";
+    return adminScope.scopeGuidance(view, scope);
   }
 
   function scopedEntries(view) {
-    return view.session?.entries || view.dateGroup?.entries || [];
+    return adminScope.scopedEntries(view);
   }
 
   function scopedPhotos(view) {
-    return view.session?.photos || view.dateGroup?.photos || [];
+    return adminScope.scopedPhotos(view);
   }
 
   function attendanceForSelectedWorker(entries) {
@@ -559,6 +356,7 @@
     const workerId = document.createElement("span");
     const timing = document.createElement("div");
     const hours = document.createElement("span");
+    const reviewFlag = document.createElement("span");
 
     row.className = "attendance-row";
     avatar.className = "attendance-avatar";
@@ -577,6 +375,12 @@
 
     identity.append(name, workerId);
     timing.append(hours);
+    if (worker.flaggedCheckIns > 0) {
+      row.dataset.reviewRequired = "true";
+      reviewFlag.className = "attendance-review-flag";
+      reviewFlag.textContent = `${plural(worker.flaggedCheckIns, "manual check-in")} · Needs review`;
+      timing.append(reviewFlag);
+    }
     row.append(avatar, identity, timing);
     return row;
   }
@@ -959,14 +763,6 @@
     }
   }
 
-  // Says so plainly when a site is more than one recorded address, so a reader
-  // who expected two rows can see why there is one.
-  function describeAliases(aliases) {
-    if (!aliases || aliases.length === 0) return "";
-    if (aliases.length === 1) return `also ${aliases[0]}`;
-    return `${aliases.length} nearby addresses`;
-  }
-
   function sessionRange(session) {
     const times = [...session.entries.map((entry) => entry.checkedInAtMs), ...session.photos.map(photoTimeMs)]
       .filter((value) => Number.isFinite(value) && value > 0)
@@ -980,33 +776,61 @@
   }
 
   function renderScopeRail(scope, view) {
+    streetOptions.replaceChildren();
     locationOptions.replaceChildren();
     dateOptions.replaceChildren();
     sessionOptions.replaceChildren();
 
+    if (locationStep) locationStep.hidden = !view.street;
     if (dateStep) dateStep.hidden = !view.location;
     if (sessionStep) sessionStep.hidden = !view.dateGroup;
 
     if (scope.length === 0) {
-      locationOptions.append(createScopeEmpty("No sites have reported yet."));
+      streetOptions.append(createScopeEmpty("No streets have reported yet."));
       renderDatePicker([], view);
       return;
     }
 
-    scope.forEach((location) => {
+    const streets = adminScope.groupLocationsByStreet(scope);
+    streets.forEach((street) => {
+      const dayCount = new Set(
+        street.locations.flatMap((location) => location.dates.map((date) => date.dateKey)),
+      ).size;
+      streetOptions.append(
+        createScopeOption({
+          title: street.streetName,
+          detail: `${street.locations.length} ${
+            street.locations.length === 1 ? "address" : "addresses"
+          } · ${plural(dayCount, "day")}`,
+          selected: street.streetKey === view.street?.streetKey,
+          automation: { scopeKind: "street", streetKey: street.streetKey },
+          onSelect: () => {
+            selection.streetKey = street.streetKey;
+            selection.locationKey = null;
+            selection.dateKey = null;
+            selection.sessionId = null;
+            renderDashboard();
+          },
+        }),
+      );
+    });
+
+    if (!view.street) return;
+
+    view.street.locations.forEach((location) => {
       locationOptions.append(
         createScopeOption({
           title: location.location,
           detail: [
             plural(location.dates.length, "day"),
             plural(location.photos.length, "photo"),
-            describeAliases(location.aliases),
           ]
             .filter(Boolean)
             .join(" · "),
           selected: location.locationKey === view.location?.locationKey,
           automation: { scopeKind: "location", locationKey: location.locationKey },
           onSelect: () => {
+            selection.streetKey = location.streetKey;
             selection.locationKey = location.locationKey;
             selection.dateKey = null;
             selection.sessionId = null;
@@ -1147,21 +971,13 @@
       scopeBreadcrumb.textContent = scopeGuidance(view, scope);
       return;
     }
-    const parts = [view.location.location, formatDate(view.dateGroup.dateKey)];
+    const parts = [view.street.streetName, view.location.location, formatDate(view.dateGroup.dateKey)];
     parts.push(view.session ? `${view.session.label} session` : "Whole day");
     scopeBreadcrumb.textContent = parts.join(" · ");
   }
 
   function sessionDescriptorFor(location, dateGroup, session) {
-    if (!location || !dateGroup || !session) return null;
-    return {
-      key: session.key,
-      label: session.label,
-      location: location.location,
-      locationKey: location.locationKey,
-      dateKey: dateGroup.dateKey,
-      sessionId: session.id,
-    };
+    return adminScope.sessionDescriptorFor(location, dateGroup, session);
   }
 
   function sessionDescriptor(view) {
@@ -1381,6 +1197,7 @@
         level,
         node: view.location,
         label: view.location.location,
+        streetKey: view.location.streetKey,
         location: view.location.location,
         locationKey: view.location.locationKey,
         locationKeys,
@@ -1392,6 +1209,7 @@
         level,
         node: view.dateGroup,
         label: `${formatDate(view.dateGroup.dateKey)} at ${view.location.location}`,
+        streetKey: view.location.streetKey,
         location: view.location.location,
         locationKey: view.location.locationKey,
         locationKeys,
@@ -1399,54 +1217,22 @@
       };
     }
     const session = sessionDescriptor(view);
-    return session ? { ...session, level: "session", locationKeys, node: view.session } : null;
+    return session
+      ? { ...session, streetKey: view.location.streetKey, level: "session", locationKeys, node: view.session }
+      : null;
   }
 
   // Said plainly and with the counts, because none of this comes back.
   function describeDeletion(descriptor) {
-    const checkIns = plural(descriptor.node.entries.length, "check-in");
-    const photoCount = plural(descriptor.node.photos.length, "photo");
-    if (descriptor.level === "location") {
-      const days = plural(descriptor.node.dates.length, "day");
-      return `Permanently delete ${descriptor.label} and everything recorded there — ${days}, ${checkIns} and ${photoCount}? This cannot be undone.`;
-    }
-    if (descriptor.level === "date") {
-      return `Permanently delete ${descriptor.label}, including every time session in it — ${checkIns} and ${photoCount}? This cannot be undone.`;
-    }
-    return `Permanently delete ${descriptor.label} and all of its attendance check-ins and photos? This cannot be undone.`;
+    return adminScope.describeDeletion(descriptor);
   }
 
-  // What the rail should show once the thing being looked at is gone: the level
-  // above it, which always survives its own children.
   function selectionAfterDeletion(descriptor) {
-    if (descriptor.level === "location") {
-      return { locationKey: null, dateKey: null, sessionId: "all" };
-    }
-    if (descriptor.level === "date") {
-      return { locationKey: descriptor.locationKey, dateKey: null, sessionId: "all" };
-    }
-    return {
-      locationKey: descriptor.locationKey,
-      dateKey: descriptor.dateKey,
-      sessionId: "all",
-    };
+    return adminScope.selectionAfterDeletion(descriptor);
   }
 
-  // Every session key the deleted scope covered, so a name or truck coordinate
-  // cached against it is forgotten with it.
   function deletedSessionKeys(descriptor, deleted) {
-    const keys = new Set(deleted.sessionKeys || []);
-    if (descriptor.level === "session") {
-      keys.add(descriptor.key);
-      return keys;
-    }
-    const dateGroups = descriptor.level === "location"
-      ? descriptor.node.dates
-      : [descriptor.node];
-    dateGroups.forEach((dateGroup) => {
-      dateGroup.sessions.forEach((session) => keys.add(session.key));
-    });
-    return keys;
+    return adminScope.deletedSessionKeys(descriptor, deleted);
   }
 
   async function deleteSelectedScope(level) {
@@ -1978,12 +1764,14 @@
       dashboardSessions = new Map();
       attendanceLoadError = null;
       photoLoadFailed = false;
+      selection.streetKey = null;
       selection.locationKey = null;
       selection.dateKey = null;
       selection.sessionId = null;
       attendanceWorkerFilter.value = "all";
       updateAttendanceWorkerOptions([]);
       library.replaceChildren();
+      streetOptions.replaceChildren();
       locationOptions.replaceChildren();
       dateOptions.replaceChildren();
       sessionOptions.replaceChildren();

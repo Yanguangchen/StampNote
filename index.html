@@ -5,6 +5,8 @@
     <!-- viewport-fit=cover so the stage reaches under a phone's rounded corners
          and home indicator; the toolbar pads itself back out of the way. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f6f7f6" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d1512" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#0d1512" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -23,12 +25,24 @@
     />
     <link rel="stylesheet" href="vendor/fonts/outfit.css" />
     <link rel="stylesheet" href="sidebar.css" />
-    <link rel="stylesheet" href="styles.css?v=20260817-1" />
+    <link rel="stylesheet" href="styles.css?v=20260818-4" />
+    <!-- Applied before the first paint so a saved dark theme never flashes the
+         idle paper, and a saved light theme never flashes the camera shell. -->
+    <script>
+      try {
+        const saved = localStorage.getItem("stampnote-theme");
+        if (saved === "dark" || saved === "light") {
+          document.documentElement.dataset.theme = saved;
+        }
+      } catch (error) {
+        /* A blocked storage jar just leaves the system theme in charge. */
+      }
+    </script>
     <script src="sidebar.js" defer></script>
     <script src="observability.js" defer></script>
     <script src="address-service.js" defer></script>
     <script src="stamp.js" defer></script>
-    <script src="pose-detector.js" defer></script>
+    <script src="src/vision/pose-detector.js" defer></script>
     <script src="capture-scheduler.js" defer></script>
     <script src="photo-store.js" defer></script>
     <script src="photo-triage.js" defer></script>
@@ -37,18 +51,32 @@
     <script src="frame-scaler.js" defer></script>
     <script src="face-identity.js" defer></script>
     <script src="person-tracker.js" defer></script>
-    <script src="auto-capture.js?v=20260817-1" defer></script>
+    <script src="auto-capture.js?v=20260818-1" defer></script>
     <script src="pose-mapping.js" defer></script>
     <script src="photo-cloud.js" defer></script>
-    <script src="firebase.js?v=20260818-2" defer></script>
+    <script src="firebase.js?v=20260818-3" defer></script>
     <!-- A module, because the vendored MediaPipe runtime is one. It only
          registers a loader; nothing is downloaded until the watch is started. -->
     <script src="pose-model.js" type="module"></script>
-    <script src="app.js?v=20260817-2" defer></script>
-    <script src="orbit.js?v=20260816-1" defer></script>
+    <script src="src/components/pose-overlay.js" defer></script>
+    <script src="src/services/capture-attendance.js?v=20260818-1" defer></script>
+    <script src="src/capture/camera-controller.js" defer></script>
+    <script src="app.js?v=20260818-6" defer></script>
+    <script src="orbit.js?v=20260818-1" defer></script>
   </head>
   <body>
-    <header class="capture-header" data-sidebar-mount aria-label="Page navigation"></header>
+    <header class="capture-header" data-sidebar-mount aria-label="Page navigation">
+      <button
+        class="theme-toggle"
+        id="theme-toggle"
+        type="button"
+        aria-pressed="false"
+        title="Switch to dark theme"
+      >
+        <span class="theme-toggle-icon" id="theme-toggle-icon" aria-hidden="true">☾</span>
+        <span class="theme-toggle-label" id="theme-toggle-label">Dark</span>
+      </button>
+    </header>
 
     <main class="stage" aria-labelledby="monitor-title">
       <h1 id="monitor-title" class="visually-hidden">StampNote auto capture</h1>
@@ -108,6 +136,27 @@
           <p id="face-enrollment-message" aria-live="polite">
             Move closer until your face fills the oval.
           </p>
+          <form class="manual-attendance-form" id="manual-attendance-form" hidden>
+            <label for="manual-attendance-worker">Your worker profile</label>
+            <select id="manual-attendance-worker" name="workerId" required>
+              <option value="">Choose your name</option>
+            </select>
+            <div class="manual-attendance-actions">
+              <button
+                class="face-enrollment-action face-enrollment-action-secondary"
+                id="manual-attendance-cancel"
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                class="face-enrollment-action face-enrollment-action-primary"
+                type="submit"
+              >
+                Add
+              </button>
+            </div>
+          </form>
           <div
             class="face-enrollment-match"
             id="face-enrollment-match"
@@ -147,6 +196,13 @@
           <p class="face-enrollment-privacy" id="face-enrollment-privacy">
             Face matching stays on this device and clears when recording stops.
           </p>
+          <button
+            class="face-enrollment-manual-open"
+            id="manual-attendance-open"
+            type="button"
+          >
+            Add attendance manually
+          </button>
           <button class="face-enrollment-skip" id="face-enrollment-skip" type="button">
             Continue without worker ID
           </button>

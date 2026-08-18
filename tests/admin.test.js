@@ -170,6 +170,7 @@ function createAdminHarness(options = {}) {
     "attendance-list",
     "present-worker-count",
     "attendance-checkin-count",
+    "street-options",
     "location-options",
     "date-options",
     "date-picker",
@@ -180,6 +181,7 @@ function createAdminHarness(options = {}) {
     "session-options",
     "scope-breadcrumb",
     "scope-guidance",
+    "location-step",
     "date-step",
     "session-step",
     "detail-column",
@@ -311,6 +313,9 @@ function createAdminHarness(options = {}) {
               checkedInAtMs: Date.parse("2026-08-13T01:00:00.000Z"),
               dateKey: "2026-08-13",
               location: "10 Marina Bay",
+              source: "manual",
+              reviewStatus: "flagged",
+              reviewReason: "manual-entry",
             },
           ];
         },
@@ -472,6 +477,16 @@ function createAdminHarness(options = {}) {
   });
   scope.document = document;
 
+  [
+    resolve(__dirname, "..", "src/services/admin-scope.js"),
+    resolve(__dirname, "..", "src/services/operations-data.js"),
+  ].forEach((file) => {
+    vm.runInContext(readFileSync(file, "utf8"), context, { filename: file });
+  });
+  ["StampNoteAdminScope", "StampNoteOperationsData"].forEach((key) => {
+    if (context[key]) scope[key] = context[key];
+  });
+
   vm.runInContext(readFileSync(adminPath, "utf8"), context, { filename: adminPath });
 
   return {
@@ -501,9 +516,15 @@ async function settle() {
 }
 
 // The rail answers nothing on its own, so a test that wants the detail side
-// walks its three steps. Session 0 is "Whole day".
-async function chooseScope(harness, { location = 1, date = 0, session = 0 } = {}) {
-  await scopeOptions(harness.elements["location-options"])[location].dispatch("click");
+// walks street, address, date and time. Session 0 is "Whole day". `location`
+// remains the street index in older fixtures; `address` chooses within it.
+async function chooseScope(
+  harness,
+  { location = 1, address = 0, date = 0, session = 0 } = {},
+) {
+  await scopeOptions(harness.elements["street-options"])[location].dispatch("click");
+  await settle();
+  await scopeOptions(harness.elements["location-options"])[address].dispatch("click");
   await settle();
   await scopeOptions(harness.elements["date-options"])[date].dispatch("click");
   await settle();
@@ -516,6 +537,7 @@ test("photos and daily attendance share one dashboard without status or access-c
   assert.match(adminHtml, /id="photo-library"/);
   assert.match(adminHtml, /id="attendance-list"/);
   assert.match(adminHtml, /id="attendance-worker-filter"/);
+  assert.match(adminHtml, /id="street-options"/);
   assert.match(adminHtml, /id="location-options"/);
   assert.match(adminHtml, /id="date-options"/);
   assert.match(adminHtml, /<input\b[^>]*type="date"[^>]*id="date-picker"/);
@@ -544,8 +566,8 @@ test("photos and daily attendance share one dashboard without status or access-c
   assert.match(adminHtml, /id="session-truck-location"/);
   assert.match(adminHtml, /id="session-rename-dialog"/);
   assert.match(adminCss, /\.dashboard-workspace\s*\{[^}]*grid-template-columns:/);
-  // Location, then date, then session, running left to right across the page.
-  assert.match(adminCss, /\.scope-rail\s*\{[^}]*grid-template-columns:\s*repeat\(3,/);
+  // Street, address, date and session run left to right across the page.
+  assert.match(adminCss, /\.scope-rail\s*\{[^}]*grid-template-columns:\s*repeat\(4,/);
   assert.match(adminCss, /\.scope-rail-heading\s*\{[^}]*grid-column:\s*1 \/ -1/);
   // On a desktop the roster sits beside the photographs. Stacked, it spent the
   // full 1313px to show a number and a word, and pushed the photographs to
@@ -735,6 +757,7 @@ test("each step deletes at its own level, so a site need not be cleared a sessio
   const locationDelete = harness.elements["location-delete"];
   const dateDelete = harness.elements["date-delete"];
   const sessionDelete = harness.elements["session-delete"];
+  const streetOptions = harness.elements["street-options"];
   const marinaBay = () =>
     scopeOptions(locationOptions).find(
       (option) => option.children[0].textContent === "10 Marina Bay",
@@ -745,6 +768,10 @@ test("each step deletes at its own level, so a site need not be cleared a sessio
   assert.equal(dateDelete.disabled, true);
   assert.equal(sessionDelete.disabled, true);
 
+  await scopeOptions(streetOptions)
+    .find((option) => option.children[0].textContent === "Marina Bay")
+    .dispatch("click");
+  await settle();
   await marinaBay().dispatch("click");
   await settle();
   assert.equal(locationDelete.disabled, false);
@@ -786,13 +813,14 @@ test("each step deletes at its own level, so a site need not be cleared a sessio
   assert.equal(siteScope.dateKey, undefined, "a whole site names no day");
   assert.equal(siteScope.sessionId, undefined);
   assert.equal(marinaBay(), undefined, "the site is gone from the rail");
-  // Its neighbour is untouched, and nothing is chosen any more.
-  assert.deepEqual(optionTitles(locationOptions), ["Orchard Road"]);
+  // Its neighbouring street is untouched, and nothing is chosen any more.
+  assert.deepEqual(optionTitles(streetOptions), ["Orchard"]);
+  assert.deepEqual(optionTitles(locationOptions), []);
   assert.equal(locationDelete.disabled, true);
   assert.match(harness.elements["dashboard-status"].textContent, /Deleted 10 Marina Bay/);
 });
 
-test("one yard split by GPS error is one row in the rail", async () => {
+test("GPS address variants share a street group but keep their own address rows", async () => {
   // The same site, photographed either side of a fifty metre error. Attendance
   // carries no coordinates at all, only the address it was written with.
   const marina = { latitude: 1.2868, longitude: 103.8545 };
@@ -832,18 +860,26 @@ test("one yard split by GPS error is one row in the rail", async () => {
   harness.auth({ uid: "user-1", email: "owner@example.com" });
   await settle();
 
+  const streetOptions = harness.elements["street-options"];
   const locationOptions = harness.elements["location-options"];
-  assert.deepEqual(optionTitles(locationOptions), ["34 Parbury Avenue"]);
-  // The merge is stated, not silent: a reader expecting two rows can see why
-  // there is one.
-  assert.match(scopeOptions(locationOptions)[0].children[1].textContent, /also 32 Parbury Avenue/);
+  assert.deepEqual(optionTitles(streetOptions), ["Parbury"]);
+  assert.equal(scopeOptions(streetOptions)[0].children[1].textContent, "2 addresses · 1 day");
 
-  await chooseScope(harness, { location: 0, date: 0, session: 0 });
+  await scopeOptions(streetOptions)[0].dispatch("click");
+  await settle();
+  assert.deepEqual(optionTitles(locationOptions), ["32 Parbury Avenue", "34 Parbury Avenue"]);
 
-  // Every photograph and both workers belong to the one site.
-  assert.equal(harness.elements["dashboard-status"].textContent, "3 photos");
-  assert.equal(harness.elements["present-worker-count"].textContent, "2");
-  assert.equal(harness.elements["attendance-checkin-count"].textContent, "2");
+  await scopeOptions(locationOptions)[0].dispatch("click");
+  await settle();
+  await scopeOptions(harness.elements["date-options"])[0].dispatch("click");
+  await settle();
+  await scopeOptions(harness.elements["session-options"])[0].dispatch("click");
+  await settle();
+
+  // The address remains inspectable instead of silently absorbing its sibling.
+  assert.equal(harness.elements["dashboard-status"].textContent, "1 photo");
+  assert.equal(harness.elements["present-worker-count"].textContent, "1");
+  assert.equal(harness.elements["attendance-checkin-count"].textContent, "1");
 });
 
 // One day of hourly weather at the site, in the shape the service reads.
@@ -872,7 +908,9 @@ test("every session carries its own weather, and a wet one warns of delays", asy
   harness.auth({ uid: "user-1", email: "owner@example.com" });
   await settle();
 
-  await scopeOptions(harness.elements["location-options"])[1].dispatch("click");
+  await scopeOptions(harness.elements["street-options"])[1].dispatch("click");
+  await settle();
+  await scopeOptions(harness.elements["location-options"])[0].dispatch("click");
   await settle();
   await scopeOptions(harness.elements["date-options"])[1].dispatch("click");
   await settle();
@@ -964,7 +1002,7 @@ test("a session's weather is written down once and read back from then on", asyn
   // Written once: opening the day again asks neither the sky nor Firestore.
   const asked = harness.cloudCalls.weather.length;
   const saved = harness.cloudCalls.savedWeather.length;
-  await scopeOptions(harness.elements["location-options"])[0].dispatch("click");
+  await scopeOptions(harness.elements["street-options"])[0].dispatch("click");
   await settle();
   await chooseScope(harness, { location: 1, date: 1, session: 2 });
   assert.equal(harness.cloudCalls.weather.length, asked, "the day is not asked about twice");
@@ -1068,7 +1106,8 @@ test("the rail and the detail side are revealed one answered step at a time", as
   harness.auth({ uid: "user-1", email: "owner@example.com" });
   await settle();
 
-  // Signed in, the rail offers a location and nothing else.
+  // Signed in, the rail offers a street and nothing else.
+  assert.equal(harness.elements["location-step"].hidden, true);
   assert.equal(harness.elements["date-step"].hidden, true);
   assert.equal(harness.elements["session-step"].hidden, true);
   assert.equal(harness.elements["detail-column"].hidden, true);
@@ -1078,7 +1117,13 @@ test("the rail and the detail side are revealed one answered step at a time", as
   assert.equal(harness.elements["scope-guidance"].hidden, true);
   assert.equal(harness.elements["scope-guidance"].textContent, "");
 
-  await scopeOptions(harness.elements["location-options"])[1].dispatch("click");
+  await scopeOptions(harness.elements["street-options"])[1].dispatch("click");
+  await settle();
+  assert.equal(harness.elements["location-step"].hidden, false);
+  assert.equal(harness.elements["date-step"].hidden, true);
+  assert.match(harness.elements["scope-guidance"].textContent, /pick an address/i);
+
+  await scopeOptions(harness.elements["location-options"])[0].dispatch("click");
   await settle();
   assert.equal(harness.elements["date-step"].hidden, false);
   assert.equal(harness.elements["session-step"].hidden, true);
@@ -1093,7 +1138,7 @@ test("the rail and the detail side are revealed one answered step at a time", as
   assert.equal(harness.elements["photos-panel"].hidden, true);
   assert.match(harness.elements["scope-guidance"].textContent, /pick a time session/i);
 
-  // Only the third answer brings the photographs, the roster and the fields.
+  // Only the fourth answer brings the photographs, the roster and the fields.
   await scopeOptions(harness.elements["session-options"])[0].dispatch("click");
   await settle();
   assert.equal(harness.elements["detail-column"].hidden, false);
@@ -1106,7 +1151,7 @@ test("the rail and the detail side are revealed one answered step at a time", as
 
   // Going back up the rail puts the detail side away again rather than leaving
   // one site's photographs on screen under another site's name.
-  await scopeOptions(harness.elements["location-options"])[0].dispatch("click");
+  await scopeOptions(harness.elements["street-options"])[0].dispatch("click");
   await settle();
   assert.equal(harness.elements["session-step"].hidden, true);
   assert.equal(harness.elements["detail-column"].hidden, true);
@@ -1140,6 +1185,8 @@ test("a month of history keeps the date step short and still reaches any day", a
   const dateOptions = harness.elements["date-options"];
   const datePicker = harness.elements["date-picker"];
 
+  await scopeOptions(harness.elements["street-options"])[0].dispatch("click");
+  await settle();
   await scopeOptions(harness.elements["location-options"])[0].dispatch("click");
   await settle();
 
@@ -1252,13 +1299,15 @@ test("the dashboard signs in, renders and filters photos, paginates, and opens t
   // No card is drawn yet, so no photograph has been fetched from storage.
   assert.deepEqual(harness.cloudCalls.blobs, []);
 
-  // The rail lists the sites; choosing one, then a day, then the whole of that
-  // day is what brings the detail side into being.
+  // The rail lists streets first; choosing an address, then a day, then the
+  // whole day is what brings the detail side into being.
   const attendanceList = harness.elements["attendance-list"];
+  const streetOptions = harness.elements["street-options"];
   const locationOptions = harness.elements["location-options"];
   const dateOptions = harness.elements["date-options"];
   const sessionOptions = harness.elements["session-options"];
-  assert.deepEqual(optionTitles(locationOptions), ["Orchard Road", "10 Marina Bay"]);
+  assert.deepEqual(optionTitles(streetOptions), ["Orchard", "Marina Bay"]);
+  assert.deepEqual(optionTitles(locationOptions), []);
   assert.equal(scopeOptions(sessionOptions).length, 0, "no day, no sessions to offer");
 
   await chooseScope(harness, { location: 1, date: 1 });
@@ -1270,7 +1319,8 @@ test("the dashboard signs in, renders and filters photos, paginates, and opens t
   assert.equal(harness.elements["load-more-row"].hidden, false);
   assert.equal(harness.elements["dashboard-status"].textContent, "2 photos");
   assert.deepEqual(harness.cloudCalls.blobs.sort(), ["flagged", "kept"]);
-  assert.equal(locationOptions.children[1].dataset.selected, "true");
+  assert.equal(streetOptions.children[1].dataset.selected, "true");
+  assert.equal(locationOptions.children[0].dataset.selected, "true");
   assert.equal(dateOptions.children.length, 2);
   assert.equal(dateOptions.children[1].dataset.selected, "true");
   assert.deepEqual(optionTitles(sessionOptions), [
@@ -1279,7 +1329,7 @@ test("the dashboard signs in, renders and filters photos, paginates, and opens t
     "Afternoon · 12:34 PM",
   ]);
   assert.equal(scopeOptions(sessionOptions)[0].dataset.selected, "true");
-  assert.match(harness.elements["scope-breadcrumb"].textContent, /^10 Marina Bay · /);
+  assert.match(harness.elements["scope-breadcrumb"].textContent, /^Marina Bay · 10 Marina Bay · /);
   assert.match(harness.elements["scope-breadcrumb"].textContent, /Whole day$/);
 
   assert.equal(harness.elements["present-worker-count"].textContent, "1");
@@ -1287,6 +1337,16 @@ test("the dashboard signs in, renders and filters photos, paginates, and opens t
   assert.equal(
     descendants(attendanceList).filter((entry) => entry.className === "attendance-row").length,
     1,
+  );
+  assert.equal(
+    descendants(attendanceList).filter((entry) => entry.className === "attendance-review-flag")[0]
+      .textContent,
+    "1 manual check-in · Needs review",
+  );
+  assert.equal(
+    descendants(attendanceList).find((entry) => entry.className === "attendance-row").dataset
+      .reviewRequired,
+    "true",
   );
   // The two summary tiles carry the counts, so the status line stays silent
   // unless attendance is loading or failed.
@@ -1296,8 +1356,10 @@ test("the dashboard signs in, renders and filters photos, paginates, and opens t
     ["All workers", "Ari Tan · WORKER-7"],
   );
 
-  // Choosing another site puts the reader back at step two: the day and the
-  // session below it belonged to the site they just left.
+  // Choosing another street, then its address, puts the reader back before the
+  // date: the day and session belonged to the address they just left.
+  await streetOptions.children[0].dispatch("click");
+  await settle();
   await locationOptions.children[0].dispatch("click");
   await settle();
   assert.equal(harness.elements["detail-column"].hidden, true);
@@ -1307,7 +1369,7 @@ test("the dashboard signs in, renders and filters photos, paginates, and opens t
   await settle();
   await scopeOptions(sessionOptions)[0].dispatch("click");
   await settle();
-  assert.match(harness.elements["scope-breadcrumb"].textContent, /^Orchard Road · /);
+  assert.match(harness.elements["scope-breadcrumb"].textContent, /^Orchard · Orchard Road · /);
   assert.equal(harness.elements["present-worker-count"].textContent, "2");
   assert.equal(harness.elements["attendance-checkin-count"].textContent, "2");
   assert.equal(dateOptions.children.length, 1);
@@ -1330,8 +1392,11 @@ test("the dashboard signs in, renders and filters photos, paginates, and opens t
   harness.elements["attendance-worker-filter"].value = "all";
   await harness.elements["attendance-worker-filter"].dispatch("change");
 
-  // Back to the site that holds the photographs, then down to one time session.
-  await locationOptions.children[1].dispatch("click");
+  // Back to the street and address that hold the photographs, then down to one
+  // time session.
+  await streetOptions.children[1].dispatch("click");
+  await settle();
+  await locationOptions.children[0].dispatch("click");
   await settle();
   await dateOptions.children[1].dispatch("click");
   await settle();

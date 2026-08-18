@@ -1,19 +1,39 @@
 /* The default screen: with nothing recording, the page is the shutter on a
    drifting field rather than a camera shell with a bar across it. This file
-   only decides when the screen is idle, and keeps the phone's status bar in
-   step with whichever palette that screen is using. */
+   decides when the screen is idle, keeps the phone's status bar in step with
+   the idle palette, and lets Appearance pin light or dark over the system. */
 (function initializeStageWatcher() {
   "use strict";
 
+  const THEME_KEY = "stampnote-theme";
   const record = document.querySelector("#monitor-toggle");
   const aiReviewLoader = document.querySelector("#ai-review-loader");
-  const themeColour = document.querySelector('meta[name="theme-color"]');
+  const themeColour = document.querySelector('meta[name="theme-color"]:not([media])');
+  const themeToggle = document.querySelector("#theme-toggle");
+  const themeIcon = document.querySelector("#theme-toggle-icon");
+  const themeLabel = document.querySelector("#theme-toggle-label");
 
   if (!record || typeof window.matchMedia !== "function") {
     return;
   }
 
   const darkScheme = window.matchMedia("(prefers-color-scheme: dark)");
+
+  function readStoredTheme() {
+    try {
+      const saved = window.localStorage?.getItem(THEME_KEY);
+      return saved === "dark" || saved === "light" ? saved : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function isDarkTheme() {
+    const pinned = document.documentElement.dataset.theme;
+    if (pinned === "dark") return true;
+    if (pinned === "light") return false;
+    return darkScheme.matches;
+  }
 
   function isIdle() {
     return (
@@ -27,14 +47,36 @@
     const idle = isIdle();
     document.body.dataset.stage = idle ? "idle" : "live";
     // The phone's status bar follows the idle palette. A live camera always
-    // keeps the dark shell regardless of the system preference.
-    const idleThemeColour = darkScheme.matches ? "#0d1512" : "#f6f7f6";
+    // keeps the dark shell regardless of the pinned or system theme.
+    const idleThemeColour = isDarkTheme() ? "#0d1512" : "#f6f7f6";
     themeColour?.setAttribute("content", idle ? idleThemeColour : "#0d1512");
     if (!idle) {
       // The first press ends the opening screen for this visit: from here the
       // strip of photographs behaves normally, including after a stop.
       document.body.dataset.recorded = "true";
     }
+  }
+
+  function applyTheme(theme) {
+    const root = document.documentElement;
+    if (theme) root.dataset.theme = theme;
+    else delete root.dataset.theme;
+    const dark = theme ? theme === "dark" : darkScheme.matches;
+    themeToggle?.setAttribute("aria-pressed", String(dark));
+    themeToggle?.setAttribute("title", dark ? "Switch to light theme" : "Switch to dark theme");
+    if (themeIcon) themeIcon.textContent = dark ? "☀" : "☾";
+    if (themeLabel) themeLabel.textContent = dark ? "Light" : "Dark";
+    syncStage();
+  }
+
+  function toggleTheme() {
+    const next = isDarkTheme() ? "light" : "dark";
+    try {
+      window.localStorage?.setItem(THEME_KEY, next);
+    } catch {
+      /* The selected theme still applies for this visit. */
+    }
+    applyTheme(next);
   }
 
   const stageWatcher = new MutationObserver(syncStage);
@@ -47,14 +89,16 @@
   }
 
   if (typeof darkScheme.addEventListener === "function") {
-    darkScheme.addEventListener("change", syncStage);
+    darkScheme.addEventListener("change", () => applyTheme(readStoredTheme()));
   } else {
-    darkScheme.addListener?.(syncStage);
+    darkScheme.addListener?.(() => applyTheme(readStoredTheme()));
   }
+
+  themeToggle?.addEventListener("click", toggleTheme);
 
   // Photos left in the queue from a previous visit stay out of sight until the
   // camera has been started: the opening screen is the shutter and nothing else.
   document.body.dataset.recorded = "false";
 
-  syncStage();
+  applyTheme(readStoredTheme());
 })();

@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --ink: #14201c;
   --paper: #f2f5f3;
   --shell: #0d1512;
@@ -12,6 +13,16 @@
   --record: #ff3b30;
   --bar: 76px;
   --gutter: 12px;
+  --surface: #fff;
+  --surface-solid: #fff;
+  --line: #d5dad7;
+  --idle-blob-mint: rgba(56, 214, 154, 0.82);
+  --idle-blob-sky: rgba(72, 196, 255, 0.78);
+  --idle-blob-lilac: rgba(186, 118, 255, 0.7);
+  --idle-blob-peach: rgba(255, 164, 108, 0.72);
+  --idle-blob-gold: rgba(255, 220, 148, 0.42);
+  --idle-wash-sky: rgba(92, 198, 255, 0.48);
+  --idle-wash-peach: rgba(255, 168, 118, 0.42);
 
   /* One curve for everything that eases. The record button keeps its own
      overshoot and its own fast press below: those are the plunger, not
@@ -250,6 +261,15 @@ button {
   min-height: 0;
   overflow: hidden;
   background: #0a100e;
+}
+
+/* Attendance is a single-purpose camera state. Remove the rest of the app from
+   the render and accessibility trees until the operator skips attendance or
+   explicitly starts work; the camera and attendance actions remain usable. */
+body[data-taking-attendance="true"] > :not(.stage),
+body[data-taking-attendance="true"] .stage > :not(.monitor):not(.face-enrollment),
+body[data-taking-attendance="true"] .monitor-overlay {
+  display: none !important;
 }
 
 /* The gesture is a shutter button, so its acknowledgement is deliberately
@@ -506,9 +526,10 @@ button {
    The default screen
    --------------------------------------------------------------------------- */
 
-/* The opening screen is a sheet of white with colour spilled across it. The
+/* The opening screen is a sheet of paper with colour spilled across it. The
    dark shell belongs to the picture; an empty screen has no picture to protect,
-   so it gets the lighter, friendlier face of the app. */
+   so it gets the lighter, friendlier face of the app. A pinned dark theme, or
+   a dark system preference, swaps the paper for the camera shell below. */
 body[data-stage="idle"] {
   background: #f6f7f6;
   color: #16211d;
@@ -529,30 +550,63 @@ body[data-stage="idle"] .stage {
   background: transparent;
 }
 
-body[data-stage="idle"]::before {
+body[data-stage="idle"]::before,
+body[data-stage="idle"]::after {
   position: fixed;
-  inset: -25%;
   z-index: 0;
-  background:
-    radial-gradient(26% 26% at 26% 26%, rgba(64, 220, 160, 0.72), transparent 68%),
-    radial-gradient(23% 23% at 74% 28%, rgba(96, 206, 255, 0.68), transparent 68%),
-    radial-gradient(25% 25% at 68% 72%, rgba(190, 132, 255, 0.62), transparent 68%),
-    radial-gradient(21% 21% at 24% 74%, rgba(255, 176, 122, 0.6), transparent 68%),
-    radial-gradient(18% 18% at 50% 50%, rgba(255, 226, 168, 0.3), transparent 72%);
-  filter: blur(58px);
   content: "";
   pointer-events: none;
-  animation: stage-drift 19s ease-in-out infinite alternate;
+}
+
+body[data-stage="idle"]::before {
+  inset: -32%;
+  background:
+    radial-gradient(28% 28% at 24% 22%, var(--idle-blob-mint), transparent 68%),
+    radial-gradient(24% 26% at 78% 26%, var(--idle-blob-sky), transparent 68%),
+    radial-gradient(26% 28% at 70% 76%, var(--idle-blob-lilac), transparent 68%),
+    radial-gradient(22% 24% at 22% 78%, var(--idle-blob-peach), transparent 68%),
+    radial-gradient(20% 20% at 50% 50%, var(--idle-blob-gold), transparent 72%);
+  filter: blur(58px);
+  animation: stage-drift 16s ease-in-out infinite alternate;
+}
+
+/* A second, slower wash so the field keeps moving after the first blobs
+   have settled at one end of their travel. */
+body[data-stage="idle"]::after {
+  inset: -40%;
+  background:
+    radial-gradient(34% 30% at 82% 16%, var(--idle-wash-sky), transparent 70%),
+    radial-gradient(30% 32% at 14% 84%, var(--idle-wash-peach), transparent 72%);
+  filter: blur(72px);
+  opacity: 0.85;
+  animation: stage-drift-alt 24s ease-in-out infinite alternate;
 }
 
 @keyframes stage-drift {
   from {
-    transform: translate3d(-4%, -3%, 0) scale(1);
+    transform: translate3d(-7%, -6%, 0) scale(1);
     filter: blur(58px) hue-rotate(0deg);
   }
+  50% {
+    transform: translate3d(2%, -3%, 0) scale(1.08);
+    filter: blur(64px) hue-rotate(16deg);
+  }
   to {
-    transform: translate3d(5%, 4%, 0) scale(1.14);
-    filter: blur(68px) hue-rotate(26deg);
+    transform: translate3d(8%, 7%, 0) scale(1.18);
+    filter: blur(74px) hue-rotate(34deg);
+  }
+}
+
+@keyframes stage-drift-alt {
+  from {
+    transform: translate3d(8%, 6%, 0) scale(1.12);
+    filter: blur(72px) hue-rotate(12deg);
+    opacity: 0.45;
+  }
+  to {
+    transform: translate3d(-9%, -7%, 0) scale(1);
+    filter: blur(80px) hue-rotate(-18deg);
+    opacity: 1;
   }
 }
 
@@ -577,11 +631,11 @@ body[data-stage="idle"] .toolbar .tool:focus-visible {
   color: #0f1a16;
 }
 
-/* On a dark system the opening screen keeps the same drifting colour field,
-   but lays it over the camera shell instead of flashing a white canvas. The
-   shared drawer reads these tokens too, so the page menu changes with it. */
+/* Dark idle keeps the same drifting colour field, laid over the camera shell
+   instead of a white canvas. A pinned light theme keeps the paper palette even
+   when the operating system is dark; a pinned dark theme does the reverse. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
     --ink: #e8efe9;
     --muted: #a9b6b0;
@@ -592,39 +646,119 @@ body[data-stage="idle"] .toolbar .tool:focus-visible {
     --accent: #5fe0b0;
     --accent-soft: rgba(70, 211, 159, 0.14);
     --chip: #222e29;
+    --idle-blob-mint: rgba(34, 162, 115, 0.5);
+    --idle-blob-sky: rgba(49, 142, 181, 0.46);
+    --idle-blob-lilac: rgba(121, 76, 174, 0.48);
+    --idle-blob-peach: rgba(174, 91, 55, 0.4);
+    --idle-blob-gold: rgba(151, 119, 59, 0.24);
+    --idle-wash-sky: rgba(49, 142, 181, 0.32);
+    --idle-wash-peach: rgba(174, 91, 55, 0.28);
   }
 
-  body[data-stage="idle"] {
+  :root:not([data-theme="light"]) body[data-stage="idle"] {
     background: #0d1512;
     color: #e8efe9;
   }
 
-  body[data-stage="idle"]::before {
-    background:
-      radial-gradient(26% 26% at 26% 26%, rgba(34, 162, 115, 0.5), transparent 68%),
-      radial-gradient(23% 23% at 74% 28%, rgba(49, 142, 181, 0.46), transparent 68%),
-      radial-gradient(25% 25% at 68% 72%, rgba(121, 76, 174, 0.48), transparent 68%),
-      radial-gradient(21% 21% at 24% 74%, rgba(174, 91, 55, 0.4), transparent 68%),
-      radial-gradient(18% 18% at 50% 50%, rgba(151, 119, 59, 0.24), transparent 72%);
-  }
-
-  body[data-stage="idle"] .toolbar .tool {
+  :root:not([data-theme="light"]) body[data-stage="idle"] .toolbar .tool {
     color: rgba(232, 239, 233, 0.82);
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.72));
   }
 
-  body[data-stage="idle"] .toolbar .tool:hover,
-  body[data-stage="idle"] .toolbar .tool:focus-visible {
+  :root:not([data-theme="light"]) body[data-stage="idle"] .toolbar .tool:hover,
+  :root:not([data-theme="light"]) body[data-stage="idle"] .toolbar .tool:focus-visible {
     background: rgba(70, 211, 159, 0.14);
     color: #f4faf6;
   }
 
-  body[data-stage="idle"] .record {
+  :root:not([data-theme="light"]) body[data-stage="idle"] .record {
     border-color: rgba(232, 239, 233, 0.2);
     box-shadow:
       0 4px 0 rgba(3, 8, 6, 0.88),
       0 10px 28px rgba(0, 0, 0, 0.5);
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #e8efe9;
+  --muted: #a9b6b0;
+  --surface: #151d1a;
+  --surface-solid: #151d1a;
+  --line: #2a3733;
+  --line-strong: #435650;
+  --accent: #5fe0b0;
+  --accent-soft: rgba(70, 211, 159, 0.14);
+  --chip: #222e29;
+  --idle-blob-mint: rgba(34, 162, 115, 0.5);
+  --idle-blob-sky: rgba(49, 142, 181, 0.46);
+  --idle-blob-lilac: rgba(121, 76, 174, 0.48);
+  --idle-blob-peach: rgba(174, 91, 55, 0.4);
+  --idle-blob-gold: rgba(151, 119, 59, 0.24);
+  --idle-wash-sky: rgba(49, 142, 181, 0.32);
+  --idle-wash-peach: rgba(174, 91, 55, 0.28);
+}
+
+:root[data-theme="dark"] body[data-stage="idle"] {
+  background: #0d1512;
+  color: #e8efe9;
+}
+
+:root[data-theme="dark"] body[data-stage="idle"] .toolbar .tool {
+  color: rgba(232, 239, 233, 0.82);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.72));
+}
+
+:root[data-theme="dark"] body[data-stage="idle"] .toolbar .tool:hover,
+:root[data-theme="dark"] body[data-stage="idle"] .toolbar .tool:focus-visible {
+  background: rgba(70, 211, 159, 0.14);
+  color: #f4faf6;
+}
+
+:root[data-theme="dark"] body[data-stage="idle"] .record {
+  border-color: rgba(232, 239, 233, 0.2);
+  box-shadow:
+    0 4px 0 rgba(3, 8, 6, 0.88),
+    0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="light"] body[data-stage="idle"] {
+  background: #f6f7f6;
+  color: #16211d;
+}
+
+/* The control lives in Appearance once the drawer is built. Until then it
+   must not sit as a full-width chip on the idle field. */
+.capture-header .theme-toggle {
+  display: none;
+}
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid var(--line, #d5dad7);
+  border-radius: 11px;
+  background: var(--surface-solid, #fff);
+  color: var(--ink, #17201c);
+  cursor: pointer;
+}
+
+.theme-toggle-icon {
+  width: 1.1em;
+  text-align: center;
+}
+
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--accent, #176146);
+  outline-offset: 2px;
 }
 
 /* The counter-rotation keeps every glyph upright while its seat goes round. */
@@ -785,6 +919,14 @@ body[data-stage="idle"] .toolbar .tool:focus-visible {
   color: #fff;
   text-align: center;
   text-shadow: 0 2px 12px rgba(3, 8, 6, 0.9);
+}
+
+.face-enrollment[data-manual="true"] .face-scan-frame,
+.face-enrollment[data-manual="true"] .face-enrollment-progress-row,
+.face-enrollment[data-manual="true"] .face-enrollment-privacy,
+.face-enrollment[data-manual="true"] .face-enrollment-manual-open,
+.face-enrollment[data-manual="true"] .face-enrollment-skip {
+  display: none;
 }
 
 .face-enrollment-kicker {
@@ -1012,19 +1154,67 @@ body[data-stage="idle"] .toolbar .tool:focus-visible {
   line-height: 1.45;
 }
 
+.face-enrollment-manual-open,
 .face-enrollment-skip {
   min-height: 40px;
   padding: 8px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.28);
   border-radius: 999px;
-  background: rgba(8, 14, 12, 0.72);
   color: #fff;
   cursor: pointer;
   text-shadow: none;
 }
 
+.face-enrollment-manual-open {
+  margin-bottom: 8px;
+  border: 1px solid rgba(112, 255, 201, 0.46);
+  background: rgba(70, 211, 159, 0.14);
+  font-weight: 720;
+}
+
+.face-enrollment-manual-open:hover {
+  background: rgba(70, 211, 159, 0.24);
+}
+
+.face-enrollment-skip {
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: rgba(8, 14, 12, 0.72);
+}
+
 .face-enrollment-skip:hover {
   background: rgba(8, 14, 12, 0.92);
+}
+
+.manual-attendance-form {
+  display: grid;
+  width: min(100%, 340px);
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid rgba(112, 255, 201, 0.32);
+  border-radius: 20px;
+  background: rgba(7, 20, 14, 0.9);
+  text-align: left;
+  text-shadow: none;
+}
+
+.manual-attendance-form label {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.manual-attendance-form select {
+  width: 100%;
+  min-height: 46px;
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 12px;
+  background: #101b17;
+  color: #fff;
+}
+
+.manual-attendance-actions {
+  display: flex;
+  gap: 9px;
 }
 
 /* ---------------------------------------------------------------------------
@@ -1836,6 +2026,8 @@ body[data-stage="idle"] .record {
   .face-enrollment-match,
   .face-enrollment-privacy,
   .face-enrollment-actions,
+  .manual-attendance-form,
+  .face-enrollment-manual-open,
   .face-enrollment-skip {
     grid-column: 2;
   }

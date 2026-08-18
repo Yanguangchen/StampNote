@@ -250,8 +250,10 @@ function createAgentPageHarness(savedSessions = [], photos = [], options = {}) {
     signOut: 0,
     copied: [],
   };
+  const telemetryEvents = [];
 
   const navigator = {
+    onLine: true,
     clipboard: {
       async writeText(text) {
         calls.copied.push(text);
@@ -309,7 +311,21 @@ function createAgentPageHarness(savedSessions = [], photos = [], options = {}) {
     StampNoteFirebase: cloud,
     StampNoteCloudData: data,
     StampNoteCoordinates: coordinates,
-    StampNoteObservability: { configure() {}, record() {} },
+    StampNoteObservability: options.telemetry || {
+      configure(config) {
+        telemetryEvents.push({ type: "configure", options: config });
+      },
+      createTraceId() {
+        return "agenttrace01";
+      },
+      safeErrorCode(error, fallback) {
+        return String(error?.code || fallback || "unknown_error");
+      },
+      event(name, fields, options) {
+        telemetryEvents.push({ name, fields, options });
+        return true;
+      },
+    },
     setTimeout(fn) {
       return setTimeout(fn, 0);
     },
@@ -318,14 +334,15 @@ function createAgentPageHarness(savedSessions = [], photos = [], options = {}) {
 
   context.window = context;
   vm.createContext(context);
-  vm.runInContext(source, context);
+  vm.runInContext(source, context, { filename: resolve(root, "agent-coordinates.js") });
 
   return {
     elements,
     cloud,
     calls,
-    async auth(user) {
-      return authCallback?.(user);
+    telemetryEvents,
+    async auth(user, error) {
+      return authCallback?.(user, error);
     },
     context,
   };
@@ -594,4 +611,45 @@ test("Copy JSON button and Batch Copy button copy formatted session JSON to clip
   const singleParsed = JSON.parse(cardCopied);
   assert.equal(singleParsed.sessionKey, s1Key);
   assert.equal(singleParsed.location, "10 Marina Bay");
+});
+
+test("coordinate entry emits load, auth, and truck-location telemetry", async () => {
+  const s1Key = data.createSessionKey({
+    locationKey: data.createLocationKey("10 Marina Bay"),
+    dateKey: "2026-08-17",
+    sessionId: "morning",
+  });
+  const harness = createAgentPageHarness([
+    {
+      key: s1Key,
+      location: "10 Marina Bay",
+      dateKey: "2026-08-17",
+      sessionId: "morning",
+      truckLocation: { x: null, y: null },
+    },
+  ]);
+
+  assert.equal(
+    harness.telemetryEvents.find((entry) => entry.type === "configure")?.options?.surface,
+    "agent-coordinates",
+  );
+
+  await harness.auth({ uid: "u1", email: "ops@example.com" });
+  const names = harness.telemetryEvents.map((entry) => entry.name).filter(Boolean);
+  assert.ok(names.includes("cloud.auth.state"));
+  assert.ok(names.includes("coordinates.load.started"));
+  assert.ok(names.includes("coordinates.load.completed"));
+  const loaded = harness.telemetryEvents.find((entry) => entry.name === "coordinates.load.completed");
+  assert.equal(loaded.fields.status, "success");
+  assert.equal(loaded.options.traceId, "agenttrace01");
+
+  const agentApi = harness.context.StampNoteAgentCoordinates;
+  await agentApi.updateSessionCoordinates(s1Key, { x: 103.85, y: 1.28 });
+  const saved = harness.telemetryEvents.find(
+    (entry) => entry.name === "coordinates.truck_location.updated",
+  );
+  assert.equal(saved.fields.action, "save");
+  assert.equal(saved.fields.status, "success");
+  assert.equal(JSON.stringify(harness.telemetryEvents).includes("ops@example.com"), false);
+  assert.equal(JSON.stringify(harness.telemetryEvents).includes(s1Key), false);
 });

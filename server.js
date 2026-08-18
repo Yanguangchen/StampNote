@@ -1,6 +1,7 @@
 const { createReadStream, existsSync, statSync } = require("node:fs");
 const { createServer } = require("node:http");
 const { extname, resolve, sep } = require("node:path");
+const { Readable } = require("node:stream");
 const { config } = require("dotenv");
 
 const root = resolve(__dirname);
@@ -131,13 +132,22 @@ async function serveApi(request, response, modulePath, handlerName) {
   });
 
   response.writeHead(result.status, resultHeaders);
-  response.end(Buffer.from(await result.arrayBuffer()));
+  if (!result.body) {
+    response.end();
+    return;
+  }
+  const bodyStream = Readable.fromWeb(result.body);
+  bodyStream.on("error", (error) => response.destroy(error));
+  bodyStream.pipe(response);
 }
 
 function serveStatic(pathname, response) {
   const relativePath = pathname === "/" ? "index.html" : pathname.slice(1);
   const filePath = resolve(root, relativePath);
-  const isPublic = publicFiles.has(relativePath) || relativePath.startsWith("vendor/");
+  const isPublic =
+    publicFiles.has(relativePath) ||
+    relativePath.startsWith("vendor/") ||
+    relativePath.startsWith("src/");
 
   if (
     !isPublic ||
@@ -166,6 +176,7 @@ createServer((request, response) => {
   const apiRoutes = {
     "/api/triage": ["./api/_ai-triage.mjs", "handleTriageRequest"],
     "/api/assistant": ["./api/_ai-assistant.mjs", "handleAssistantRequest"],
+    "/api/speech": ["./api/_ai-speech.mjs", "handleSpeechRequest"],
     "/api/telemetry": ["./api/_telemetry.mjs", "handleTelemetryRequest"],
     "/api/health": ["./api/_health.mjs", "handleHealthRequest"],
   };

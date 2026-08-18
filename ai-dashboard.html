@@ -23,7 +23,7 @@
     />
     <link rel="stylesheet" href="vendor/fonts/outfit.css" />
     <link rel="stylesheet" href="sidebar.css" />
-    <link rel="stylesheet" href="ai-dashboard.css?v=20260818-4" />
+    <link rel="stylesheet" href="ai-dashboard.css?v=20260818-6" />
     <script>
       try {
         const saved = localStorage.getItem("stampnote-theme");
@@ -35,9 +35,11 @@
     <script src="observability.js" defer></script>
     <script src="photo-cloud.js?v=20260816-1" defer></script>
     <script src="firebase.js?v=20260818-2" defer></script>
-    <script src="coordinates.js?v=20260817-1" defer></script>
+    <script src="src/services/coordinate-sessions.js?v=20260818-3" defer></script>
     <script src="metrics.js?v=20260818-2" defer></script>
-    <script src="ai-dashboard.js?v=20260818-7" defer></script>
+    <script src="src/services/ai-assistant.js?v=20260818-14" defer></script>
+    <script src="src/services/operations-data.js" defer></script>
+    <script src="src/components/ai-dashboard-workspace.js?v=20260818-15" defer></script>
     <script src="sidebar.js" defer></script>
   </head>
   <body>
@@ -152,6 +154,36 @@
             <button type="button" data-ai-question="Summarize the latest recorded site activity and anything needing attention.">
               Latest activity
             </button>
+            <button type="button" data-ai-question="Show the last 7 days of Metrics statistics and graphs for attendance, flags, and sessions.">
+              7-day metrics
+            </button>
+            <button type="button" data-ai-question="Which sessions are missing Truck location X or Y? Include the date, time session, and site.">
+              Missing truck X/Y
+            </button>
+            <button type="button" data-ai-question="Which sessions have no automatic staff or session GPS reference?">
+              Missing GPS
+            </button>
+            <button type="button" data-ai-question="Which sessions have truck locations within 25 metres of the staff GPS, and which are outside the threshold?">
+              GPS threshold check
+            </button>
+            <button type="button" data-ai-question="Show the latest photos flagged by AI review and explain why each photo was flagged.">
+              Flagged photos
+            </button>
+            <button type="button" data-ai-question="Show each worker's first and latest check-in on the most recent recorded date.">
+              Worker timeline
+            </button>
+            <button type="button" data-ai-question="Compare attendance, photos, and sessions across locations on the most recent recorded date.">
+              Compare locations
+            </button>
+            <button type="button" data-ai-question="Which recorded addresses were clustered as the same operational site by GPS?">
+              Address aliases
+            </button>
+            <button type="button" data-ai-question="Which sessions recorded attendance but no photos?">
+              Attendance without photos
+            </button>
+            <button type="button" data-ai-question="On which days in the last 30 days were attendance, flags, and sessions highest? Show the graphs.">
+              Peak activity days
+            </button>
           </div>
 
           <form class="ai-chat-form" id="ai-chat-form">
@@ -177,8 +209,14 @@
                 </svg>
                 <span class="visually-hidden">Speak a question</span>
               </button>
-              <button class="ai-send-button" id="ai-send" type="submit" disabled>
-                Ask AI
+              <button
+                class="ai-send-button"
+                id="ai-send"
+                type="submit"
+                aria-label="Send question"
+                title="Send question"
+                disabled
+              >
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                   <path d="m5 12 13-7-4.4 14-2.4-5.1L5 12Z" />
                 </svg>

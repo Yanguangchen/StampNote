@@ -314,6 +314,39 @@
         return publish();
       },
 
+      // A roster-backed manual check-in reaches the same checkpoint as a face
+      // match, but carries its evidence source so storage can require review.
+      recordManualAttendance(enrollment) {
+        if (
+          !state.running ||
+          !enrollmentRequired ||
+          state.activityStarted ||
+          state.faceEnrollment?.status === "complete"
+        ) {
+          return snapshot();
+        }
+
+        const workerId = String(enrollment?.workerId || "").trim().toUpperCase();
+        const personLabel = String(enrollment?.personLabel || "").trim();
+        if (!workerId || !personLabel) {
+          return snapshot();
+        }
+
+        clearTrackedPose();
+        state.faceEnrollment = {
+          ...faceIdentity.enrollmentState(),
+          required: true,
+          status: "complete",
+          workerId,
+          personLabel,
+          source: "manual",
+          reviewStatus: "flagged",
+        };
+        state.nextDueAt = null;
+        state.waitMs = null;
+        return publish();
+      },
+
       startWork() {
         if (!state.running || state.activityStarted) {
           return snapshot();

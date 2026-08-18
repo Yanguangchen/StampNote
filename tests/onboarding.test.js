@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const { existsSync, readFileSync } = require("node:fs");
 const { resolve } = require("node:path");
 const { test } = require("node:test");
+const vm = require("node:vm");
 
 const root = resolve(__dirname, "..");
 const html = readFileSync(resolve(root, "onboarding.html"), "utf8");
@@ -49,6 +50,12 @@ test("worker onboarding keeps only the enrollment controls and feedback", () => 
 
 test("enrollment stores a representative face gallery and can delete it", () => {
   assert.match(app, /workerFace\.averageEmbeddings\(samples\)/);
+  assert.match(app, /telemetry\?\.event\("onboarding\.scan\.started"/);
+  assert.match(app, /telemetry\?\.event\(\s*"onboarding\.scan\.completed"/);
+  assert.match(app, /telemetry\?\.event\(\s*"onboarding\.worker\.saved"/);
+  assert.match(app, /onboarding\.worker\.save_failed/);
+  assert.match(app, /capture\.camera\.facing/);
+  assert.match(app, /scanTraceId/);
   assert.match(app, /embeddings:\s*samples/);
   assert.match(app, /cloud\.saveWorkerFace\(/);
   assert.match(app, /cloud\.deleteWorkerFace\(/);
@@ -175,5 +182,329 @@ test("worker onboarding pre-caches static assets and registers the service worke
   assert.match(swContent, /CODE_EXTENSIONS = \[[^\]]*"\.js"/);
   assert.match(swContent, /IMMUTABLE_EXTENSIONS = \[[^\]]*"\.woff2"/);
   assert.doesNotMatch(swContent, /caches\s*\n?\s*\.match\(event\.request\)\.then\(\(cachedResponse\)/);
+});
+
+const workerFace = require("../worker-face.js");
+const cameraFacing = require("../camera-facing.js");
+const frameScaler = require("../frame-scaler.js");
+
+class OnboardElement {
+  constructor(tagName = "div") {
+    this.tagName = String(tagName).toUpperCase();
+    this.attributes = new Map();
+    this.children = [];
+    this.className = "";
+    this.dataset = {};
+    this.disabled = false;
+    this.hidden = false;
+    this.id = "";
+    this.listeners = new Map();
+    this.parentElement = null;
+    this._textContent = "";
+    this.value = "";
+    this.videoWidth = 640;
+    this.videoHeight = 480;
+    this.classList = {
+      toggle: (name, force) => {
+        const names = new Set(this.className.split(" ").filter(Boolean));
+        const should = force === undefined ? !names.has(name) : Boolean(force);
+        if (should) names.add(name);
+        else names.delete(name);
+        this.className = [...names].join(" ");
+      },
+    };
+  }
+
+  get textContent() {
+    if (this.children.length > 0) {
+      return this.children.map((child) => child.textContent).join("");
+    }
+    return this._textContent;
+  }
+
+  set textContent(value) {
+    this.children = [];
+    this._textContent = String(value);
+  }
+
+  addEventListener(name, callback) {
+    if (!this.listeners.has(name)) this.listeners.set(name, []);
+    this.listeners.get(name).push(callback);
+  }
+
+  append(...children) {
+    children.forEach((child) => {
+      this.children.push(child);
+      child.parentElement = this;
+    });
+  }
+
+  replaceChildren(...children) {
+    this.children = [];
+    this.append(...children);
+  }
+
+  setAttribute(name, value) {
+    this.attributes.set(name, String(value));
+  }
+
+  focus() {
+    this.focused = true;
+  }
+
+  async play() {}
+
+  getContext() {
+    return {
+      setTransform() {},
+      drawImage() {},
+    };
+  }
+
+  toDataURL() {
+    return "data:image/jpeg;base64,cHJvZmlsZQ==";
+  }
+
+  async dispatch(name, event = {}) {
+    const list = this.listeners.get(name) || [];
+    for (const callback of list) {
+      await callback({ preventDefault() {}, target: this, ...event });
+    }
+  }
+}
+
+function createOnboardingHarness(options = {}) {
+  const ids = [
+    "worker-form",
+    "worker-id",
+    "worker-name",
+    "onboarding-auth",
+    "onboarding-auth-icon",
+    "onboarding-auth-label",
+    "signed-in-state",
+    "start-face-scan",
+    "cancel-face-scan",
+    "onboarding-status",
+    "scanner-card",
+    "scanner-view",
+    "onboarding-video",
+    "scanner-instruction",
+    "onboarding-progress",
+    "onboarding-progress-count",
+    "worker-roster",
+    "roster-empty",
+    "roster-body",
+    "roster-toggle",
+    "roster-toggle-label",
+    "camera-facing-toggle",
+    "camera-facing-state",
+  ];
+  const elements = Object.fromEntries(ids.map((id) => [id, new OnboardElement()]));
+  elements["scanner-card"].hidden = true;
+  elements["cancel-face-scan"].hidden = true;
+  elements["onboarding-auth-icon"].hidden = true;
+  elements["onboarding-progress"].max = 7;
+  elements["onboarding-progress"].value = 0;
+
+  const timers = [];
+  const cloudCalls = { saved: [], deleted: [], faces: 0 };
+  let authCallback;
+  const workers = [...(options.workers || [])];
+  const cloud = {
+    async getWorkerFaces() {
+      cloudCalls.faces += 1;
+      if (options.facesError) throw options.facesError;
+      return [...workers];
+    },
+    async saveWorkerFace(record) {
+      cloudCalls.saved.push(record);
+      const saved = {
+        workerId: record.workerId,
+        displayName: record.displayName,
+        profilePhoto: record.profilePhoto,
+      };
+      workers.push(saved);
+      return saved;
+    },
+    async deleteWorkerFace(workerId) {
+      cloudCalls.deleted.push(workerId);
+    },
+    async signIn() {},
+    async signOut() {},
+    subscribeAuth(callback) {
+      authCallback = callback;
+      return () => {};
+    },
+  };
+
+  const document = {
+    createElement(tagName) {
+      return new OnboardElement(tagName);
+    },
+    querySelector(selector) {
+      return elements[selector.replace(/^#/, "")] || null;
+    },
+  };
+
+  const embedding = Array.from({ length: 128 }, (unused, index) => (index + 1) / 200);
+  let sampleCount = 0;
+  const pending = [];
+  const cachesStore = new Map();
+  const context = {
+    Blob,
+    confirm: () => true,
+    console,
+    document,
+    fetch: async (url) => ({
+      ok: true,
+      clone() {
+        return this;
+      },
+      url,
+    }),
+    performance: {
+      now() {
+        return Date.now();
+      },
+    },
+    navigator: {
+      mediaDevices: {
+        async getUserMedia() {
+          return {
+            getTracks() {
+              return [{ stop() {} }];
+            },
+          };
+        },
+      },
+      serviceWorker: {
+        async register(script) {
+          pending.push(script);
+          return { scriptURL: script };
+        },
+      },
+    },
+    caches: {
+      async open(name) {
+        if (!cachesStore.has(name)) cachesStore.set(name, new Map());
+        const bucket = cachesStore.get(name);
+        return {
+          async put(key, value) {
+            bucket.set(key, value);
+          },
+        };
+      },
+    },
+    StampNoteCameraFacing: cameraFacing,
+    StampNoteFaceIdentity: {
+      createFaceIdentity() {
+        return {
+          async load() {},
+          describe() {
+            sampleCount += 1;
+            return [
+              {
+                faceEmbedding: embedding,
+                enrollmentAccepted: true,
+              },
+            ];
+          },
+          enrollmentState() {
+            return { status: "scanning", samples: sampleCount, total: 7 };
+          },
+          reset() {},
+        };
+      },
+    },
+    StampNoteFirebase: cloud,
+    StampNoteFrameScaler: frameScaler,
+    StampNoteModel: {
+      async loadFaceScanner() {
+        return {
+          detect() {
+            return { bodies: [{}] };
+          },
+          close() {},
+        };
+      },
+    },
+    StampNoteObservability: {
+      configure() {},
+      createTraceId() {
+        return "onboard-trace";
+      },
+      safeErrorCode(error, fallback) {
+        return String(error?.code || fallback || "unknown_error");
+      },
+      event() {
+        return true;
+      },
+    },
+    StampNoteWorkerFace: workerFace,
+    localStorage: {
+      getItem() {
+        return null;
+      },
+      setItem() {},
+    },
+    addEventListener() {},
+    setTimeout(callback, delay) {
+      const handle = { callback, delay, cancelled: false };
+      timers.push(handle);
+      return handle;
+    },
+    clearTimeout(handle) {
+      if (handle) handle.cancelled = true;
+    },
+  };
+  context.window = context;
+  vm.createContext(context);
+  vm.runInContext(app, context, { filename: resolve(root, "onboarding.js") });
+
+  return {
+    async auth(user, error = null) {
+      return authCallback?.(user, error);
+    },
+    cloudCalls,
+    elements,
+    async flushScan() {
+      for (let index = 0; index < 16; index += 1) {
+        const next = timers.find((timer) => !timer.cancelled);
+        if (!next) break;
+        next.cancelled = true;
+        await next.callback();
+      }
+    },
+    pending,
+  };
+}
+
+async function settleOnboarding(turns = 6) {
+  for (let index = 0; index < turns; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+test("signed-in enrollment issues an ID, takes seven samples, and saves the template", async () => {
+  const harness = createOnboardingHarness();
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "owner-1" });
+  await settleOnboarding();
+
+  assert.match(harness.elements["signed-in-state"].textContent, /yanguangchensp@gmail.com/);
+  harness.elements["worker-name"].value = "Ari Tan";
+  await harness.elements["worker-name"].dispatch("input");
+  await settleOnboarding();
+  assert.equal(harness.elements["worker-id"].value, "AT-0001");
+
+  await harness.elements["worker-form"].dispatch("submit");
+  await settleOnboarding();
+  await harness.flushScan();
+  await settleOnboarding();
+
+  assert.equal(harness.cloudCalls.saved.length, 1);
+  assert.equal(harness.cloudCalls.saved[0].workerId, "AT-0001");
+  assert.equal(harness.cloudCalls.saved[0].embeddings.length, 7);
+  assert.match(harness.elements["onboarding-status"].textContent, /Ari Tan \(AT-0001\) enrolled/);
+  assert.equal(harness.pending[0], "sw.js");
 });
 

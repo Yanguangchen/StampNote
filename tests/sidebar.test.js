@@ -128,7 +128,7 @@ function createSidebarHarness(pathname, options = {}) {
   };
   context.window.document = document;
   vm.createContext(context);
-  vm.runInContext(sidebar, context);
+  vm.runInContext(sidebar, context, { filename: resolve(root, "sidebar.js") });
 
   const toggle = mount.children[0];
   const drawer = body.children.find((child) => child.id === "app-sidebar");

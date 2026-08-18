@@ -128,6 +128,10 @@ and Evening remain chronological within each date. Every reading is visible with
 time, longitude, latitude, and accuracy. The lowest-uncertainty reading is highlighted as the
 comparison reference; a tie prefers the latest reading.
 
+The Photos & attendance dashboard uses a separate navigation hierarchy: street, recorded address,
+date, then time session. GPS-near address variants inherit one street parent but remain separately
+inspectable at the address level.
+
 Each session card places the truck X/Y inputs beside its GPS readings and previews the 25 m distance
 rule separately from the 20 m GPS-quality limit. Saving uses the authenticated session update
 already used by the admin dashboard. For browser automation, every session and GPS-reading row has

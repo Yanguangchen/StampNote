@@ -17,7 +17,7 @@
       slot: 1,
       title: "Attendance taken",
       unit: "check-in",
-      description: "Worker check-ins recorded by face match.",
+      description: "Worker check-ins recorded by face match or manual add.",
     }),
     Object.freeze({
       id: "flags",

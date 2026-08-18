@@ -58,7 +58,11 @@ function createBrowserHarness(options = {}) {
       hostname: options.hostname || "stampnote.example",
       port: options.port || "",
     },
-    navigator: { onLine: options.online !== false },
+    navigator: {
+      onLine: options.online !== false,
+      ...(options.sendBeacon ? { sendBeacon: options.sendBeacon } : {}),
+    },
+    Blob: globalThis.Blob,
     performance: {
       getEntriesByType(name) {
         return name === "navigation" ? [{ requestStart: 10, responseStart: 45 }] : [];
@@ -95,6 +99,8 @@ function createBrowserHarness(options = {}) {
 }
 
 test("client telemetry sanitizes its fixed field allowlist and error codes", () => {
+  assert.ok(pure.SURFACES.includes("agent-coordinates"));
+  assert.ok(pure.EVENT_NAMES.includes("onboarding.scan.completed"));
   const fields = pure.sanitizeFields({
     durationMs: 9_000_000,
     failedCount: 2,
@@ -160,6 +166,11 @@ test("browser telemetry batches safe events, deduplicates failures, and records 
     { value: 0.5, hadRecentInput: true },
   ]);
   observer("longtask").emit([{ duration: 75 }, { duration: 25 }]);
+  observer("event").emit([
+    { interactionId: 11, duration: 80 },
+    { interactionId: 12, duration: 260 },
+    { duration: 999 },
+  ]);
 
   harness.setNow(1500);
   harness.windowListeners.get("load")();
@@ -199,8 +210,15 @@ test("browser telemetry batches safe events, deduplicates failures, and records 
   harness.windowListeners.get("pagehide")();
   await new Promise((resolve) => setImmediate(resolve));
   const final = JSON.parse(harness.requests.at(-1).options.body);
-  assert.deepEqual(final.events.map((event) => event.fields.metricName), ["LCP", "CLS", "long_tasks"]);
+  assert.deepEqual(final.events.map((event) => event.fields.metricName), [
+    "INP",
+    "LCP",
+    "CLS",
+    "long_tasks",
+  ]);
+  assert.equal(final.events[0].fields.metricValue, 260);
   assert.deepEqual(final.events.map((event) => event.fields.metricRating), [
+    "needs_improvement",
     "needs_improvement",
     "good",
     "unknown",
@@ -248,12 +266,34 @@ test("browser errors are reported immediately without leaking their messages", a
   assert.ok(harness.requests.length >= 2);
 });
 
-test("browser telemetry supports all 7 application surfaces and new domain events", async () => {
+test("pagehide flushes same-origin telemetry with sendBeacon", async () => {
+  const beacons = [];
+  const harness = createBrowserHarness({
+    sendBeacon(url, body) {
+      beacons.push({ url, body });
+      return true;
+    },
+  });
+  const { api } = harness;
+  api.event("client.error", { errorCode: "window_error" }, { immediate: false });
+  harness.windowListeners.get("pagehide")();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(beacons.length, 1);
+  assert.equal(beacons[0].url, "/api/telemetry");
+  assert.equal(beacons[0].body.type, "application/json");
+  const payload = JSON.parse(await beacons[0].body.text());
+  assert.ok(payload.events.some((event) => event.name === "client.error"));
+  assert.equal(harness.requests.length, 0);
+});
+
+test("browser telemetry supports all application surfaces and domain events", async () => {
   const surfaces = [
     "capture",
     "dashboard",
     "ai-dashboard",
     "coordinates",
+    "agent-coordinates",
     "metrics",
     "onboarding",
     "worker-photos",

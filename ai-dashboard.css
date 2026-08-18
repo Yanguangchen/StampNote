@@ -1549,6 +1549,7 @@ button {
 .ai-prompt-suggestions button:nth-child(4) { animation-delay: 150ms; }
 .ai-prompt-suggestions button:nth-child(5) { animation-delay: 200ms; }
 .ai-prompt-suggestions button:nth-child(6) { animation-delay: 250ms; }
+.ai-prompt-suggestions button:nth-child(n + 7) { animation-delay: 300ms; }
 
 .ai-prompt-suggestions button:hover:not(:disabled) {
   border-color: var(--ai-accent);
@@ -1699,8 +1700,8 @@ button {
 }
 
 .ai-send-button {
-  gap: 7px;
-  padding: 0 14px;
+  width: 43px;
+  padding: 0;
   border: 1px solid var(--ai-accent);
   background: var(--ai-accent);
   color: #fff;
@@ -1891,7 +1892,7 @@ button {
   }
 
   .ai-send-button {
-    flex: 1;
+    flex: none;
   }
 }
 

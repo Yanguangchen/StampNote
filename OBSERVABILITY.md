@@ -19,7 +19,7 @@ Telemetry must never contain:
 - names, email addresses, Firebase UIDs, OAuth tokens, API keys, or raw error messages;
 - arbitrary browser strings or user-entered values.
 
-The browser sanitizer drops every field that is not on its fixed allowlist. The server independently validates the same allowlist with a strict schema and rejects the entire batch if it contains an extra field. Request bodies are limited to 24 KiB and 20 events. Telemetry is best-effort and never blocks capture, review, or cloud sync.
+The browser sanitizer drops every field that is not on its fixed allowlist. The server independently validates the same allowlist with a strict schema and rejects the entire batch if it contains an extra field. Request bodies are limited to 24 KiB and 20 events. Telemetry is best-effort and never blocks capture, review, or cloud sync. Same-origin pages flush remaining events with `sendBeacon` on hide/unload; Live Server keeps using CORS `fetch` to production.
 
 ## Signals
 
@@ -32,14 +32,15 @@ The browser sanitizer drops every field that is not on its fixed allowlist. The 
 | Google sign-in | All surfaces | `cloud.auth.state` | `cloud.auth.failed` | fixed `status`, `errorCode` |
 | Camera and tracking | `capture` | `capture.monitor.started`, `tracking.recovered` | `capture.monitor.failed`, `tracking.failed` | `errorCode`, `durationMs` |
 | Camera choice | `capture`, `onboarding` | `capture.camera.facing` | `capture.camera.facing.failed` | `facing`, `errorCode` |
-| Face onboarding | `onboarding` | `onboarding.scan.started`, `onboarding.scan.completed`, `onboarding.worker.saved`, `onboarding.worker.deleted` | `onboarding.scan.failed`, `onboarding.worker.save_failed`, `onboarding.worker.delete_failed` | `sampleCount`, `facing`, fixed `status`, `errorCode` |
+| Face onboarding | `onboarding` | `onboarding.scan.started`, `onboarding.scan.completed`, `onboarding.worker.saved`, `onboarding.worker.deleted` | `onboarding.scan.failed`, `onboarding.worker.save_failed`, `onboarding.worker.delete_failed` | `sampleCount`, `facing`, `durationMs`, fixed `status`, `errorCode` |
 | Worker photos | `worker-photos` | `worker.photo.staged`, `worker.photo.sent` | `worker.photo.gps.failed`, `worker.photo.send_failed` | `photoCount`, `uploadedCount`, `failedCount`, `source`, `durationMs`, `errorCode` |
 | Coordinates / Surveillance | `coordinates` | `coordinates.load.completed`, `coordinates.truck_location.updated` | `coordinates.load.failed`, `coordinates.truck_location.failed` | `sessionCount`, `flaggedCount`, `action`, `durationMs`, `errorCode` |
+| Coordinate entry | `agent-coordinates` | `coordinates.load.completed`, `coordinates.truck_location.updated` | `coordinates.load.failed`, `coordinates.truck_location.failed` | `sessionCount`, `flaggedCount`, `action`, `failedCount`, `durationMs`, `errorCode` |
 | Metrics dashboard | `metrics` | `metrics.load.completed`, `metrics.loaded` | `metrics.load.failed` | `checkInCount`, `photoCount`, `durationMs`, `errorCode` |
 | Admin dashboard | `dashboard` | `dashboard.load.completed`, `attendance.load.completed`, `dashboard.session.truck_location.updated` | `dashboard.load.failed`, `dashboard.image.failed`, `dashboard.weather.failed`, `dashboard.weather.save_failed`, `dashboard.sessions.failed`, `dashboard.session.truck_location.failed`, `attendance.load.failed` | `photoCount`, `workerCount`, `checkInCount`, `durationMs`, `action`, `errorCode` |
 | Admin deletion | `dashboard` | `dashboard.location.deleted`, `dashboard.date.deleted`, `dashboard.session.deleted` | `dashboard.location.delete_failed`, `dashboard.date.delete_failed`, `dashboard.session.delete_failed` | `checkInCount`, `photoCount`, fixed `status`, `errorCode` |
 | Attendance sync | `capture` | `attendance.saved`, `capture.work.started`, `attendance.another.requested` | `attendance.save.failed` | `attendanceCount`, fixed `status`, `errorCode` |
-| Browser performance | All surfaces | `web.vital`, `client.ready` | `client.error` | `metricName`, `metricValue`, `metricRating`, `online` |
+| Browser performance | All surfaces | `web.vital`, `client.ready` | `client.error` | `metricName` (`CLS`, `INP`, `LCP`, `FCP`, `TTFB`, `long_tasks`), `metricValue`, `metricRating`, `online` |
 
 Browser operation events may carry a `traceId`. The telemetry intake writes that value to Runtime Logs as `operationTraceId`, keeping it distinct from the telemetry batch's own request trace. Gemini review and Operations AI requests send the operation ID as `X-StampNote-Trace-Id`, so one call can be followed from the browser start event to the server-side Gemini result. Every function response includes `X-Request-Id`, `X-StampNote-Trace-Id`, and `Server-Timing`.
 
@@ -114,7 +115,13 @@ Copy an `operationTraceId`, `traceId`, or `requestId` from a failure and use it 
 1. Find `capture.monitor.failed` for permission, browser, or detector startup failures.
 2. Find `tracking.failed`, then check whether `tracking.recovered` follows it.
 3. A repeating failure without recovery indicates a persistent device/model issue. A single failure followed by recovery confirms the self-scheduling loop recovered.
-4. Compare `web.vital` long-task duration; a large value indicates the main thread was heavily occupied.
+4. Compare `web.vital` long-task duration and `INP`; large values indicate the main thread was heavily occupied.
+
+### Coordinate entry is empty or truck X/Y will not save
+
+1. Confirm `cloud.auth.state` with `signed_in` on the `agent-coordinates` surface. Page-load vitals from this page used to be mislabeled as `capture`.
+2. Use `coordinates.load.failed` for Firestore query errors and `coordinates.truck_location.failed` for a single or batch X/Y write.
+3. A batch that updates some rows and skips others still emits `coordinates.truck_location.updated` with `failedCount` greater than zero.
 
 ### Dashboard is empty or images fail
 

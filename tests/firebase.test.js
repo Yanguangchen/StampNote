@@ -633,6 +633,8 @@ test("matched workers create idempotent daily attendance records that the dashbo
   ]);
   assert.equal(harness.calls.writes.at(-1).value.recordedBy, "user-1");
   assert.equal(harness.calls.writes.at(-1).value.status, "present");
+  assert.equal(harness.calls.writes.at(-1).value.source, "face-match");
+  assert.equal(harness.calls.writes.at(-1).value.reviewStatus, "clear");
   assert.deepEqual(harness.calls.writes.at(-1).writeOptions, { merge: true });
 
   const entries = await harness.client.getAttendance({
@@ -681,6 +683,27 @@ test("matched workers create idempotent daily attendance records that the dashbo
     harness.client.getAttendance({ dateKey: "2026-08-14" }),
     (error) => error.code === "auth-required",
   );
+});
+
+test("manual attendance cannot be stored without a review flag", async () => {
+  const checkedInAtMs = Date.parse("2026-08-14T08:45:00.000Z");
+  const harness = createHarness();
+  await harness.client.ready;
+
+  const saved = await harness.client.saveAttendance({
+    eventId: "manual_attendance_123",
+    workerId: "WORKER-9",
+    displayName: "Bo Lim",
+    checkedInAtMs,
+    dateKey: "2026-08-14",
+    source: "manual",
+    reviewStatus: "clear",
+  });
+
+  assert.equal(saved.source, "manual");
+  assert.equal(saved.reviewStatus, "flagged");
+  assert.equal(saved.reviewReason, "manual-entry");
+  assert.equal(harness.calls.writes.at(-1).value.reviewStatus, "flagged");
 });
 
 test("dashboard sessions load names and Truck locations and rename in Firestore", async () => {

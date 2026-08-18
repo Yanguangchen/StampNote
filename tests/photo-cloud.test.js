@@ -276,9 +276,35 @@ test("addresses a GPS error apart are read as one site", () => {
     [...site.aliasKeys],
     [cloud.createLocationKey("32 Parbury Avenue")],
   );
-  // Both spellings land on the same site, so the rail draws one row.
+  // Both spellings land on the same physical-site cluster; the dashboard can
+  // use that cluster as their shared street parent.
   assert.equal(index.siteFor("34 Parbury Avenue").locationKey, site.locationKey);
   assert.equal(index.radiusMeters, cloud.SITE_MERGE_RADIUS_M);
+  assert.equal(site.streetName, "Parbury");
+  assert.equal(site.streetKey, cloud.createStreetKey("Parbury"));
+  assert.deepEqual([...site.addresses], ["34 Parbury Avenue", "32 Parbury Avenue"]);
+});
+
+test("street names remove only the address number and terminal road type", () => {
+  assert.equal(cloud.streetNameForLocation("32 Parbury Avenue"), "Parbury");
+  assert.equal(cloud.streetNameForLocation("65 T1 Boulevard"), "T1");
+  assert.equal(cloud.streetNameForLocation("10 Marina Bay"), "Marina Bay");
+  assert.equal(cloud.streetNameForLocation("Jalan Besar"), "Jalan Besar");
+  assert.equal(cloud.streetNameForLocation(""), cloud.UNKNOWN_LOCATION);
+});
+
+test("nearby fixes with different road labels inherit one street parent", () => {
+  const index = cloud.createSiteIndex([
+    fix("34 Parbury Avenue", PARBURY),
+    fix("34 Parbury Avenue", nearby(PARBURY, 5)),
+    fix("65 T1 Boulevard", nearby(PARBURY, 20)),
+  ]);
+
+  assert.equal(index.siteFor("65 T1 Boulevard").streetName, "Parbury");
+  assert.equal(
+    index.siteFor("65 T1 Boulevard").streetKey,
+    index.siteFor("34 Parbury Avenue").streetKey,
+  );
 });
 
 test("worker photo metadata keeps its capture source and weather snapshot", () => {

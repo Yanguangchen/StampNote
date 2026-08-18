@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const { resolve } = require("node:path");
 const { test } = require("node:test");
+const vm = require("node:vm");
 
 const data = require("../photo-cloud.js");
 globalThis.StampNoteCloudData = data;
@@ -211,3 +212,254 @@ test("the page is served and reachable from the drawer", () => {
   assert.match(html, /<header[^>]*data-sidebar-mount/);
   assert.match(html, /<script src="sidebar\.js" defer><\/script>/);
 });
+
+class FakeElement {
+  constructor(tagName = "div") {
+    this.tagName = String(tagName).toUpperCase();
+    this.attributes = new Map();
+    this.children = [];
+    this.className = "";
+    this.dataset = {};
+    this.disabled = false;
+    this.hidden = false;
+    this.id = "";
+    this.listeners = new Map();
+    this.parentElement = null;
+    this.style = {};
+    this.textContent = "";
+    this.value = "";
+  }
+
+  addEventListener(name, callback) {
+    if (!this.listeners.has(name)) this.listeners.set(name, []);
+    this.listeners.get(name).push(callback);
+  }
+
+  append(...children) {
+    children.forEach((child) => {
+      this.children.push(child);
+      child.parentElement = this;
+    });
+  }
+
+  replaceChildren(...children) {
+    this.children = [];
+    this.append(...children);
+  }
+
+  closest(selector) {
+    if (selector.startsWith(".") && this.className.split(" ").includes(selector.slice(1))) {
+      return this;
+    }
+    return this.parentElement?.closest?.(selector) || null;
+  }
+
+  querySelectorAll(selector) {
+    const matches = [];
+    const visit = (node) => {
+      if (selector.startsWith(".") && node.className.split(" ").includes(selector.slice(1))) {
+        matches.push(node);
+      }
+      node.children.forEach(visit);
+    };
+    this.children.forEach(visit);
+    return matches;
+  }
+
+  setAttribute(name, value) {
+    this.attributes.set(name, String(value));
+  }
+
+  getAttribute(name) {
+    return this.attributes.has(name) ? this.attributes.get(name) : null;
+  }
+
+  async dispatch(name, event = {}) {
+    const list = this.listeners.get(name) || [];
+    for (const callback of list) {
+      await callback({ preventDefault() {}, target: this, ...event });
+    }
+  }
+}
+
+function createMetricsPageHarness(options = {}) {
+  const ids = [
+    "metrics-sign-in",
+    "metrics-sign-out",
+    "metrics-auth-gate",
+    "metrics-account",
+    "metrics-workspace",
+    "metrics-status",
+    "metrics-panels",
+    "metrics-range",
+    "metrics-refresh",
+    "metrics-table-toggle",
+    "metrics-table",
+    "metrics-table-body",
+    "metrics-table-caption",
+  ];
+  const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement()]));
+  elements["metrics-workspace"].hidden = true;
+  elements["metrics-sign-out"].hidden = true;
+  elements["metrics-table"].hidden = true;
+  elements["metrics-table-toggle"].textContent = "Show table";
+
+  const option7 = new FakeElement("button");
+  option7.className = "range-option";
+  option7.dataset.days = "7";
+  const option30 = new FakeElement("button");
+  option30.className = "range-option";
+  option30.dataset.days = "30";
+  option30.setAttribute("aria-pressed", "true");
+  const option90 = new FakeElement("button");
+  option90.className = "range-option";
+  option90.dataset.days = "90";
+  elements["metrics-range"].append(option7, option30, option90);
+
+  const telemetryEvents = [];
+  let authCallback;
+  const cloudCalls = { photos: 0, attendance: 0, signIn: 0, signOut: 0 };
+  const cloud = options.cloud === false
+    ? null
+    : {
+        async getPhotosPage() {
+          cloudCalls.photos += 1;
+          if (options.loadError) throw options.loadError;
+          const pages = options.photoPages || [
+            { photos: options.photos || [photo(0)], after: null, hasMore: false },
+          ];
+          return pages[Math.min(cloudCalls.photos - 1, pages.length - 1)];
+        },
+        async getAttendance() {
+          cloudCalls.attendance += 1;
+          if (options.attendanceError) throw options.attendanceError;
+          return options.attendance || [checkIn(0)];
+        },
+        async signIn() {
+          cloudCalls.signIn += 1;
+          if (options.signInError) throw options.signInError;
+        },
+        async signOut() {
+          cloudCalls.signOut += 1;
+        },
+        subscribeAuth(callback) {
+          authCallback = callback;
+          return () => {};
+        },
+      };
+
+  const document = {
+    createElement(tagName) {
+      return new FakeElement(tagName);
+    },
+    createElementNS(namespace, tagName) {
+      const node = new FakeElement(tagName);
+      node.namespaceURI = namespace;
+      return node;
+    },
+    querySelector(selector) {
+      return elements[selector.replace(/^#/, "")] || null;
+    },
+  };
+
+  const context = {
+    console,
+    document,
+    performance: { now: () => 100 },
+    StampNoteCloudData: data,
+    StampNoteFirebase: cloud,
+    StampNoteObservability: {
+      configure(config) {
+        telemetryEvents.push({ type: "configure", options: config });
+      },
+      createTraceId() {
+        return "metrics-trace";
+      },
+      safeErrorCode(error, fallback) {
+        return String(error?.code || fallback || "unknown_error");
+      },
+      event(name, fields, eventOptions) {
+        telemetryEvents.push({ name, fields, options: eventOptions });
+        return true;
+      },
+    },
+  };
+  context.window = context;
+  vm.createContext(context);
+  vm.runInContext(source, context, { filename: resolve(root, "metrics.js") });
+
+  return {
+    auth(user, error = null) {
+      return authCallback?.(user, error);
+    },
+    cloudCalls,
+    elements,
+    option7,
+    option30,
+    telemetryEvents,
+  };
+}
+
+async function settle(turns = 4) {
+  for (let index = 0; index < turns; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+test("signing in loads metrics panels, the table, and a shorter range", async () => {
+  const harness = createMetricsPageHarness();
+  assert.equal(harness.elements["metrics-auth-gate"].hidden, false);
+  assert.equal(harness.elements["metrics-workspace"].hidden, true);
+
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "owner-1" });
+  await settle();
+
+  assert.equal(harness.elements["metrics-auth-gate"].hidden, true);
+  assert.equal(harness.elements["metrics-workspace"].hidden, false);
+  assert.equal(harness.elements["metrics-account"].textContent, "yanguangchensp@gmail.com");
+  assert.equal(harness.elements["metrics-panels"].children.length, 6);
+  assert.equal(harness.elements["metrics-panels"].dataset.stale, "false");
+  assert.match(harness.elements["metrics-table-caption"].textContent, /last 30 days/);
+  assert.ok(harness.telemetryEvents.some((event) => event.name === "metrics.load.completed"));
+
+  await harness.elements["metrics-table-toggle"].dispatch("click");
+  assert.equal(harness.elements["metrics-table"].hidden, false);
+  assert.equal(harness.elements["metrics-table-toggle"].textContent, "Hide table");
+
+  await harness.elements["metrics-range"].dispatch("click", { target: harness.option7 });
+  assert.equal(harness.option7.getAttribute("aria-pressed"), "true");
+  assert.match(harness.elements["metrics-table-caption"].textContent, /last 7 days/);
+});
+
+test("Metrics surfaces a Firestore deny without blaming the capture Gmail", async () => {
+  const harness = createMetricsPageHarness({
+    loadError: Object.assign(new Error("Missing or insufficient permissions."), {
+      code: "permission-denied",
+    }),
+  });
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "owner-1" });
+  await settle();
+
+  assert.equal(harness.elements["metrics-status"].dataset.state, "error");
+  assert.match(harness.elements["metrics-status"].textContent, /Firestore photo rules may not be deployed/);
+  assert.doesNotMatch(harness.elements["metrics-status"].textContent, /capture account/);
+  assert.ok(harness.telemetryEvents.some((event) => event.name === "metrics.load.failed"));
+});
+
+test("a refused Google popup stays on the Metrics gate", async () => {
+  const harness = createMetricsPageHarness({
+    signInError: Object.assign(new Error("Popup closed."), { code: "auth/popup-closed-by-user" }),
+  });
+  await harness.elements["metrics-sign-in"].dispatch("click");
+  await settle();
+  assert.equal(harness.cloudCalls.signIn, 1);
+  assert.equal(harness.elements["metrics-status"].dataset.state, "error");
+  assert.match(harness.elements["metrics-status"].textContent, /Popup closed/);
+});
+
+test("Metrics cannot start without the Firebase client", () => {
+  const harness = createMetricsPageHarness({ cloud: false });
+  assert.match(harness.elements["metrics-status"].textContent, /dependencies are unavailable/);
+  assert.equal(harness.elements["metrics-status"].dataset.state, "error");
+});
+

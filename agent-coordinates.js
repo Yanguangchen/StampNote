@@ -174,6 +174,28 @@
 
   telemetry?.configure({ surface: "agent-coordinates" });
 
+  function elapsedMs(startedAt) {
+    const now =
+      typeof globalScope.performance?.now === "function" ? globalScope.performance.now() : Date.now();
+    return Math.max(0, now - startedAt);
+  }
+
+  function emitAuthFailed(error) {
+    telemetry?.event?.(
+      "cloud.auth.failed",
+      { errorCode: telemetry?.safeErrorCode?.(error, "auth_failed"), status: "failed" },
+      { immediate: true, dedupeMs: 60000 },
+    );
+  }
+
+  function emitTruckLocation(success, fields = {}, options = {}) {
+    telemetry?.event?.(
+      success ? "coordinates.truck_location.updated" : "coordinates.truck_location.failed",
+      fields,
+      options,
+    );
+  }
+
   let rawSessions = [];
   let currentFilter = "all";
   let currentQuery = "";
@@ -504,6 +526,7 @@
       inlineStatus.dataset.state = "saving";
     }
 
+    const traceId = telemetry?.createTraceId?.();
     try {
       const descriptor = {
         key: session.sessionKey,
@@ -535,15 +558,11 @@
         }
       }
 
-      telemetry?.record({
-        action: "agent_coordinates.truck_location.updated",
-        level: "info",
-        outcome: "success",
-        context: {
-          sessionKey: session.sessionKey,
-          hasCoordinates: coords.x !== null,
-        },
-      });
+      emitTruckLocation(
+        true,
+        { action: coords.x === null ? "clear" : "save", status: "success" },
+        { traceId },
+      );
 
       savingKey = null;
       renderSessions();
@@ -557,20 +576,28 @@
         inlineStatus.dataset.state = "error";
       }
       setStatus(msg, "error");
-      telemetry?.record({
-        action: "agent_coordinates.truck_location.failed",
-        level: "error",
-        outcome: "failure",
-        context: {
-          sessionKey: session.sessionKey,
-          errorCode: error?.code || "save_failed",
+      emitTruckLocation(
+        false,
+        {
+          action: coords.x === null ? "clear" : "save",
+          errorCode: telemetry?.safeErrorCode?.(error, "truck_location_update_failed"),
+          status: "failed",
         },
-      });
+        { immediate: true, traceId },
+      );
     }
   }
 
   async function loadData() {
     setStatus("Loading session coordinates…", "idle");
+    const startedAt =
+      typeof globalScope.performance?.now === "function" ? globalScope.performance.now() : Date.now();
+    const traceId = telemetry?.createTraceId?.();
+    telemetry?.event?.(
+      "coordinates.load.started",
+      { online: globalScope.navigator?.onLine !== false },
+      { traceId },
+    );
     try {
       const [photosResult, attendance, savedSessions] = await Promise.all([
         cloud.getPhotosPage ? cloud.getPhotosPage({ limit: 1000 }) : { photos: [] },
@@ -597,11 +624,30 @@
 
       setStatus("", "idle");
       renderSessions();
+      telemetry?.event?.(
+        "coordinates.load.completed",
+        {
+          durationMs: elapsedMs(startedAt),
+          sessionCount: rawSessions.length,
+          flaggedCount: rawSessions.filter((session) => session.comparison?.flaggedForReview).length,
+          status: "success",
+        },
+        { traceId },
+      );
     } catch (error) {
       const msg = error?.code === "permission-denied"
         ? "Access denied. Sign in with an authorized Google account."
         : error?.message || "Could not load session coordinates.";
       setStatus(msg, "error");
+      telemetry?.event?.(
+        "coordinates.load.failed",
+        {
+          durationMs: elapsedMs(startedAt),
+          errorCode: telemetry?.safeErrorCode?.(error, "coordinates_load_failed"),
+          status: "failed",
+        },
+        { immediate: true, traceId },
+      );
     }
   }
 
@@ -770,6 +816,12 @@
         batchStatus.textContent = `Batch complete: ${updatedCount} updated, ${errorCount} errors.`;
       }
       setStatus(`Batch applied: ${updatedCount} session(s) updated.`, "success");
+      emitTruckLocation(!errorCount || updatedCount > 0, {
+        action: "save",
+        status: errorCount && !updatedCount ? "failed" : "success",
+        sessionCount: updatedCount,
+        failedCount: errorCount,
+      });
     });
   }
 
@@ -812,6 +864,7 @@
     signInButton.addEventListener("click", () => {
       cloud.signIn?.().catch((error) => {
         setStatus(error?.message || "Sign in failed.", "error");
+        emitAuthFailed(error);
       });
     });
   }
@@ -820,26 +873,32 @@
     signOutButton.addEventListener("click", () => {
       cloud.signOut?.().catch((error) => {
         setStatus(error?.message || "Sign out failed.", "error");
+        emitAuthFailed(error);
       });
     });
   }
 
   if (cloud.subscribeAuth) {
-    cloud.subscribeAuth(async (user) => {
+    cloud.subscribeAuth(async (user, error) => {
+      if (error) {
+        emitAuthFailed(error);
+      }
+      telemetry?.event?.("cloud.auth.state", {
+        status: user ? "signed_in" : "signed_out",
+      });
       if (user) {
         authGate.hidden = true;
         workspace.hidden = false;
         if (signOutButton) signOutButton.hidden = false;
         if (accountName) accountName.textContent = user.displayName || user.email || "Signed in";
         return loadData();
-      } else {
-        authGate.hidden = false;
-        workspace.hidden = true;
-        if (signOutButton) signOutButton.hidden = true;
-        if (accountName) accountName.textContent = "";
-        rawSessions = [];
-        renderSessions();
       }
+      authGate.hidden = false;
+      workspace.hidden = true;
+      if (signOutButton) signOutButton.hidden = true;
+      if (accountName) accountName.textContent = "";
+      rawSessions = [];
+      renderSessions();
     });
   }
 
@@ -874,10 +933,26 @@
         dateKey: session.dateKey,
         sessionId: session.sessionId,
       };
-      const updated = await cloud.updateSessionTruckLocation(descriptor, coords);
-      session.truckLocation = { x: coords.x ?? null, y: coords.y ?? null };
-      renderSessions();
-      return updated;
+      const action = coords.x == null ? "clear" : "save";
+      const traceId = telemetry?.createTraceId?.();
+      try {
+        const updated = await cloud.updateSessionTruckLocation(descriptor, coords);
+        session.truckLocation = { x: coords.x ?? null, y: coords.y ?? null };
+        renderSessions();
+        emitTruckLocation(true, { action, status: "success" }, { traceId });
+        return updated;
+      } catch (error) {
+        emitTruckLocation(
+          false,
+          {
+            action,
+            errorCode: telemetry?.safeErrorCode?.(error, "truck_location_update_failed"),
+            status: "failed",
+          },
+          { immediate: true, traceId },
+        );
+        throw error;
+      }
     },
     async batchUpdateCoordinates(items = []) {
       const results = [];

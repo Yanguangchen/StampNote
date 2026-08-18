@@ -258,6 +258,9 @@
       );
       const timeZone = String(value?.timeZone || "").trim().slice(0, 80) || null;
       const location = String(value?.location || "").trim().replace(/\s+/g, " ").slice(0, 180) || null;
+      const source = value?.source === "manual" ? "manual" : "face-match";
+      const reviewStatus = source === "manual" ? "flagged" : "clear";
+      const reviewReason = source === "manual" ? "manual-entry" : null;
 
       if (!/^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(workerId)) {
         throw new Error("Attendance has no valid worker ID.");
@@ -281,7 +284,9 @@
         timeZone,
         location,
         status: "present",
-        source: "face-match",
+        source,
+        reviewStatus,
+        reviewReason,
       };
     }
 

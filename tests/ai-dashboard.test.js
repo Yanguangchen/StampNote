@@ -4,19 +4,32 @@ const assert = require("node:assert/strict");
 const { readFileSync } = require("node:fs");
 const { resolve } = require("node:path");
 const { test } = require("node:test");
+const vm = require("node:vm");
 
 const data = require("../photo-cloud.js");
 globalThis.StampNoteCloudData = data;
 const metrics = require("../metrics.js");
 const dashboard = require("../ai-dashboard.js");
 const coordinates = require("../coordinates.js");
+const operationsData = require("../src/services/operations-data.js");
 
 const root = resolve(__dirname, "..");
 const html = readFileSync(resolve(root, "ai-dashboard.html"), "utf8");
 const css = readFileSync(resolve(root, "ai-dashboard.css"), "utf8");
-const source = readFileSync(resolve(root, "ai-dashboard.js"), "utf8");
-const adminSource = readFileSync(resolve(root, "admin.js"), "utf8");
-const coordinatesSource = readFileSync(resolve(root, "coordinates.js"), "utf8");
+const workspacePath = resolve(root, "src/components/ai-dashboard-workspace.js");
+const workspaceSource = readFileSync(workspacePath, "utf8");
+const source = [
+  readFileSync(resolve(root, "src/services/ai-assistant.js"), "utf8"),
+  workspaceSource,
+].join("\n");
+const adminSource = [
+  readFileSync(resolve(root, "src/services/admin-scope.js"), "utf8"),
+  readFileSync(resolve(root, "admin.js"), "utf8"),
+].join("\n");
+const coordinatesSource = readFileSync(
+  resolve(root, "src/components/coordinates-workspace.js"),
+  "utf8",
+);
 const operationsAiGuide = readFileSync(resolve(root, "OPERATIONS_AI_GUIDE.md"), "utf8");
 
 function knowledgeFixture() {
@@ -87,8 +100,14 @@ test("the AI dashboard is the conversation, its prompts, and its sources", () =>
   assert.match(html, /id="ai-message-list"/);
   assert.match(html, /id="ai-prompt"[^>]*maxlength="1200"/);
   assert.match(html, /id="ai-mic"[^>]*aria-pressed="false"/);
+  assert.match(html, /id="ai-send"[^>]*aria-label="Send question"/);
+  assert.doesNotMatch(html, /id="ai-send"[^>]*>\s*Ask AI/);
   assert.match(html, /data-ai-question="Show me the flagged sessions/);
   assert.match(html, /data-ai-question="Show the last 30 days of Metrics statistics and graphs/);
+  assert.match(html, /data-ai-question="Which sessions are missing Truck location X or Y/);
+  assert.match(html, /data-ai-question="Which recorded addresses were clustered as the same operational site by GPS/);
+  assert.match(html, /data-ai-question="Which sessions recorded attendance but no photos/);
+  assert.equal((html.match(/\bdata-ai-question=/g) || []).length, 16);
   assert.match(html, /<script src="metrics\.js\?v=/);
   assert.match(
     html,
@@ -118,6 +137,10 @@ test("the AI dashboard is the conversation, its prompts, and its sources", () =>
   assert.match(html, /class="ai-chat-heading-actions"[\s\S]*?id="ai-refresh"/);
   assert.match(source, /refreshButton\.addEventListener\("click", loadKnowledge\)/);
   assert.match(source, /SpeechRecognition \|\| globalScope\.webkitSpeechRecognition/);
+  assert.match(source, /speechEndpoint = assistantEndpoint\.replace/);
+  assert.match(source, /gemini voice/i);
+  assert.match(source, /globalScope\.fetch\(speechEndpoint/);
+  assert.doesNotMatch(source, /speechSynthesis|SpeechSynthesisUtterance/);
   assert.match(source, /signedInUser\.getIdToken\(\)/);
   assert.match(source, /Authorization: `Bearer \$\{token\}`/);
   assert.match(source, /sourceDisclosure\(request\.sources\)/);
@@ -150,6 +173,53 @@ test("the knowledge index joins flags, weather, photos, sessions, and attendance
   assert.equal(knowledge.metricSeries[30].find((entry) => entry.id === "attendance").total, 1);
   assert.equal(knowledge.metricSeries[30].find((entry) => entry.id === "flags").total, 1);
   assert.ok(knowledge.facts.some((fact) => fact.kind === "metric" && fact.rangeDays === 30));
+});
+
+test("manual attendance is indexed as a citable review flag", () => {
+  const checkedInAtMs = Date.parse("2026-08-17T09:05:00.000Z");
+  const knowledge = dashboard.buildKnowledgeBase(
+    {
+      photos: [],
+      attendance: [
+        {
+          eventId: "attendance-manual-1",
+          workerId: "W009",
+          displayName: "Bo Lim",
+          checkedInAtMs,
+          dateKey: "2026-08-17",
+          location: "Orchard Road",
+          source: "manual",
+          reviewStatus: "flagged",
+          reviewReason: "manual-entry",
+        },
+      ],
+      savedSessions: [],
+      now: Date.parse("2026-08-17T12:00:00.000Z"),
+    },
+    data,
+    coordinates,
+    metrics,
+  );
+
+  assert.equal(knowledge.metrics.flaggedSessionCount, 1);
+  assert.equal(knowledge.sessions[0].flaggedForReview, true);
+  assert.equal(knowledge.sessions[0].flaggedAttendanceCount, 1);
+  assert.match(knowledge.sessions[0].flagReasons.join(" "), /manual attendance check-in needs review/);
+
+  const attendanceFact = knowledge.facts.find(
+    (fact) => fact.kind === "attendance" && /Bo Lim \(W009\)/.test(fact.text),
+  );
+  assert.equal(attendanceFact.flagged, true);
+  assert.match(attendanceFact.text, /added manually and needs review/);
+
+  const request = dashboard.createAssistantPayload(
+    "Which manual attendance entries need review?",
+    [],
+    knowledge,
+  );
+  assert.equal(request.payload.scope.flaggedSessions, 1);
+  assert.ok(request.payload.facts.some((fact) => /Bo Lim \(W009\)/.test(fact.text)));
+  assert.ok(request.payload.facts.some((fact) => fact.kind === "flag"));
 });
 
 test("only specifically cited photo flags are selected for inline display", () => {
@@ -343,6 +413,127 @@ test("a differently worded airport address reaches Gemini as a reasoning candida
   assert.equal(retrieval.facts.some((fact) => /found 0 records/.test(fact.text)), false);
 });
 
+test("GPS accuracy-margin questions geocode named house numbers even without sessions", () => {
+  const capturedAtMs = Date.parse("2026-08-16T09:10:00.000Z");
+  const knowledge = dashboard.buildKnowledgeBase(
+    {
+      photos: [
+        {
+          id: "marina-photo",
+          capturedAtMs,
+          dateKey: "2026-08-16",
+          location: "10 Marina Bay",
+          gpsLocation: { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 8 },
+        },
+        {
+          id: "parbury-photo",
+          capturedAtMs,
+          dateKey: "2026-08-16",
+          location: "34 Parbury Avenue",
+          gpsLocation: { latitude: 1.316989, longitude: 103.944084, accuracyMeters: 20 },
+        },
+      ],
+      attendance: [],
+      savedSessions: [],
+      now: Date.parse("2026-08-17T09:00:00.000Z"),
+    },
+    data,
+    coordinates,
+    metrics,
+  );
+  const question = "is 24 Parbury within the GPS margin of error of 32";
+
+  assert.equal(dashboard.questionRequestsGpsAccuracyMargin(question), true);
+  const retrieval = dashboard.rankKnowledge(question, knowledge);
+  assert.equal(retrieval.geographyLookupSuggested, true);
+  assert.ok(retrieval.facts.some((fact) => /34 Parbury Avenue/.test(fact.text)));
+  assert.equal(retrieval.facts.some((fact) => /10 Marina Bay/.test(fact.text)), false);
+
+  const exactSite = dashboard.rankKnowledge("What happened at 10 Marina Bay?", knowledge);
+  assert.equal(dashboard.questionRequestsGpsAccuracyMargin("What happened at 10 Marina Bay?"), false);
+  assert.ok(exactSite.facts.some((fact) => /10 Marina Bay/.test(fact.text)));
+  assert.equal(exactSite.facts.some((fact) => /34 Parbury Avenue/.test(fact.text)), false);
+
+  const request = dashboard.createAssistantPayload(question, [], knowledge);
+  const labels = request.payload.publicSites.map((site) => site.label);
+  assert.ok(labels.includes("24 Parbury Avenue"));
+  assert.ok(labels.includes("32 Parbury Avenue"));
+  const recorded = request.payload.publicSites.find((site) => site.label === "34 Parbury Avenue");
+  assert.deepEqual(recorded?.staffGps, {
+    latitude: 1.316989,
+    longitude: 103.944084,
+    accuracyMeters: 20,
+  });
+  assert.ok(
+    request.payload.facts.some(
+      (fact) =>
+        fact.kind === "session" &&
+        fact.text.includes(
+          "Question-named public address for GPS accuracy-margin comparison: 24 Parbury Avenue.",
+        ),
+    ),
+  );
+  assert.ok(
+    request.payload.facts.some(
+      (fact) =>
+        fact.kind === "session" &&
+        fact.text.includes(
+          "Question-named public address for GPS accuracy-margin comparison: 32 Parbury Avenue.",
+        ),
+    ),
+  );
+  assert.equal(request.payload.scope.retrieved, request.payload.facts.length);
+  assert.equal(
+    new Set(request.payload.publicSites.map((site) => site.ref)).size,
+    request.payload.publicSites.length,
+  );
+  assert.ok(
+    request.payload.publicSites.every((site) => {
+      const fact = request.payload.facts.find((entry) => entry.ref === site.ref);
+      return (
+        fact &&
+        ["session", "flag"].includes(fact.kind) &&
+        fact.text.includes(site.label)
+      );
+    }),
+  );
+
+  const publicMap = {
+    kind: "public-addresses",
+    from: { label: "24 Parbury Avenue", latitude: 1.316895, longitude: 103.943633 },
+    to: { label: "32 Parbury Avenue", latitude: 1.316694, longitude: 103.944054 },
+    distanceMeters: 52,
+    thresholdMeters: 20,
+    accuracyMeters: 20,
+    flaggedForReview: true,
+  };
+  const map = dashboard.inlineMapForQuestion(question, request.sources, publicMap);
+  assert.equal(map.kind, "public-addresses");
+  assert.equal(map.distanceMeters, 52);
+  assert.equal(map.markerLabels.reference, "24 Parbury");
+  assert.equal(map.markerLabels.comparison, "32 Parbury");
+  assert.match(map.summary, /52 m apart · outside the ±20 m GPS accuracy/);
+  assert.equal(dashboard.inlineMapForQuestion(question, request.sources), null);
+
+  const sentThem = "i sent them to 24 parbury ave they end up at 32 parbury, how far is that difference";
+  assert.equal(dashboard.questionRequestsGpsAccuracyMargin(sentThem), true);
+  const sentRetrieval = dashboard.rankKnowledge(sentThem, knowledge);
+  assert.ok(sentRetrieval.facts.some((fact) => /34 Parbury Avenue/.test(fact.text)));
+  assert.equal(sentRetrieval.facts.some((fact) => /found 0 records/.test(fact.text)), false);
+  assert.equal(sentRetrieval.facts.some((fact) => /No exact stored label matched/.test(fact.text)), false);
+  const sentRequest = dashboard.createAssistantPayload(sentThem, [], knowledge);
+  const sentLabels = sentRequest.payload.publicSites.map((site) => site.label);
+  assert.ok(sentLabels.includes("24 Parbury Avenue"));
+  assert.ok(sentLabels.includes("32 Parbury Avenue"));
+  assert.equal(
+    sentRequest.payload.facts.some((fact) => /found 0 records|comparison is unavailable/.test(fact.text)),
+    false,
+  );
+  const suggestion = dashboard.gpsAccuracyMarginSuggestion(sentThem, knowledge);
+  assert.match(suggestion.label, /How far is 24 Parbury Avenue from 32 Parbury Avenue/);
+  assert.match(suggestion.question, /within GPS margin of error/);
+});
+
 test("GPS-clustered address aliases are explicit same-site evidence", () => {
   const capturedAtMs = Date.parse("2026-08-16T09:10:00.000Z");
   const knowledge = dashboard.buildKnowledgeBase(
@@ -454,6 +645,10 @@ test("coordinate questions return a grounded inline map and safe deep links", ()
   assert.ok(Number.isFinite(geometry.reference.x));
   assert.ok(Number.isFinite(geometry.truck.y));
   assert.ok(actions.some((action) => action.href.startsWith("coordinates.html?session=")));
+  assert.equal(
+    dashboard.coordinateQuery(map.session),
+    actions.find((action) => action.kind === "coordinates").href,
+  );
   assert.ok(actions.some((action) => action.href.includes("admin.html?")));
   assert.equal(Object.hasOwn(request.payload.facts[0], "map"), false);
   assert.equal(Object.hasOwn(request.payload.facts[0], "session"), false);
@@ -704,4 +899,580 @@ test("the dashboard has eased entrances, responsive chat, dark mode, and reduced
   assert.match(css, /\.ai-message-row\s*\{[^}]*animation: ai-message-enter/);
   assert.match(css, /prefers-reduced-motion: reduce[\s\S]*?\.ai-chat-panel,[\s\S]*?animation: none !important/);
   assert.match(css, /prefers-reduced-motion: reduce[\s\S]*?\.ai-inline-map,[\s\S]*?animation: none !important/);
+});
+
+class AiFakeElement {
+  constructor(tagName = "div") {
+    this.tagName = String(tagName).toUpperCase();
+    this.attributes = new Map();
+    this.children = [];
+    this.className = "";
+    this.dataset = {};
+    this.disabled = false;
+    this.hidden = false;
+    this.id = "";
+    this.listeners = new Map();
+    this.ownerDocument = null;
+    this.parentElement = null;
+    this.scrollTop = 0;
+    this.style = {};
+    this._textContent = "";
+    this.value = "";
+  }
+
+  get textContent() {
+    if (this.children.length > 0) {
+      return this.children.map((child) => child.textContent).join("");
+    }
+    return this._textContent;
+  }
+
+  set textContent(value) {
+    this.children = [];
+    this._textContent = String(value);
+  }
+
+  addEventListener(name, callback) {
+    if (!this.listeners.has(name)) this.listeners.set(name, []);
+    this.listeners.get(name).push(callback);
+  }
+
+  get childElementCount() {
+    return this.children.length;
+  }
+
+  append(...children) {
+    children.forEach((child) => {
+      if (child == null) return;
+      const node = typeof child === "object" ? child : this.#textNode(child);
+      this.children.push(node);
+      node.parentElement = this;
+      if (this.ownerDocument) node.ownerDocument = this.ownerDocument;
+    });
+  }
+
+  prepend(...children) {
+    const nodes = children.map((child) => {
+      if (child == null) return null;
+      const node = typeof child === "object" ? child : this.#textNode(child);
+      node.parentElement = this;
+      if (this.ownerDocument) node.ownerDocument = this.ownerDocument;
+      return node;
+    }).filter(Boolean);
+    this.children.unshift(...nodes);
+  }
+
+  #textNode(value) {
+    const node = new AiFakeElement("#text");
+    node.textContent = String(value);
+    node.ownerDocument = this.ownerDocument;
+    return node;
+  }
+
+  remove() {
+    if (!this.parentElement) return;
+    this.parentElement.children = this.parentElement.children.filter((child) => child !== this);
+    this.parentElement = null;
+  }
+
+  replaceChildren(...children) {
+    this.children = [];
+    this.append(...children);
+  }
+
+  setAttribute(name, value) {
+    this.attributes.set(name, String(value));
+  }
+
+  getAttribute(name) {
+    return this.attributes.has(name) ? this.attributes.get(name) : null;
+  }
+
+  focus() {
+    this.focused = true;
+  }
+
+  async dispatch(name, event = {}) {
+    const list = this.listeners.get(name) || [];
+    for (const callback of list) {
+      await callback({ preventDefault() {}, target: this, key: "", ...event });
+    }
+  }
+}
+
+function aiDescendants(element) {
+  return [element, ...(element?.children || []).flatMap(aiDescendants)];
+}
+
+function createAiPageHarness(options = {}) {
+  const ids = [
+    "ai-sign-in",
+    "ai-sign-out",
+    "ai-auth-gate",
+    "ai-workspace",
+    "ai-account-name",
+    "ai-dashboard-status",
+    "ai-scope-label",
+    "ai-refresh",
+    "ai-message-list",
+    "ai-chat-form",
+    "ai-prompt",
+    "ai-send",
+    "ai-mic",
+    "ai-voice-status",
+    "theme-toggle",
+    "theme-toggle-icon",
+    "theme-toggle-label",
+  ];
+  const elements = Object.fromEntries(ids.map((id) => [id, new AiFakeElement()]));
+  elements["ai-workspace"].hidden = true;
+  elements["ai-sign-out"].hidden = true;
+  elements["ai-dashboard-status"].hidden = true;
+  elements["ai-prompt"].value = "";
+
+  const suggestions = [
+    "Show the last 30 days of Metrics statistics and graphs for attendance, flags, and sessions.",
+    "Show me the flagged sessions and explain each flag.",
+  ].map((question) => {
+    const button = new AiFakeElement("button");
+    button.dataset.aiQuestion = question;
+    return button;
+  });
+
+  const documentElement = new AiFakeElement("html");
+  const document = {
+    documentElement,
+    createElement(tagName) {
+      const node = new AiFakeElement(tagName);
+      node.ownerDocument = document;
+      return node;
+    },
+    createElementNS(namespace, tagName) {
+      const node = document.createElement(tagName);
+      node.namespaceURI = namespace;
+      return node;
+    },
+    createTextNode(value) {
+      const node = new AiFakeElement("#text");
+      node.ownerDocument = document;
+      node.textContent = String(value);
+      return node;
+    },
+    querySelector(selector) {
+      return elements[selector.replace(/^#/, "")] || null;
+    },
+    querySelectorAll(selector) {
+      if (selector === "[data-ai-question]") return suggestions;
+      return [];
+    },
+  };
+  Object.values(elements).forEach((element) => {
+    element.ownerDocument = document;
+  });
+  suggestions.forEach((button) => {
+    button.ownerDocument = document;
+  });
+
+  const photos = options.photos || [
+    {
+      id: "photo-1",
+      capturedAt: "2026-08-14T13:10:00.000Z",
+      capturedAtMs: Date.parse("2026-08-14T13:10:00.000Z"),
+      dateKey: "2026-08-14",
+      location: "10 Marina Bay",
+      locationKey: data.createLocationKey("10 Marina Bay"),
+      gpsLocation: { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 8 },
+      aiReview: { action: "discard", recommendation: "discard", reason: "Unusable." },
+    },
+  ];
+  const fetchCalls = [];
+  const audioCalls = [];
+  const streamingSources = [];
+  let authCallback;
+  const cloud = options.cloud === false
+    ? null
+    : {
+        async getPhotosPage() {
+          if (options.loadError) throw options.loadError;
+          return { photos, after: null, hasMore: false };
+        },
+        async getAttendance() {
+          return [
+            {
+              eventId: "attendance-1",
+              workerId: "W001",
+              displayName: "Jane Tan",
+              checkedInAtMs: Date.parse("2026-08-14T13:05:00.000Z"),
+              dateKey: "2026-08-14",
+              location: "10 Marina Bay",
+            },
+          ];
+        },
+        async getDashboardSessions() {
+          return [
+            {
+              key: data.createSessionKey({
+                locationKey: data.createLocationKey("10 Marina Bay"),
+                dateKey: "2026-08-14",
+                sessionId: "afternoon",
+              }),
+              location: "10 Marina Bay",
+              dateKey: "2026-08-14",
+              sessionId: "afternoon",
+              gpsLocation: { latitude: 1.2868, longitude: 103.8545, accuracyMeters: 8 },
+              gpsCapturedAtMs: Date.parse("2026-08-14T12:00:00.000Z"),
+              truckLocation: { x: 103.8645, y: 1.2868 },
+            },
+          ];
+        },
+        async getAccess() {
+          return options.access || { role: "admin", canAccessAdmin: true };
+        },
+        async signIn() {
+          if (options.signInError) throw options.signInError;
+        },
+        async signOut() {},
+        subscribeAuth(callback) {
+          authCallback = callback;
+          return () => {};
+        },
+      };
+
+  const storage = new Map();
+  const context = {
+    ...(options.streamingSpeech
+      ? {
+          atob(value) {
+            return Buffer.from(String(value), "base64").toString("binary");
+          },
+          AudioContext: class FakeAudioContext {
+            constructor() {
+              this.currentTime = 0;
+              this.destination = {};
+            }
+
+            async close() {}
+
+            createBuffer(channels, length, sampleRate) {
+              const samples = new Float32Array(length);
+              return {
+                duration: length / sampleRate,
+                copyToChannel(values) {
+                  samples.set(values);
+                },
+                getChannelData() {
+                  return samples;
+                },
+              };
+            }
+
+            createBufferSource() {
+              const source = {
+                connect() {},
+                start(at) {
+                  source.startedAt = at;
+                },
+                stop() {
+                  source.stopped = true;
+                },
+              };
+              streamingSources.push(source);
+              return source;
+            }
+
+            async resume() {}
+          },
+        }
+      : {}),
+    URL: {
+      createObjectURL(value) {
+        return value?.type === "audio/wav" ? "blob:gemini-voice" : "blob:ai-photo";
+      },
+      revokeObjectURL() {},
+    },
+    Audio: class FakeAudio {
+      constructor(src) {
+        this.src = src;
+        this.listeners = new Map();
+        this.paused = true;
+        audioCalls.push(this);
+      }
+
+      addEventListener(name, callback) {
+        this.listeners.set(name, callback);
+      }
+
+      async play() {
+        this.paused = false;
+      }
+
+      pause() {
+        this.paused = true;
+      }
+    },
+    console,
+    document,
+    fetch: async (url, request) => {
+      fetchCalls.push({ url, request });
+      if (options.fetchError) throw options.fetchError;
+      if (String(url).endsWith("/api/speech")) {
+        if (options.streamingSpeech) {
+          const audio = Buffer.from([0, 1, 2, 3]).toString("base64");
+          return new Response(
+            [
+              JSON.stringify({ type: "metadata", voice: "Kore", sampleRate: 24_000 }),
+              JSON.stringify({ type: "audio", data: audio, sampleRate: 24_000 }),
+              JSON.stringify({ type: "done" }),
+              "",
+            ].join("\n"),
+            { headers: { "Content-Type": "application/x-ndjson" } },
+          );
+        }
+        return {
+          ok: options.speechFetchOk !== false,
+          status: options.speechFetchStatus || 200,
+          async blob() {
+            return { type: "audio/wav", size: 48 };
+          },
+          async json() {
+            return options.speechFetchBody || { error: "Gemini voice failed." };
+          },
+        };
+      }
+      return {
+        ok: options.fetchOk !== false,
+        status: options.fetchStatus || 200,
+        async json() {
+          return options.fetchBody || { answer: "Jane Tan checked in at 10 Marina Bay. [S1]" };
+        },
+      };
+    },
+    localStorage: {
+      getItem(key) {
+        return storage.has(key) ? storage.get(key) : null;
+      },
+      setItem(key, value) {
+        storage.set(key, String(value));
+      },
+    },
+    location: { hostname: "stampnote-omega.vercel.app", port: "" },
+    matchMedia() {
+      return { matches: false, addEventListener() {} };
+    },
+    performance: { now: () => 50 },
+    clearTimeout,
+    setTimeout,
+    TextDecoder,
+    StampNoteAiDashboard: dashboard,
+    StampNoteCloudData: data,
+    StampNoteCoordinates: coordinates,
+    StampNoteFirebase: cloud,
+    StampNoteMetrics: metrics,
+    StampNoteOperationsData: operationsData,
+    StampNoteObservability: {
+      configure() {},
+      createTraceId() {
+        return "ai-trace";
+      },
+      safeErrorCode(error, fallback) {
+        return String(error?.code || fallback || "unknown_error");
+      },
+      event() {
+        return true;
+      },
+    },
+  };
+  context.window = context;
+  context.globalThis = context;
+  context.navigator = { language: "en-SG", onLine: true };
+  vm.createContext(context);
+  vm.runInContext(workspaceSource, context, { filename: workspacePath });
+
+  return {
+    auth(user, error = null) {
+      return authCallback?.(user, error);
+    },
+    audioCalls,
+    elements,
+    fetchCalls,
+    streamingSources,
+    suggestions,
+    user: {
+      email: "yanguangchensp@gmail.com",
+      uid: "owner-1",
+      async getIdToken() {
+        return "id-token";
+      },
+    },
+  };
+}
+
+async function settleAi(turns = 6) {
+  for (let index = 0; index < turns; index += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
+test("Operations AI signs in, indexes records, and answers from the composer", async () => {
+  const harness = createAiPageHarness();
+  assert.equal(harness.elements["ai-auth-gate"].hidden, false);
+
+  await harness.auth(harness.user);
+  await settleAi();
+
+  assert.equal(harness.elements["ai-auth-gate"].hidden, true);
+  assert.equal(harness.elements["ai-workspace"].hidden, false);
+  assert.match(harness.elements["ai-scope-label"].textContent, /sessions/);
+  assert.match(harness.elements["ai-dashboard-status"].textContent, /searchable operational facts/);
+
+  harness.elements["ai-prompt"].value = "Who checked in at Marina Bay?";
+  await harness.elements["ai-chat-form"].dispatch("submit");
+  await settleAi();
+
+  assert.equal(harness.fetchCalls.length, 1);
+  assert.equal(harness.fetchCalls[0].url, "/api/assistant");
+  assert.match(harness.fetchCalls[0].request.headers.Authorization, /Bearer id-token/);
+  const assistantTurns = harness.elements["ai-message-list"].children.filter(
+    (row) => row.className.includes("ai-message-row-assistant"),
+  );
+  assert.ok(assistantTurns.length >= 1);
+  const latest = assistantTurns.at(-1).children[0];
+  assert.equal(latest.dataset.state, "complete", latest.textContent);
+  assert.match(latest.textContent, /Jane Tan|Marina Bay|retrieved facts/);
+});
+
+test("Listen generates Gemini TTS audio instead of using the browser voice", async () => {
+  const harness = createAiPageHarness();
+  await harness.auth(harness.user);
+  await settleAi();
+
+  harness.elements["ai-prompt"].value = "Who checked in at Marina Bay?";
+  await harness.elements["ai-chat-form"].dispatch("submit");
+  await settleAi();
+
+  const latest = harness.elements["ai-message-list"].children
+    .filter((row) => row.className.includes("ai-message-row-assistant"))
+    .at(-1)
+    .children[0];
+  const listen = aiDescendants(latest).find((node) => node.className === "ai-listen");
+  assert.ok(listen, "completed answers expose a Gemini Listen control");
+  assert.equal(listen.textContent, "Listen");
+
+  await listen.dispatch("click");
+  await settleAi();
+
+  assert.equal(harness.fetchCalls.length, 2);
+  assert.equal(harness.fetchCalls[1].url, "/api/speech");
+  assert.match(harness.fetchCalls[1].request.headers.Authorization, /Bearer id-token/);
+  assert.match(JSON.parse(harness.fetchCalls[1].request.body).text, /Jane Tan checked in/);
+  assert.equal(harness.audioCalls.length, 1);
+  assert.equal(harness.audioCalls[0].src, "blob:gemini-voice");
+  assert.equal(harness.audioCalls[0].paused, false);
+  assert.equal(listen.textContent, "Stop");
+  assert.match(harness.elements["ai-voice-status"].textContent, /Gemini voice · Kore/);
+
+  await listen.dispatch("click");
+  assert.equal(harness.audioCalls[0].paused, true);
+  assert.equal(listen.textContent, "Listen");
+});
+
+test("Listen starts streamed Gemini PCM without waiting for a complete WAV", async () => {
+  const harness = createAiPageHarness({ streamingSpeech: true });
+  await harness.auth(harness.user);
+  await settleAi();
+
+  harness.elements["ai-prompt"].value = "Who checked in at Marina Bay?";
+  await harness.elements["ai-chat-form"].dispatch("submit");
+  await settleAi();
+
+  const latest = harness.elements["ai-message-list"].children
+    .filter((row) => row.className.includes("ai-message-row-assistant"))
+    .at(-1)
+    .children[0];
+  const listen = aiDescendants(latest).find((node) => node.className === "ai-listen");
+  await listen.dispatch("click");
+  await settleAi();
+
+  assert.equal(harness.fetchCalls[1].request.headers.Accept, "application/x-ndjson");
+  assert.equal(harness.audioCalls.length, 0, "streaming does not wait to construct a WAV Audio element");
+  assert.equal(harness.streamingSources.length, 1);
+  assert.equal(harness.streamingSources[0].startedAt, 0.08);
+  assert.equal(listen.textContent, "Stop");
+  assert.match(harness.elements["ai-voice-status"].textContent, /Playing Gemini voice/);
+
+  await listen.dispatch("click");
+  assert.equal(harness.streamingSources[0].stopped, true);
+  assert.equal(listen.textContent, "Listen");
+});
+
+test("a distance question still completes when the inline map needs a coordinate link", async () => {
+  const harness = createAiPageHarness({
+    fetchBody: { answer: "The photo GPS and truck location are 1.1 km apart. [S1]" },
+  });
+  await harness.auth(harness.user);
+  await settleAi();
+
+  harness.elements["ai-prompt"].value = "what is the distance between the photo GPS and the truck";
+  await harness.elements["ai-chat-form"].dispatch("submit");
+  await settleAi();
+
+  const latest = harness.elements["ai-message-list"].children
+    .filter((row) => row.className.includes("ai-message-row-assistant"))
+    .at(-1)
+    .children[0];
+  assert.equal(latest.dataset.state, "complete", latest.textContent);
+  assert.doesNotMatch(latest.textContent, /coordinateQuery is not defined/);
+  const mapLink = aiDescendants(latest).find(
+    (entry) => entry.className === "ai-inline-map-open",
+  );
+  assert.match(mapLink.href, /coordinates\.html\?session=/);
+});
+
+test("GPS accuracy-margin answers show the meter distance on the map module", async () => {
+  const harness = createAiPageHarness({
+    fetchBody: {
+      answer:
+        "24 Parbury Avenue is 52 m from 32 Parbury Avenue, outside the ±20 m GPS accuracy. [G1]",
+      map: {
+        kind: "public-addresses",
+        from: { label: "24 Parbury Avenue", latitude: 1.316895, longitude: 103.943633 },
+        to: { label: "32 Parbury Avenue", latitude: 1.316694, longitude: 103.944054 },
+        distanceMeters: 52,
+        thresholdMeters: 20,
+        accuracyMeters: 20,
+        flaggedForReview: true,
+      },
+    },
+  });
+  await harness.auth(harness.user);
+  await settleAi();
+
+  harness.elements["ai-prompt"].value = "is 24 Parbury within the GPS margin of error of 32";
+  await harness.elements["ai-chat-form"].dispatch("submit");
+  await settleAi();
+
+  const latest = harness.elements["ai-message-list"].children
+    .filter((row) => row.className.includes("ai-message-row-assistant"))
+    .at(-1)
+    .children[0];
+  assert.equal(latest.dataset.state, "complete", latest.textContent);
+  assert.match(latest.textContent, /52 m/);
+  const map = aiDescendants(latest).find((entry) => entry.className === "ai-inline-map");
+  assert.ok(map);
+  assert.equal(map.dataset.mapKind, "public-addresses");
+  assert.match(map.textContent, /52 m apart · outside the ±20 m GPS accuracy/);
+  assert.match(map.textContent, /24 Parbury/);
+  assert.match(map.textContent, /32 Parbury/);
+});
+
+test("Operations AI reports a Firestore deny instead of hunting for another Gmail", async () => {
+  const harness = createAiPageHarness({
+    loadError: Object.assign(new Error("Missing or insufficient permissions."), {
+      code: "permission-denied",
+    }),
+  });
+  await harness.auth(harness.user);
+  await settleAi();
+  assert.equal(harness.elements["ai-dashboard-status"].dataset.state, "error");
+  assert.match(harness.elements["ai-dashboard-status"].textContent, /Every current StampNote account is a superadmin/);
 });

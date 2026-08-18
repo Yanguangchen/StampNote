@@ -15,6 +15,9 @@
   const cameraFacing = window.StampNoteCameraFacing;
   const triage = window.StampNoteTriage;
   const autoCapture = window.StampNoteAutoCapture;
+  const overlay = window.StampNotePoseOverlay;
+  const captureAttendanceApi = window.StampNoteCaptureAttendance;
+  const captureCamera = window.StampNoteCaptureCamera;
   const REQUIRED_ATTENDANCE_MATCH_VOTES = 3;
   const addressField = document.querySelector("#address-field");
   const status = document.querySelector("#location-status");
@@ -50,6 +53,10 @@
   const faceEnrollmentAnother = document.querySelector("#face-enrollment-another");
   const faceEnrollmentRecord = document.querySelector("#face-enrollment-record");
   const faceEnrollmentSkip = document.querySelector("#face-enrollment-skip");
+  const manualAttendanceOpen = document.querySelector("#manual-attendance-open");
+  const manualAttendanceForm = document.querySelector("#manual-attendance-form");
+  const manualAttendanceWorker = document.querySelector("#manual-attendance-worker");
+  const manualAttendanceCancel = document.querySelector("#manual-attendance-cancel");
   const capturesList = document.querySelector("#captures");
   const capturesSummary = document.querySelector("#captures-summary");
   const capturesSave = document.querySelector("#captures-save");
@@ -445,7 +452,17 @@
   // in complete groups of eight and compact reviewed copies are cloud-synced.
   // ---------------------------------------------------------------------------
 
-  if (!pose || !schedule || !storage || !autoCapture || !monitorToggle || !monitorVideo) {
+  if (
+    !pose ||
+    !schedule ||
+    !storage ||
+    !autoCapture ||
+    !overlay ||
+    !captureAttendanceApi ||
+    !captureCamera ||
+    !monitorToggle ||
+    !monitorVideo
+  ) {
     return;
   }
 
@@ -468,46 +485,22 @@
     ? "https://stampnote-omega.vercel.app/api/triage"
     : "/api/triage";
 
-  // Head, neck and trunk in white; the four limbs in the accent, so an arm or a
-  // leg can be picked out against the body at a glance.
-  const SPINE_COLOR = "rgba(255, 255, 255, 0.92)";
-  const LIMB_COLOR = "rgba(120, 255, 200, 0.95)";
-  // Amber, so a vehicle never reads as the green the watch uses for a person.
-  const VEHICLE_COLOR = "rgba(255, 190, 90, 0.95)";
-  const FACE_COLOR = "rgba(190, 235, 255, 0.9)";
-  const HAND_COLOR = "rgba(255, 225, 150, 0.95)";
-
   // How far the drawn pose travels towards the latest reading each animation
   // frame. Detection runs a few times a second and the screen redraws sixty;
   // easing between the two is what turns a row of stills into movement.
   const EASE = 0.28;
 
-  // Everything drawn over the camera is sized from the width it is drawn at, so
-  // the rig reads the same on a phone and on a wide display.
   function boneWidth(width) {
-    return Math.max(2, Math.round(width / 150));
+    return overlay.boneWidth(width);
   }
 
-  // The video is painted with object-fit: cover — scaled up until it fills the
-  // box, with the overflow cropped off either the sides or the top and bottom.
-  // Keypoints are in the camera frame's own coordinates, so they need the same
-  // treatment; mapped straight onto the element they drift off the body by
-  // however much was cropped. It shows up the moment the camera's shape stops
-  // matching the box's, which on a phone is always: the rear camera hands back
-  // 16:9 or 4:3 into whatever the layout gives it.
   function coveredFrame(width, height) {
-    const sourceWidth = monitorVideo.videoWidth || width;
-    const sourceHeight = monitorVideo.videoHeight || height;
-    const scale = Math.max(width / sourceWidth, height / sourceHeight);
-    const drawnWidth = sourceWidth * scale;
-    const drawnHeight = sourceHeight * scale;
-
-    return {
-      left: (width - drawnWidth) / 2,
-      top: (height - drawnHeight) / 2,
-      width: drawnWidth,
-      height: drawnHeight,
-    };
+    return overlay.coveredFrame(
+      width,
+      height,
+      monitorVideo.videoWidth,
+      monitorVideo.videoHeight,
+    );
   }
 
   const sampleCanvas = document.createElement("canvas");
@@ -557,105 +550,85 @@
   let cloudSyncRequested = false;
   let lastTrackingErrorCode = null;
   let faceEnrollmentWasScanning = false;
-  const attendanceEntriesForSession = new Map();
-  const attendanceMatchVotesForSession = new Map();
-  const enrolledWorkerNamesForSession = new Map();
-  let attendanceSessionVersion = 0;
+  let manualAttendanceFormOpen = false;
+  const attendanceRecorder = captureAttendanceApi.createAttendanceRecorder({
+    cloud,
+    requiredMatchVotes: REQUIRED_ATTENDANCE_MATCH_VOTES,
+    getLocation: () => addressField.value,
+    onSaved(personLabel, evidence = {}) {
+      setMonitorStatus(
+        evidence.source === "manual"
+          ? `${personLabel} attendance added manually.`
+          : `${personLabel} attendance recorded.`,
+        "success",
+      );
+      telemetry?.event("attendance.saved", {
+        source: evidence.source || "face-match",
+        reviewStatus: evidence.reviewStatus || "clear",
+        status: "success",
+      });
+    },
+    onSaveFailed(personLabel, error, evidence = {}) {
+      setMonitorStatus(
+        evidence.source === "manual"
+          ? `${personLabel} manual attendance could not sync yet. Try adding it again in a moment.`
+          : `${personLabel} matched, but attendance could not sync yet. It will retry while they remain in view.`,
+        "error",
+      );
+      telemetry?.event(
+        "attendance.save.failed",
+        {
+          errorCode: telemetry?.safeErrorCode(error, "attendance_save_failed"),
+          status: "failed",
+        },
+        { immediate: true },
+      );
+    },
+  });
+  const attendanceEntriesForSession = {
+    values: () => attendanceRecorder.getEntries().values(),
+  };
 
   function createAttendanceEventId() {
-    if (typeof window.crypto?.randomUUID === "function") {
-      return window.crypto.randomUUID().replace(/-/g, "");
-    }
-    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`;
+    return captureAttendanceApi.createAttendanceEventId();
   }
 
   function attendanceDateKey(date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
+    return captureAttendanceApi.attendanceDateKey(date);
   }
 
   function saveMatchedAttendance(enrollment) {
-    const workerId = String(enrollment?.workerId || "").trim().toUpperCase();
-    const personLabel = String(enrollment?.personLabel || workerId).trim();
-    if (!cloud?.saveAttendance || !workerId || !personLabel) {
-      return;
-    }
+    attendanceRecorder.saveMatched(enrollment);
+  }
 
-    const now = Date.now();
-    const previous = attendanceEntriesForSession.get(workerId);
-    if (
-      previous?.status === "pending" ||
-      previous?.status === "saved" ||
-      (previous?.retryAt || 0) > now
-    ) {
-      return;
-    }
+  function saveManualAttendance(enrollment) {
+    return attendanceRecorder.saveManual(enrollment);
+  }
 
-    const eventId = previous?.eventId || createAttendanceEventId();
-    const sessionVersion = attendanceSessionVersion;
-    attendanceEntriesForSession.set(workerId, { eventId, status: "pending", retryAt: 0 });
-    const checkedInAt = new Date();
-    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || null;
-
-    cloud
-      .saveAttendance({
-        eventId,
-        workerId,
-        displayName: personLabel,
-        checkedInAtMs: checkedInAt.getTime(),
-        dateKey: attendanceDateKey(checkedInAt),
-        timeZone,
-        location: addressField.value,
-      })
-      .then(() => {
-        if (sessionVersion !== attendanceSessionVersion) return;
-        attendanceEntriesForSession.set(workerId, { eventId, status: "saved", retryAt: 0 });
-        setMonitorStatus(`${personLabel} attendance recorded.`, "success");
-        telemetry?.event("attendance.saved", { status: "success" });
-      })
-      .catch((error) => {
-        if (sessionVersion !== attendanceSessionVersion) return;
-        attendanceEntriesForSession.set(workerId, {
-          eventId,
-          status: "retrying",
-          retryAt: Date.now() + 10_000,
-        });
-        setMonitorStatus(
-          `${personLabel} matched, but attendance could not sync yet. It will retry while they remain in view.`,
-          "error",
-        );
-        telemetry?.event(
-          "attendance.save.failed",
-          {
-            errorCode: telemetry?.safeErrorCode(error, "attendance_save_failed"),
-            status: "failed",
-          },
-          { immediate: true },
-        );
-      });
+  function populateManualAttendanceOptions() {
+    if (!manualAttendanceWorker) return;
+    const selectedWorkerId = manualAttendanceWorker.value;
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "Choose your name";
+    const enrollments = attendanceRecorder.getEnrollments();
+    const options = enrollments.map((enrollment) => {
+      const option = document.createElement("option");
+      option.value = enrollment.workerId;
+      option.textContent = `${enrollment.personLabel} · ${enrollment.workerId}`;
+      return option;
+    });
+    manualAttendanceWorker.replaceChildren(placeholder, ...options);
+    manualAttendanceWorker.value = enrollments.some(
+      (enrollment) => enrollment.workerId === selectedWorkerId,
+    )
+      ? selectedWorkerId
+      : "";
+    if (manualAttendanceOpen) manualAttendanceOpen.disabled = enrollments.length === 0;
   }
 
   function saveVisibleAttendance(bodies = []) {
-    const seenWorkers = new Set();
-    (bodies || []).forEach((body) => {
-      const workerId = String(body?.workerId || "").trim().toUpperCase();
-      if (!workerId || !body?.faceMatched || seenWorkers.has(workerId)) return;
-      seenWorkers.add(workerId);
-
-      const entry = attendanceEntriesForSession.get(workerId);
-      if (entry?.status === "pending" || entry?.status === "saved") return;
-
-      const votes = (attendanceMatchVotesForSession.get(workerId) || 0) + 1;
-      attendanceMatchVotesForSession.set(workerId, votes);
-      if (votes < REQUIRED_ATTENDANCE_MATCH_VOTES) return;
-
-      saveMatchedAttendance({
-        workerId,
-        personLabel: enrolledWorkerNamesForSession.get(workerId) || workerId,
-      });
-    });
+    attendanceRecorder.saveVisible(bodies);
   }
 
   function setMonitorStatus(message, state = "idle") {
@@ -1138,67 +1111,11 @@
     }
   }
 
-  // Full sensor resolution for the photo itself — the 128x96 frame is only ever
-  // used to decide when to take one.
   function drawPersonMarker(context, state, frame, width, options = {}) {
-    if (!state?.box) {
-      return;
-    }
-
-    const box = state.box;
-    const left = frame.left + Math.max(0, Math.min(1, box.x)) * frame.width;
-    const top = frame.top + Math.max(0, Math.min(1, box.y)) * frame.height;
-    const right =
-      frame.left + Math.max(0, Math.min(1, box.x + box.width)) * frame.width;
-    const bottom =
-      frame.top + Math.max(0, Math.min(1, box.y + box.height)) * frame.height;
-    const boxWidth = Math.max(0, right - left);
-    const boxHeight = Math.max(0, bottom - top);
-    if (boxWidth === 0 || boxHeight === 0) {
-      return;
-    }
-
-    const stroke = Math.max(
-      options.saved ? 3 : 1,
-      boneWidth(width) * (options.saved ? 0.85 : 0.6),
-    );
-    const inset = stroke / 2;
-    context.save();
-    context.strokeStyle = options.saved ? LIMB_COLOR : "rgba(255, 255, 255, 0.55)";
-    context.lineWidth = stroke;
-    context.setLineDash(options.saved ? [] : [5, 5]);
-    context.strokeRect(
-      left + inset,
-      top + inset,
-      Math.max(0, boxWidth - stroke),
-      Math.max(0, boxHeight - stroke),
-    );
-    context.restore();
-
-    const label =
-      state.workerId ||
-      state.personLabel ||
-      (Number.isInteger(state.personId) ? "TRACKING WORKER" : "");
-    if (!label) {
-      return;
-    }
-
-    const fontSize = Math.max(options.saved ? 18 : 10, Math.round(width / 42));
-    const text = label.toUpperCase();
-    context.save();
-    context.font = `600 ${fontSize}px ui-monospace, SFMono-Regular, monospace`;
-    const chipWidth = Math.min(boxWidth, context.measureText(text).width + fontSize);
-    const chipHeight = Math.round(fontSize * 1.5);
-    const chipTop = top < chipHeight + 2 ? top + stroke : top - chipHeight;
-    context.fillStyle = LIMB_COLOR;
-    context.fillRect(left, chipTop, chipWidth, chipHeight);
-    context.fillStyle = "#062016";
-    context.textBaseline = "middle";
-    context.fillText(text, left + fontSize / 2, chipTop + chipHeight / 2 + 0.5);
-    context.restore();
+    overlay.drawPersonMarker(context, state, frame, width, options);
   }
 
-  function captureImage(reading = {}) {
+    function captureImage(reading = {}) {
     return new Promise((resolve, reject) => {
       if (!monitorVideo.videoWidth || !monitorVideo.videoHeight) {
         reject(new Error("The camera has no frame yet."));
@@ -1239,284 +1156,16 @@
     });
   }
 
-  // Corner brackets rather than a full box, deliberately unlike the rig: a
-  // vehicle is something the watch has recognised and set aside, not something
-  // it is waiting on. Brackets mark the same extent with a quarter of the ink,
-  // and they do not read as a second body outline over a busy site.
-  function drawVehicle(context, box, frame, width) {
-    const left = frame.left + box.x * frame.width;
-    const top = frame.top + box.y * frame.height;
-    const boxWidth = box.width * frame.width;
-    const boxHeight = box.height * frame.height;
-    const right = left + boxWidth;
-    const bottom = top + boxHeight;
-
-    // Lighter than a bone, so the marker sits behind the person in front of it.
-    const stroke = Math.max(1.5, boneWidth(width) * 0.8);
-    const arm = Math.max(8, Math.min(boxWidth, boxHeight) * 0.22);
-
-    context.save();
-    context.strokeStyle = VEHICLE_COLOR;
-    context.lineWidth = stroke;
-    context.lineCap = "round";
-    context.lineJoin = "round";
-
-    context.beginPath();
-    [
-      [left, top, 1, 1],
-      [right, top, -1, 1],
-      [left, bottom, 1, -1],
-      [right, bottom, -1, -1],
-    ].forEach(([x, y, dx, dy]) => {
-      context.moveTo(x + dx * arm, y);
-      context.lineTo(x, y);
-      context.lineTo(x, y + dy * arm);
-    });
-    context.stroke();
-
-    const label = "VEHICLE";
-    const fontSize = Math.max(10, Math.round(width / 48));
-    context.font = `600 ${fontSize}px ui-monospace, SFMono-Regular, monospace`;
-    const padding = Math.round(fontSize * 0.6);
-    const chipWidth = context.measureText(label).width + padding * 2;
-    const chipHeight = Math.round(fontSize * 1.6);
-    const gap = Math.round(stroke) + 3;
-
-    // Kept inside the picture: a marker at the edge of frame must not push its
-    // own label off the screen.
-    const chipLeft = Math.min(
-      Math.max(left, frame.left),
-      frame.left + frame.width - chipWidth,
-    );
-    const chipTop = top - chipHeight - gap < frame.top ? top + gap : top - chipHeight - gap;
-
-    context.fillStyle = "rgba(10, 14, 8, 0.72)";
-    if (typeof context.roundRect === "function") {
-      context.beginPath();
-      context.roundRect(chipLeft, chipTop, chipWidth, chipHeight, chipHeight / 2);
-      context.fill();
-    } else {
-      context.fillRect(chipLeft, chipTop, chipWidth, chipHeight);
-    }
-
-    context.fillStyle = VEHICLE_COLOR;
-    context.textBaseline = "middle";
-    context.fillText(label, chipLeft + padding, chipTop + chipHeight / 2 + 0.5);
-    context.restore();
-  }
-
-  // Brows, eyes, nose, lips and jaw, traced as lines. The model reports 478
-  // points, and all 478 drawn at a size that fits on a phone is a grey smudge;
-  // the outlines are what read as a face.
-  function drawFace(context, face, frame, stroke) {
-    context.save();
-    context.strokeStyle = FACE_COLOR;
-    context.lineWidth = Math.max(1, stroke * 0.55);
-    context.lineJoin = "round";
-    context.lineCap = "round";
-
-    context.beginPath();
-    Object.values(face).forEach((edges) => {
-      (edges || []).forEach(([from, to]) => {
-        context.moveTo(frame.left + from.x * frame.width, frame.top + from.y * frame.height);
-        context.lineTo(frame.left + to.x * frame.width, frame.top + to.y * frame.height);
-      });
-    });
-    context.stroke();
-
-    context.restore();
-  }
-
-  // Both hands, twenty-one points each: wrist, then four joints along every
-  // finger. The pose model reports a wrist and nothing past it.
-  function drawHands(context, hands, frame, stroke) {
-    if (!hands || hands.length === 0) {
-      return;
-    }
-
-    const at = (point) => [
-      frame.left + point.x * frame.width,
-      frame.top + point.y * frame.height,
-    ];
-
-    context.save();
-    context.strokeStyle = HAND_COLOR;
-    context.fillStyle = HAND_COLOR;
-    context.lineWidth = Math.max(1, stroke * 0.7);
-    context.lineCap = "round";
-    context.lineJoin = "round";
-
-    hands.forEach((hand) => {
-      context.beginPath();
-      hand.segments.forEach(([from, to]) => {
-        const start = at(from);
-        const end = at(to);
-
-        context.moveTo(start[0], start[1]);
-        context.lineTo(end[0], end[1]);
-      });
-      context.stroke();
-
-      // Fingertips and knuckles, small enough not to swamp a hand held close.
-      hand.points.forEach((point) => {
-        const [x, y] = at(point);
-
-        context.beginPath();
-        context.arc(x, y, Math.max(1, stroke * 0.5), 0, Math.PI * 2);
-        context.fill();
-      });
-    });
-
-    context.restore();
-  }
-
   function drawOverlay(state) {
-    if (!poseOverlay) {
-      return;
-    }
-
-    const width = poseOverlay.clientWidth;
-    const height = poseOverlay.clientHeight;
-
-    if (width === 0 || height === 0) {
-      return;
-    }
-    if (poseOverlay.width !== width || poseOverlay.height !== height) {
-      poseOverlay.width = width;
-      poseOverlay.height = height;
-    }
-
-    const context = poseOverlay.getContext("2d");
-    context.clearRect(0, 0, width, height);
-
-    // Vehicles are drawn whether or not anyone is with them, and are drawn
-    // first so a person standing in front of one keeps the foreground.
-    const frame = coveredFrame(width, height);
-
-    if (state.vehicle?.present && state.vehicle.box) {
-      drawVehicle(context, state.vehicle.box, frame, width);
-    }
-
-    if (!state.present) {
-      return;
-    }
-
-    // Everyone the model found. A detector that reports only the one person —
-    // the built-in one — is drawn from the flat fields it does fill in.
-    const bodies = state.bodies?.length
-      ? state.bodies
-      : state.keypoints
-        ? [state]
-        : [];
-
-    bodies.forEach((body) => drawBody(context, body, frame, width));
+    overlay.drawOverlay(
+      poseOverlay,
+      state,
+      monitorVideo.videoWidth,
+      monitorVideo.videoHeight,
+    );
   }
 
-  // One person: their bones, their box, their face, their hands.
-  function drawBody(context, state, frame, width) {
-    const points = state.keypoints;
-
-    if (!points) {
-      return;
-    }
-
-    const at = (point) =>
-      point ? [frame.left + point.x * frame.width, frame.top + point.y * frame.height] : null;
-    // Bones scale with the frame they are drawn on: a stroke set for a card the
-    // width of a phone thins out to a scratch on a larger display.
-    const stroke = boneWidth(width);
-
-    // Each chain is drawn between whichever of its joints were found, so an arm
-    // the silhouette swallowed simply leaves that limb undrawn instead of
-    // pulling a bone across the body to a joint that is not there.
-    const chains = [
-      [SPINE_COLOR, [points.neck, points.torso]],
-      [SPINE_COLOR, [points.shoulderLeft, points.neck, points.shoulderRight]],
-      [SPINE_COLOR, [points.hipLeft, points.torso, points.hipRight]],
-      [LIMB_COLOR, [points.shoulderLeft, points.elbowLeft, points.wristLeft]],
-      [LIMB_COLOR, [points.shoulderRight, points.elbowRight, points.wristRight]],
-      [LIMB_COLOR, [points.hipLeft, points.kneeLeft, points.ankleLeft]],
-      [LIMB_COLOR, [points.hipRight, points.kneeRight, points.ankleRight]],
-    ];
-
-    context.lineWidth = stroke;
-    context.lineCap = "round";
-    context.lineJoin = "round";
-
-    if (state.box) {
-      drawPersonMarker(context, state, frame, width);
-    }
-
-    chains.forEach(([color, joints]) => {
-      context.strokeStyle = color;
-
-      joints.forEach((joint, index) => {
-        const start = at(joints[index - 1]);
-        const end = at(joint);
-
-        if (index === 0 || !start || !end) {
-          return;
-        }
-
-        context.beginPath();
-        context.moveTo(start[0], start[1]);
-        context.lineTo(end[0], end[1]);
-        context.stroke();
-      });
-    });
-
-    // The head reads as a head rather than another joint. Its keypoint is the
-    // crown, so the circle is sized and centred off the run down to the neck —
-    // the bounding box is no use here, since outstretched arms widen it without
-    // making the head any bigger.
-    if (state.face) {
-      drawFace(context, state.face, frame, stroke);
-    }
-
-    drawHands(context, state.hands, frame, stroke);
-
-    const head = at(points.head);
-    const neck = at(points.neck);
-
-    // The circle stands in for a head only while the face model has nothing to
-    // say; drawing both puts a ring around a face that is already drawn.
-    if (head && neck && !state.face) {
-      const reach = Math.hypot(neck[0] - head[0], neck[1] - head[1]);
-      const radius = Math.max(4, reach * 0.42);
-      const centerX = head[0] + (neck[0] - head[0]) * 0.42;
-      const centerY = head[1] + (neck[1] - head[1]) * 0.42;
-
-      context.strokeStyle = SPINE_COLOR;
-      context.lineWidth = stroke;
-      context.beginPath();
-      context.arc(centerX, centerY, radius, 0, Math.PI * 2);
-      context.stroke();
-
-      // The neck runs from the edge of the head, not from its middle.
-      const span = Math.hypot(neck[0] - centerX, neck[1] - centerY) || 1;
-      context.beginPath();
-      context.moveTo(
-        centerX + ((neck[0] - centerX) / span) * radius,
-        centerY + ((neck[1] - centerY) / span) * radius,
-      );
-      context.lineTo(neck[0], neck[1]);
-      context.stroke();
-    }
-
-    context.fillStyle = LIMB_COLOR;
-    Object.entries(points).forEach(([joint, point]) => {
-      const position = at(point);
-      if (!position || joint === "head") {
-        return;
-      }
-
-      context.beginPath();
-      context.arc(position[0], position[1], stroke * 1.4, 0, Math.PI * 2);
-      context.fill();
-    });
-  }
-
-  // Detection publishes a target; the paint loop below walks the drawn pose
+    // Detection publishes a target; the paint loop below walks the drawn pose
   // towards it. Drawing straight from here would show the overlay stepping four
   // times a second, which is what it did.
   function renderFaceEnrollment(state) {
@@ -1531,6 +1180,13 @@
     const scanning = Boolean(
       state.running && enrollment?.required && !state.activityStarted && !awaitingChoice,
     );
+    if (!scanning) manualAttendanceFormOpen = false;
+    const showingManualForm = Boolean(scanning && manualAttendanceFormOpen);
+    const manualCheckIn = Boolean(awaitingChoice && enrollment?.source === "manual");
+    // Attendance owns the screen until the operator either skips it or starts
+    // work. CSS removes every non-attendance surface from the render tree while
+    // leaving these nodes mounted so the camera and recognition loop continue.
+    document.body.dataset.takingAttendance = String(scanning || awaitingChoice);
     const total = Math.max(
       1,
       Number(enrollment?.total) || Number(facialRecognition?.DEFAULTS?.enrollmentSamples) || 2,
@@ -1564,19 +1220,33 @@
         ? matchDistance
         : Number.NaN;
     if (faceEnrollmentKicker) {
-      faceEnrollmentKicker.textContent = awaitingChoice ? "Attendance confirmed" : "Worker check-in";
+      faceEnrollmentKicker.textContent = manualCheckIn
+        ? "Manual attendance"
+        : awaitingChoice
+          ? "Attendance confirmed"
+          : showingManualForm
+            ? "Manual attendance"
+            : "Worker check-in";
     }
     if (faceEnrollmentTitle) {
-      faceEnrollmentTitle.textContent = awaitingChoice
-        ? "Attendance recorded"
+      faceEnrollmentTitle.textContent = manualCheckIn
+        ? "Attendance added"
+        : awaitingChoice
+          ? "Attendance recorded"
+          : showingManualForm
+            ? "Choose your profile"
         : enrollment?.status === "unavailable"
           ? "Attendance taking unavailable"
           : "Attendance taking";
     }
     if (faceEnrollmentMessage) {
-      faceEnrollmentMessage.textContent = awaitingChoice
+      faceEnrollmentMessage.textContent = manualCheckIn
         ? `${enrollment?.personLabel || "Worker"} is checked in. Take another attendance, or record work when everyone is ready.`
-        : instruction;
+        : awaitingChoice
+          ? `${enrollment?.personLabel || "Worker"} is checked in. Take another attendance, or record work when everyone is ready.`
+          : showingManualForm
+            ? "Choose your enrolled worker profile."
+            : instruction;
     }
     if (faceEnrollmentMatch) {
       faceEnrollmentMatch.hidden = !awaitingChoice;
@@ -1585,29 +1255,45 @@
       faceEnrollmentWorkerId.textContent = awaitingChoice ? enrollment?.workerId || "" : "";
     }
     if (faceEnrollmentActions) faceEnrollmentActions.hidden = !awaitingChoice;
-    if (faceEnrollmentSkip) faceEnrollmentSkip.hidden = awaitingChoice;
+    if (manualAttendanceForm) manualAttendanceForm.hidden = !showingManualForm;
+    if (manualAttendanceOpen) manualAttendanceOpen.hidden = awaitingChoice || showingManualForm;
+    if (faceEnrollmentSkip) faceEnrollmentSkip.hidden = awaitingChoice || showingManualForm;
+    faceEnrollment.dataset.manual = String(showingManualForm);
     faceEnrollment.dataset.status = awaitingChoice ? "complete" : enrollment?.status || "no_face";
     faceEnrollment.hidden = !(scanning || awaitingChoice);
 
     if (completedNow) {
-      telemetry?.event(
-        "face.match.completed",
-        {
-          matchDistance: telemetryMatchDistance,
-          matchVotes: Number(enrollment?.matchVotes) || 0,
-          requiredVotes: Number(enrollment?.requiredVotes) || 0,
-          sampleCount: samples,
-          status: "success",
-        },
-        { immediate: true },
-      );
-      setMonitorStatus(
-        enrollment?.personLabel
-          ? `${enrollment.personLabel} (${enrollment.workerId}) matched — choose another attendance or record work.`
-          : "Attendance recorded — choose another attendance or record work.",
-        "success",
-      );
-      saveMatchedAttendance(enrollment);
+      if (manualCheckIn) {
+        telemetry?.event(
+          "attendance.manual.submitted",
+          { reviewStatus: "flagged", status: "success" },
+          { immediate: true },
+        );
+        setMonitorStatus(
+          `${enrollment.personLabel} (${enrollment.workerId}) added manually.`,
+          "success",
+        );
+        saveManualAttendance(enrollment);
+      } else {
+        telemetry?.event(
+          "face.match.completed",
+          {
+            matchDistance: telemetryMatchDistance,
+            matchVotes: Number(enrollment?.matchVotes) || 0,
+            requiredVotes: Number(enrollment?.requiredVotes) || 0,
+            sampleCount: samples,
+            status: "success",
+          },
+          { immediate: true },
+        );
+        setMonitorStatus(
+          enrollment?.personLabel
+            ? `${enrollment.personLabel} (${enrollment.workerId}) matched — choose another attendance or record work.`
+            : "Attendance recorded — choose another attendance or record work.",
+          "success",
+        );
+        saveMatchedAttendance(enrollment);
+      }
       faceEnrollmentAnother?.focus?.();
     } else if (skippedNow) {
       telemetry?.event("face.match.skipped", {}, { immediate: true });
@@ -2342,21 +2028,7 @@
   }
 
   function describeCameraError(error) {
-    if (environment().isSecureContext === false) {
-      return "The camera needs a secure page. Open this site over https:// (or on localhost).";
-    }
-
-    switch (error?.name) {
-      case "NotAllowedError":
-        return "Camera permission was denied — allow it in your browser's site settings and start again.";
-      case "NotFoundError":
-      case "OverconstrainedError":
-        return "No camera was found on this device.";
-      case "NotReadableError":
-        return "The camera is already in use by another app.";
-      default:
-        return error?.message || "The camera could not be started.";
-    }
+    return captureCamera.describeCameraError(error, environment());
   }
 
   // ---------------------------------------------------------------------------
@@ -2369,17 +2041,7 @@
   // The photograph is what the resolution is for, so both cameras are asked for
   // the same thing and whichever one is fitted answers with the best it has.
   function cameraRequest(facing = currentCameraFacing()) {
-    return {
-      video: cameraFacing
-        ? cameraFacing.videoConstraints(facing, { width: 1920, height: 1080, frameRate: 30 })
-        : {
-            facingMode: facing,
-            width: { ideal: 1920 },
-            height: { ideal: 1080 },
-            frameRate: { ideal: 30 },
-          },
-      audio: false,
-    };
+    return captureCamera.videoRequest(cameraFacing, facing);
   }
 
   function setCameraFacingLabel() {
@@ -2547,13 +2209,12 @@
   async function startMonitor() {
     if (monitorStarting || isRunning()) return;
     monitorStarting = true;
+    manualAttendanceFormOpen = false;
     setCameraLoader(true);
     try {
     const monitorStartedAt = performance.now();
-    attendanceSessionVersion += 1;
-    attendanceEntriesForSession.clear();
-    attendanceMatchVotesForSession.clear();
-    enrolledWorkerNamesForSession.clear();
+    attendanceRecorder.resetSession();
+    populateManualAttendanceOptions();
     if (!navigator.mediaDevices?.getUserMedia) {
       setMonitorStatus("This browser cannot open a live camera — choose a photo instead.", "error");
       telemetry?.event(
@@ -2590,8 +2251,9 @@
     enrolledWorkers.forEach((worker) => {
       const workerId = String(worker?.workerId || "").trim().toUpperCase();
       const displayName = String(worker?.displayName || workerId).trim();
-      if (workerId) enrolledWorkerNamesForSession.set(workerId, displayName || workerId);
+      if (workerId) attendanceRecorder.rememberEnrollment(workerId, displayName || workerId);
     });
+    populateManualAttendanceOptions();
 
     setMonitorStatus(`Starting the ${cameraFacing?.describe(currentCameraFacing()) || "camera"}…`);
     setCameraLoaderDetail("Waiting for camera permission and a secure video stream…");
@@ -2742,10 +2404,8 @@
     sampleTimer = null;
     window.clearTimeout(captureFlashTimer);
     captureFlashTimer = null;
-    attendanceSessionVersion += 1;
-    attendanceEntriesForSession.clear();
-    attendanceMatchVotesForSession.clear();
-    enrolledWorkerNamesForSession.clear();
+    attendanceRecorder.resetSession();
+    populateManualAttendanceOptions();
     captureFlash?.classList.remove("is-visible");
     window.cancelAnimationFrame(painter);
     painter = null;
@@ -2785,6 +2445,8 @@
     }
     if (faceEnrollmentActions) faceEnrollmentActions.hidden = true;
     faceEnrollmentWasScanning = false;
+    manualAttendanceFormOpen = false;
+    document.body.dataset.takingAttendance = "false";
     setToggleLabel(false);
     setMonitorStatus("Auto capture stopped. Your photos are still stored on this device.");
   }
@@ -2990,12 +2652,14 @@
   cameraFacingToggle?.addEventListener("click", switchCameraFacing);
 
   faceEnrollmentSkip?.addEventListener("click", () => {
+    manualAttendanceFormOpen = false;
     controller?.skipFaceEnrollment?.();
     enrollmentFaceScanner?.close?.();
     enrollmentFaceScanner = null;
   });
 
   faceEnrollmentAnother?.addEventListener("click", () => {
+    manualAttendanceFormOpen = false;
     const state = controller?.takeAnotherAttendance?.();
     if (!state || state.activityStarted || state.faceEnrollment?.status === "complete") return;
     setMonitorStatus("Ready for the next worker. Ask them to move close to the camera.");
@@ -3003,6 +2667,7 @@
   });
 
   faceEnrollmentRecord?.addEventListener("click", () => {
+    manualAttendanceFormOpen = false;
     const state = controller?.startWork?.();
     if (!state?.activityStarted) return;
     enrollmentFaceScanner?.close?.();
@@ -3014,6 +2679,44 @@
       ).length,
       status: "success",
     });
+  });
+
+  manualAttendanceOpen?.addEventListener("click", () => {
+    const state = controller?.getState?.();
+    if (!state?.running || state.activityStarted || state.faceEnrollment?.status === "complete") return;
+    if (attendanceRecorder.getEnrollments().length === 0) {
+      setMonitorStatus("No enrolled worker profiles are available for manual attendance.", "error");
+      return;
+    }
+    manualAttendanceFormOpen = true;
+    renderFaceEnrollment(state);
+    manualAttendanceWorker?.focus?.();
+  });
+
+  manualAttendanceCancel?.addEventListener("click", () => {
+    manualAttendanceFormOpen = false;
+    const state = controller?.getState?.();
+    if (state) renderFaceEnrollment(state);
+  });
+
+  manualAttendanceForm?.addEventListener("submit", (event) => {
+    event.preventDefault?.();
+    const workerId = String(manualAttendanceWorker?.value || "").trim().toUpperCase();
+    const enrollment = attendanceRecorder
+      .getEnrollments()
+      .find((candidate) => candidate.workerId === workerId);
+    if (!enrollment) {
+      if (faceEnrollmentMessage) faceEnrollmentMessage.textContent = "Choose your worker profile first.";
+      manualAttendanceWorker?.focus?.();
+      return;
+    }
+
+    manualAttendanceFormOpen = false;
+    const state = controller?.recordManualAttendance?.(enrollment);
+    if (state?.faceEnrollment?.source !== "manual") {
+      manualAttendanceFormOpen = true;
+      if (state) renderFaceEnrollment(state);
+    }
   });
 
   capturesSave?.addEventListener("click", saveCaptures);

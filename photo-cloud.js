@@ -46,6 +46,32 @@
     return `${slug}-${hashText(location)}`;
   }
 
+  // Reverse geocoders can move a fix from one house number to the next while
+  // still naming the same road. The dashboard therefore gives every recorded
+  // address a stable road-level parent. Keep Singapore-style names such as
+  // "Jalan Besar" intact, while trimming only an address number and a terminal
+  // road type: "32 Parbury Avenue" becomes "Parbury".
+  function streetNameForLocation(value) {
+    const location = normalizeLocation(value);
+    if (location === UNKNOWN_LOCATION) return UNKNOWN_LOCATION;
+
+    const withoutNumber = location
+      .replace(/^(?:(?:blk|block)\s+)?#?\d+[a-z]?(?:\s*[-/]\s*\d+[a-z]?)?\s+/i, "")
+      .trim();
+    const withoutRoadType = withoutNumber
+      .replace(
+        /\s+(?:avenue|ave|boulevard|blvd|circle|close|court|crescent|drive|dr|gardens?|grove|highway|hwy|lane|ln|link|loop|parkway|pkwy|place|plaza|quay|rise|road|rd|street|st|terrace|vale|view|walk|way)\.?$/i,
+        "",
+      )
+      .trim();
+
+    return withoutRoadType || withoutNumber || location;
+  }
+
+  function createStreetKey(value) {
+    return createLocationKey(streetNameForLocation(value));
+  }
+
   function sessionDefinitionFor(value) {
     const date = value instanceof Date ? value : new Date(value);
     const hour = Number.isNaN(date.getTime()) ? 0 : date.getHours();
@@ -301,9 +327,13 @@
 
     clusters.forEach((cluster) => {
       const aliases = [...cluster.aliases].sort((left, right) => left.localeCompare(right));
+      const addresses = [cluster.location, ...aliases];
+      const streetName = streetNameForLocation(cluster.location);
       const site = Object.freeze({
         location: cluster.location,
         locationKey: createLocationKey(cluster.location),
+        streetName,
+        streetKey: createStreetKey(streetName),
         // Where the site actually is, averaged over everything photographed
         // there. Anything that needs to ask the world about this place — the
         // weather, most of all — asks about this point.
@@ -311,6 +341,9 @@
           ? Object.freeze({ latitude: cluster.point.latitude, longitude: cluster.point.longitude })
           : null,
         aliases: Object.freeze(aliases),
+        // Every reverse-geocoded address remains available to the address step,
+        // even though the GPS cluster gives all of them one street parent.
+        addresses: Object.freeze(addresses),
         // The keys this site's older records were filed under, so a session
         // saved before the merge is still found.
         aliasKeys: Object.freeze(aliases.map((alias) => createLocationKey(alias))),
@@ -326,8 +359,11 @@
         sites.get(location) || {
           location,
           locationKey: createLocationKey(location),
+          streetName: streetNameForLocation(location),
+          streetKey: createStreetKey(location),
           point: null,
           aliases: [],
+          addresses: [location],
           aliasKeys: [],
         }
       );
@@ -496,6 +532,8 @@
     createSiteIndex,
     normalizeLocation,
     createLocationKey,
+    streetNameForLocation,
+    createStreetKey,
     createDateKey,
     createSessionKey,
     createPhotoMetadata,

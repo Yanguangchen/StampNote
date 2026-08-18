@@ -118,12 +118,12 @@ Captures first go to IndexedDB on the device. After Gemini reviews a batch, each
 
 Photo documents remain under `users/{uid}/photos/{photoId}`, worker templates live under `users/{uid}/workers/{workerId}`, and matched check-ins live under `attendanceDays/{date}/entries/{eventId}`. A recording session writes one attendance event per recognized worker: the opening worker is recorded after the three-view check, and additional enrolled workers are recorded after three unambiguous live face matches while capture continues. The same worker is never duplicated within one camera session. Firestore restricts photos and face templates to their signed-in owner; operational sessions and attendance remain available to authenticated team members. Owned templates in the legacy top-level `workers` collection remain readable during the transition, while another account's templates never enter matching. Anonymous visitors remain blocked. No public image URL exists: the authenticated dashboard turns Firestore bytes into a temporary in-browser image URL.
 
-Open **Photos & attendance** (`admin.html`) to browse photos alongside recent attendance grouped by location and then date. Open **Worker onboarding** (`onboarding.html`) to enroll, replace, or delete worker templates; the worker ID is issued from the typed name rather than entered by hand. **Worker photos** (`worker-photos.html`) is the field path that does not start the watch: take one photo or pick several, stamp a fresh GPS fix and the day's weather, run Gemini sanitization, then save locally and sync when signed in. **Metrics** (`metrics.html`) plots three independent daily series — attendance taken, flags raised, and sessions created — over the last 7 or 30 days. **Operations AI** (`ai-dashboard.html`) answers questions about those loaded records.
+Open **Photos & attendance** (`admin.html`) to browse photos alongside recent attendance grouped by street, recorded address, date, and time session. Open **Worker onboarding** (`onboarding.html`) to enroll, replace, or delete worker templates; the worker ID is issued from the typed name rather than entered by hand. **Worker photos** (`worker-photos.html`) is the field path that does not start the watch: take one photo or pick several, stamp a fresh GPS fix and the day's weather, run Gemini sanitization, then save locally and sync when signed in. **Metrics** (`metrics.html`) plots three independent daily series — attendance taken, flags raised, and sessions created — over the last 7 or 30 days. **Operations AI** (`ai-dashboard.html`) answers questions about those loaded records.
 
 The intended RPA truck-coordinate workflow matches the active session to the nearest truck by GPS
 proximity; it does not infer the session address from the truck coordinate. The conservative match,
 ambiguity, customer-language, and audit requirements are specified in
-[`LOCATION_MATCHING.md`](LOCATION_MATCHING.md). On the dashboard, selecting a location, date, and
+[`LOCATION_MATCHING.md`](LOCATION_MATCHING.md). On the dashboard, selecting a street, recorded address, date, and
 specific time session still supports manual truck placement. The dedicated Geographic Surveillence
 page at `coordinates.html` lists every GPS reading beside its date/time session, orders dates and sessions for direct
 comparison, and puts the truck X/Y inputs on the same session card. Stable `data-*` fields and a
@@ -157,9 +157,9 @@ The gallery picker on Recording is a native HTML file input, so the browser keep
 
 ## Operations AI
 
-Operations AI is a read-only assistant for the signed-in workspace. The browser loads sessions, attendance, weather, GPS/truck comparisons, and Metrics series from Firestore, selects up to 24 retrieved facts for the current question, and POSTs them to `/api/assistant` with a Firebase ID token. Gemini **3.1 Flash-Lite** may use only those facts. It cites them as `[S1]`…`[S24]`, must not invent workers, dates, counts, URLs, or causes, and must not change data. Verified links, coordinate maps, and Metrics graphs are rendered by the page from the loaded records, not from model-authored markup. Responses automatically and smoothly scroll into view as replies and media render, complemented by an auditory chime and a floating jump-to-bottom button when browsing chat history.
+Operations AI is a read-only assistant for the signed-in workspace. The browser loads sessions, attendance, weather, GPS/truck comparisons, and Metrics series from Firestore, selects up to 24 retrieved facts for the current question, and POSTs them to `/api/assistant` with a Firebase ID token. Gemini **3.6 Flash** may use only those facts. It cites them as `[S1]`…`[S24]`, must not invent workers, dates, counts, URLs, or causes, and must not change data. Verified links, coordinate maps, and Metrics graphs are rendered by the page from the loaded records, not from model-authored markup. Responses automatically and smoothly scroll into view as replies and media render, complemented by an auditory chime and a floating jump-to-bottom button when browsing chat history. The answer's **Listen** control sends only the answer text to the authenticated `/api/speech` endpoint, removes citation codes, and starts playing briskly paced **Gemini 3.1 Flash TTS Preview** audio with the Kore voice as chunks arrive; it does not wait for the full WAV or use the browser's default speech-synthesis voice.
 
-A local Live Server origin (`http://127.0.0.1:5500` or `http://localhost:5500`) is allowed to call the deployed assistant. Same-site requests use `/api/assistant` on the current host. The endpoint rejects missing or invalid auth, oversized bodies, extra fields, and cross-site POSTs.
+A local Live Server origin (`http://127.0.0.1:5500` or `http://localhost:5500`) is allowed to call the deployed assistant and speech endpoints. Same-site requests use `/api/assistant` and `/api/speech` on the current host. Both endpoints reject missing or invalid auth, oversized bodies, extra fields, and cross-site POSTs.
 
 ## Run locally
 
@@ -178,7 +178,7 @@ Start the dependency-light local server and open `http://127.0.0.1:8080`:
 npm start
 ```
 
-It serves the public files and the same four API handlers exposed on Vercel: `/api/triage`, `/api/assistant`, `/api/telemetry`, and `/api/health`. It deliberately refuses `.env.local`, package metadata, and internal API modules.
+It serves the public files and the same five API handlers exposed on Vercel: `/api/triage`, `/api/assistant`, `/api/speech`, `/api/telemetry`, and `/api/health`. It deliberately refuses `.env.local`, package metadata, and internal API modules.
 
 To use the Vercel development environment instead, first update the CLI—the currently installed 51.3.0 release is behind the current 58.11.0 release—then link and pull the project configuration:
 
@@ -218,7 +218,7 @@ The Firestore rules distinguish two signed-in classes. **Current users are all s
 
 Field staff use Recording and Worker photos. Superadmins also use Worker onboarding, Geographic Surveillence, Operations AI, Photos & attendance, and Metrics. Photos uploaded by field staff appear on the administrator dashboard. See the [Firebase CLI reference](https://firebase.google.com/docs/cli) and [Google provider configuration guide](https://firebase.google.com/docs/auth/configure-providers-cli) for the upstream command contract.
 
-Before exposing the app publicly, configure Google API quotas or billing alerts and add Vercel Firewall rate-limit rules for `POST /api/triage` and `POST /api/assistant`. Photo review still relies on same-site checks and request validation rather than Firebase identity, so the firewall remains the cost boundary for direct scripted triage traffic. Operations questions require a verified Firebase ID token in addition to those checks.
+Before exposing the app publicly, configure Google API quotas or billing alerts and add Vercel Firewall rate-limit rules for `POST /api/triage`, `POST /api/assistant`, and `POST /api/speech`. Photo review still relies on same-site checks and request validation rather than Firebase identity, so the firewall remains the cost boundary for direct scripted triage traffic. Operations questions and Gemini voice requests require a verified administrator Firebase ID token in addition to those checks.
 
 Using localhost is important because browsers restrict precise geolocation and camera access to secure contexts. MediaPipe remains committed under `vendor/`; the installed server dependencies provide the AI SDK, structured-output validation and local environment loading.
 
@@ -266,7 +266,7 @@ See [OBSERVABILITY.md](OBSERVABILITY.md) for the event catalog, production log c
 4. The street address fills in automatically where the browser allows it; otherwise type it in, and later captures pick it up.
 5. Photos are stamped and stored on the device as they are taken. Allow Gemini review; every eight scheduled photos are then reviewed automatically and all eight compact copies sync to Firestore. Upload failures stay queued locally.
 6. For a site photo without starting the watch, open Worker photos, take or pick images, then Send.
-7. Open Photos & attendance to browse photos by location and date, filter the recoverable AI review bin, and review attendance grouped by location and date beside the photos. Geographic Surveillence compares GPS readings with truck X/Y. Metrics shows the 7- or 30-day counts. Operations AI answers questions from the records already loaded for the signed-in account.
+7. Open Photos & attendance to browse photos by street, recorded address, date, and time session; filter the recoverable AI review bin; and review attendance beside the photos. Geographic Surveillence compares GPS readings with truck X/Y. Metrics shows the 7- or 30-day counts. Operations AI answers questions from the records already loaded for the signed-in account.
 
 ## Project files
 
@@ -291,6 +291,7 @@ See [OBSERVABILITY.md](OBSERVABILITY.md) for the event catalog, production log c
 - `api/triage.mjs` — Vercel Function exposing the server-only AI review endpoint
 - `api/_ai-assistant.mjs` — validates grounded operations questions, verifies the Firebase ID token, and calls Gemini through Google AI Studio
 - `api/assistant.mjs` — Vercel Function exposing the server-only Operations AI endpoint
+- `api/_ai-speech.mjs`, `api/speech.mjs` — authenticated Gemini TTS generation and its Vercel endpoint
 - `api/_observability.mjs` — correlation IDs, safe structured logs and response timing
 - `api/_telemetry.mjs`, `api/telemetry.mjs` — strict privacy-safe browser event intake
 - `api/_health.mjs`, `api/health.mjs` — deployment and Gemini configuration health check

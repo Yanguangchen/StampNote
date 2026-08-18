@@ -13,7 +13,8 @@ const weatherService = require("../weather-service.js");
 const root = resolve(__dirname, "..");
 const html = readFileSync(resolve(root, "coordinates.html"), "utf8");
 const css = readFileSync(resolve(root, "coordinates.css"), "utf8");
-const source = readFileSync(resolve(root, "coordinates.js"), "utf8");
+const workspacePath = resolve(root, "src/components/coordinates-workspace.js");
+const source = readFileSync(workspacePath, "utf8");
 const server = readFileSync(resolve(root, "server.js"), "utf8");
 
 function photo(id, capturedAt, gpsLocation, location = "10 Marina Bay") {
@@ -87,6 +88,27 @@ class FakeElement {
   setAttribute(name, value) {
     this.attributes.set(name, String(value));
   }
+
+  querySelector(selector) {
+    const className = selector.startsWith(".") ? selector.slice(1) : "";
+    const visit = (node) => {
+      if (className && String(node.className || "").split(" ").includes(className)) {
+        return node;
+      }
+      for (const child of node.children || []) {
+        const match = visit(child);
+        if (match) return match;
+      }
+      return null;
+    };
+    return visit(this);
+  }
+
+  click() {
+    return this.dispatch("click");
+  }
+
+  scrollIntoView() {}
 }
 
 function descendants(element) {
@@ -220,21 +242,30 @@ function createPageHarness(pagePhotos, savedSessions = [], options = {}) {
   const context = {
     console,
     document,
+    location: { search: options.search || "" },
+    matchMedia() {
+      return { matches: true };
+    },
+    navigator: { onLine: true },
+    performance: { now: () => 1 },
     setTimeout(callback) {
       callback();
+      return 1;
     },
+    clearTimeout() {},
     requestAnimationFrame(callback) {
       callback();
       return 1;
     },
     StampNoteCloudData: data,
+    StampNoteCoordinates: coordinates,
     StampNoteFirebase: options.cloud === false ? null : cloud,
     StampNoteWeather: weatherService,
     StampNoteObservability: { configure() {} },
   };
   if (options.leaflet !== false) context.L = leaflet;
   vm.createContext(context);
-  vm.runInContext(source, context, { filename: resolve(root, "coordinates.js") });
+  vm.runInContext(source, context, { filename: workspacePath });
   return {
     auth(user, error = null) {
       authCallback(user, error);
@@ -392,7 +423,11 @@ test("the page renders every reading beside one session form and saves that sess
   await settle();
 
   const list = harness.elements["coordinate-session-list"];
-  assert.equal(list.children.length, 1);
+  assert.equal(
+    list.children.length,
+    1,
+    harness.elements["coordinate-status"].textContent || "no status",
+  );
   const card = list.children[0];
   assert.equal(card.dataset.dateKey, "2026-08-14");
   assert.equal(card.dataset.sessionId, "afternoon");

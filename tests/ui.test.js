@@ -10,6 +10,17 @@ const manifest = JSON.parse(readFileSync(resolve(projectRoot, "manifest.json"), 
 const addressService = require(resolve(projectRoot, "address-service.js"));
 const stamp = require(resolve(projectRoot, "stamp.js"));
 
+function captureSource() {
+  return [
+    "src/components/pose-overlay.js",
+    "src/services/capture-attendance.js",
+    "src/capture/camera-controller.js",
+    "app.js",
+  ]
+    .map((file) => readFileSync(resolve(projectRoot, file), "utf8"))
+    .join("\n");
+}
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -51,7 +62,7 @@ test("page has the required HTML foundation", () => {
 });
 
 test("the installable app launches in fullscreen with complete PWA icons", () => {
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
 
   assert.match(html, /<link\s+rel=["']manifest["']\s+href=["']manifest\.json["']/i);
   assert.match(html, /<meta\s+name=["']apple-mobile-web-app-capable["']\s+content=["']yes["']/i);
@@ -98,21 +109,34 @@ test("face enrollment visibly pauses the activity and explains how to complete i
   assert.match(html, /id="face-enrollment-worker-id"/);
   assert.match(html, /id="face-enrollment-another"[\s\S]*?Take another attendance/);
   assert.match(html, /id="face-enrollment-record"[\s\S]*?Record work/);
+  assert.match(html, /id="manual-attendance-open"[\s\S]*?Add attendance manually/);
+  assert.match(tagWithId("form", "manual-attendance-form"), /hidden/);
+  assert.match(tagWithId("select", "manual-attendance-worker"), /required/);
+  assert.doesNotMatch(html, /Manual attendance is marked as Needs review/);
+  assert.doesNotMatch(html, /id="face-enrollment-review"/);
   assert.match(tagWithId("div", "face-enrollment-actions"), /hidden/);
   assert.match(css, /\.face-enrollment\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*0/);
   assert.match(css, /\.face-enrollment\[data-status="complete"\][^{]*\{[^}]*background:/);
   assert.match(css, /\.face-enrollment-match strong\s*\{[^}]*font-size:\s*clamp/);
   assert.match(css, /\.face-scan-frame\s*\{[^}]*border-radius:/);
+  assert.match(css, /body\[data-taking-attendance="true"\] > :not\(\.stage\)/);
+  assert.match(
+    css,
+    /body\[data-taking-attendance="true"\] \.stage > :not\(\.monitor\):not\(\.face-enrollment\)/,
+  );
+  assert.match(css, /body\[data-taking-attendance="true"\] \.monitor-overlay/);
 
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
   const controller = readFileSync(resolve(projectRoot, "auto-capture.js"), "utf8");
   assert.match(app, /faceEnrollmentSkip\?\.addEventListener\("click"/);
   assert.match(app, /faceEnrollmentAnother\?\.addEventListener\("click"/);
   assert.match(app, /faceEnrollmentRecord\?\.addEventListener\("click"/);
+  assert.match(app, /manualAttendanceForm\?\.addEventListener\("submit"/);
   assert.match(app, /model\s*\?\s*facialRecognition\?\.createFaceIdentity/);
   assert.match(controller, /if \(!state\.activityStarted\)/);
   assert.match(controller, /skipFaceEnrollment\(\)/);
   assert.match(controller, /takeAnotherAttendance\(\)/);
+  assert.match(controller, /recordManualAttendance\(enrollment\)/);
   assert.match(controller, /startWork\(\)/);
 });
 
@@ -177,7 +201,7 @@ test("which lens the device watches through is a control, not an assumption", ()
   assert.ok(hasAttribute(toggle, "aria-label", "Back camera in use. Switch to the front camera."));
   assert.ok(hasAttribute(toggle, "data-facing", "environment"));
 
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
   // Asked for rather than demanded: an exact constraint fails outright on a
   // device with one camera, which would trade a working lens for none at all.
   assert.equal(/facingMode:\s*"environment"/.test(app), false);
@@ -256,7 +280,7 @@ test("capture choices stay labelled while secondary names appear on request", ()
   NAMED_CONTROLS.forEach(([tagName, attribute, id]) => {
     assert.equal(/\btitle=/.test(controlMarkup(tagName, attribute, id)[0]), false);
   });
-  assert.equal(/monitorToggle\.title/.test(readFileSync(resolve(projectRoot, "app.js"), "utf8")), false);
+  assert.equal(/monitorToggle\.title/.test(captureSource()), false);
 
   // Above the control, out of the way of the finger or cursor on it.
   assert.match(css, /\.hint\s*\{[^}]*position:\s*absolute/);
@@ -298,12 +322,12 @@ test("the automatically resolved location address is immutable", () => {
   // Removed controls leave nothing behind for the script to bind to.
   assert.equal(/id=["']locate-button["']/.test(html), false);
   assert.equal(/id=["']save-button["']/.test(html), false);
-  assert.equal(/getElementById|#locate-button|#save-button/.test(readFileSync(resolve(projectRoot, "app.js"), "utf8")), false);
+  assert.equal(/getElementById|#locate-button|#save-button/.test(captureSource()), false);
 });
 
 test("vehicle coordinates cannot be entered on the capture screen", () => {
   assert.equal(/id=["']vehicle-coordinate-[xy]["']/.test(html), false);
-  assert.equal(/getVehicleCoordinates|updateVehicleCoordinates/.test(readFileSync(resolve(projectRoot, "app.js"), "utf8")), false);
+  assert.equal(/getVehicleCoordinates|updateVehicleCoordinates/.test(captureSource()), false);
 });
 
 test("geolocation helper resolves coordinates and accuracy", async () => {
@@ -435,7 +459,7 @@ test("permission state is only trusted when the browser reports one", async () =
 });
 
 test("the stamped file saves itself, once per upload", () => {
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
 
   // Debounced so typing an address does not save a file per keystroke.
   assert.match(app, /autoSaveTimer = window\.setTimeout\(autoSave, AUTO_SAVE_DELAY\)/);
@@ -448,7 +472,7 @@ test("the stamped file saves itself, once per upload", () => {
 });
 
 test("location is attempted once per upload and never when already refused", () => {
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
 
   assert.match(app, /if \(firstRun\) \{\s*autoLocate\(\);/);
   assert.match(app, /getPermissionState\(navigator\.permissions\)\) === "denied"/);
@@ -552,7 +576,7 @@ test("CSS includes keyboard focus, mobile layout, and reduced motion support", (
 
 test("a saved hands-up photo produces an apparent shutter confirmation", () => {
   const flash = tagWithId("div", "capture-flash");
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
 
   assert.ok(hasAttribute(flash, "aria-hidden", "true"));
   assert.match(html, /class=["']capture-flash-confirmation["'][\s\S]*Photo taken/);
@@ -677,13 +701,19 @@ test("auto capture loads its own scripts, ahead of the app that wires them", () 
     (match) => match[1].split("?")[0],
   );
 
-  ["pose-detector.js", "capture-scheduler.js", "photo-store.js", "auto-capture.js"].forEach(
-    (file) => {
-      assert.ok(order.includes(file), `Expected ${file} to be loaded`);
-      assert.ok(order.indexOf(file) < order.indexOf("app.js"), `${file} must precede app.js`);
-      assert.ok(existsSync(resolve(projectRoot, file)));
-    },
-  );
+  [
+    "src/vision/pose-detector.js",
+    "capture-scheduler.js",
+    "photo-store.js",
+    "auto-capture.js",
+    "src/components/pose-overlay.js",
+    "src/services/capture-attendance.js",
+    "src/capture/camera-controller.js",
+  ].forEach((file) => {
+    assert.ok(order.includes(file), `Expected ${file} to be loaded`);
+    assert.ok(order.indexOf(file) < order.indexOf("app.js"), `${file} must precede app.js`);
+    assert.ok(existsSync(resolve(projectRoot, file)));
+  });
 });
 
 test("with nothing captured, the strip is away and saving is off", () => {
@@ -696,13 +726,13 @@ test("with nothing captured, the strip is away and saving is off", () => {
   const save = tagWithId("button", "captures-save");
   assert.ok(hasAttribute(save, "disabled"));
   assert.equal(hasAttribute(save, "hidden"), false);
-  assert.match(readFileSync(resolve(projectRoot, "app.js"), "utf8"), /capturesSave\.disabled = !hasCaptures/);
+  assert.match(captureSource(), /capturesSave\.disabled = !hasCaptures/);
 
   assert.ok(hasAttribute(tagWithId("button", "captures-clear"), "hidden"));
 });
 
 test("capture stays local and consented AI review uploads reduced batches", () => {
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
   const store = readFileSync(resolve(projectRoot, "photo-store.js"), "utf8");
 
   // Every capture goes to the device's own store, and stays queued there.
@@ -738,7 +768,11 @@ test("cloud photos require sign-in and the admin dashboard groups them by place 
   const firebase = readFileSync(resolve(projectRoot, "firebase.js"), "utf8");
   const firestoreRules = readFileSync(resolve(projectRoot, "firestore.rules"), "utf8");
   const admin = readFileSync(resolve(projectRoot, "admin.html"), "utf8");
-  const adminApp = readFileSync(resolve(projectRoot, "admin.js"), "utf8");
+  const adminApp = [
+    readFileSync(resolve(projectRoot, "src/services/admin-scope.js"), "utf8"),
+    readFileSync(resolve(projectRoot, "src/services/operations-data.js"), "utf8"),
+    readFileSync(resolve(projectRoot, "admin.js"), "utf8"),
+  ].join("\n");
 
   assert.ok(existsSync(resolve(projectRoot, "admin.css")));
   assert.match(admin, /id=["']photo-library["']/);
@@ -757,6 +791,9 @@ test("cloud photos require sign-in and the admin dashboard groups them by place 
   assert.match(firestoreRules, /request\.auth\.uid == userId/);
   assert.match(firestoreRules, /resource\.data\.ownerId == request\.auth\.uid/);
   assert.match(firestoreRules, /match \/\{path=\*\*\}\/entries\/\{entryId\}/);
+  assert.match(firestoreRules, /request\.resource\.data\.source == "manual"/);
+  assert.match(firestoreRules, /request\.resource\.data\.reviewStatus == "flagged"/);
+  assert.match(firestoreRules, /request\.resource\.data\.reviewReason == "manual-entry"/);
   assert.match(firestoreRules, /collection != "users"/);
   assert.match(firestoreRules, /collection != "workers"/);
   assert.equal(/allow read, write: if true/.test(firestoreRules), false);
@@ -828,7 +865,7 @@ test("AI review starts hidden and rejected photos can be recovered", () => {
   assert.match(html, /id="ai-review-loader-title">Reviewing photos/);
   assert.match(html, /AI vision/);
 
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
   assert.match(app, /store\.applyAiReviews\(/);
   assert.match(app, /store\.restoreAiDiscard\(/);
   assert.match(app, /store\.purgeAiDiscarded\(/);
@@ -841,7 +878,7 @@ test("AI review starts hidden and rejected photos can be recovered", () => {
 });
 
 test("the schedule is driven by the pose tracker, at the two required intervals", () => {
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
   const scheduler = readFileSync(resolve(projectRoot, "capture-scheduler.js"), "utf8");
 
   assert.match(scheduler, /const POSE_INTERVAL = 30000;/);
@@ -854,7 +891,7 @@ test("the schedule is driven by the pose tracker, at the two required intervals"
 });
 
 test("the start and stop glyphs swap through the attribute, not the property", () => {
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
 
   // `hidden` is an HTMLElement property. Assigning it on an <svg> sets a stray
   // JavaScript property, the [hidden] rule never matches, and the button keeps
@@ -869,7 +906,7 @@ test("the start and stop glyphs swap through the attribute, not the property", (
 });
 
 test("the overlay draws a whole rig, limb by limb", () => {
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
 
   // Arms and legs are drawn as their own chains rather than a torso outline.
   ["shoulderLeft", "elbowLeft", "wristLeft", "hipRight", "kneeRight", "ankleRight"].forEach(
@@ -887,7 +924,7 @@ test("the overlay draws a whole rig, limb by limb", () => {
 });
 
 test("vehicles are highlighted without reaching the schedule", () => {
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
   const controller = readFileSync(resolve(projectRoot, "auto-capture.js"), "utf8");
 
   // Drawn in their own colour, labelled, and drawn before the rig so a person
@@ -912,7 +949,7 @@ test("vehicles are highlighted without reaching the schedule", () => {
 });
 
 test("the overlay follows the crop the video is displayed with", () => {
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
 
   // The video fills its box with object-fit: cover, which scales it up and
   // crops the overflow. Keypoints arrive in the camera frame's coordinates, so
@@ -942,13 +979,13 @@ test("the watch is given the whole screen, whichever way the phone is held", () 
 
   // Bones and labels are sized from the width they are drawn at, so the rig
   // does not thin to a scratch on a larger display.
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
   assert.match(app, /function boneWidth\(width\)/);
   assert.match(app, /context\.lineWidth = stroke/);
 });
 
 test("the live camera is released when the watch stops", () => {
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
 
   // A stream left running keeps the camera light on after the user stops.
   assert.match(app, /stream\?\.getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
@@ -961,7 +998,7 @@ test("the live camera is released when the watch stops", () => {
 });
 
 test("one tracking error cannot permanently stop the sampling loop", () => {
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
   const controller = readFileSync(resolve(projectRoot, "auto-capture.js"), "utf8");
 
   assert.match(controller, /Tracking restarted after a camera hiccup/);
@@ -978,7 +1015,7 @@ test("CSS covers the live frame, the pose overlay and the capture grid", () => {
 });
 
 test("deleting photos says nothing, and nothing points at a button that is gone", () => {
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
 
   // The grid emptying is the confirmation.
   assert.equal(/Stored photos deleted/.test(app), false);
@@ -1003,7 +1040,7 @@ test("the photographs are a strip under the camera, not a panel over it", () => 
   assert.match(css, /\.previews,\s*\n\.captures\s*\{[^}]*display:\s*contents/);
 
   // A tile is a button, so it opens the photo whole and a keyboard can reach it.
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
   assert.match(app, /tile\.className = "capture"/);
   assert.match(app, /tile\.addEventListener\("click", \(\) =>\s*\n?\s*openViewer/);
   assert.match(html, /id=["']viewer["'][^>]*role=["']dialog["']/);
@@ -1065,7 +1102,7 @@ test("the shutter is centred and saving sits in the bottom right corner", () => 
 });
 
 test("a capture is kept without anyone touching the device", () => {
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
   const controller = readFileSync(resolve(projectRoot, "auto-capture.js"), "utf8");
 
   // The store write is inside the capture itself — no button, no prompt, no
@@ -1118,7 +1155,7 @@ test("share control is present and starts hidden", () => {
 
 test("the watch tracks a room, not just one person", () => {
   const model = readFileSync(resolve(projectRoot, "pose-model.js"), "utf8");
-  const app = readFileSync(resolve(projectRoot, "app.js"), "utf8");
+  const app = captureSource();
   const controller = readFileSync(resolve(projectRoot, "auto-capture.js"), "utf8");
 
   // The models are asked for several people rather than one. Cost follows how
@@ -1167,9 +1204,12 @@ test("the default screen drifts, and the tools stay put", () => {
   assert.match(html, /<script\s+src=["']orbit\.js[^"']*["']\s+defer><\/script>/i);
 
   // Idle only: a drifting gradient behind the whole screen, and no stage black
-  // cutting it in half.
+  // cutting it in half. A second wash keeps travelling after the first layer
+  // has reached one end of its path.
   assert.match(css, /body\[data-stage="idle"\]::before\s*\{[^}]*animation:\s*stage-drift/);
+  assert.match(css, /body\[data-stage="idle"\]::after\s*\{[^}]*animation:\s*stage-drift-alt/);
   assert.match(css, /@keyframes stage-drift/);
+  assert.match(css, /@keyframes stage-drift-alt/);
   assert.match(css, /body\[data-stage="idle"\] \.stage\s*\{\s*background:\s*transparent/);
 
   // The tools sit in their bar. Circling the shutter meant a control that had
@@ -1186,10 +1226,15 @@ test("the default screen drifts, and the tools stay put", () => {
   assert.match(orbit, /record\.dataset\.running !== "true"/);
   assert.match(orbit, /document\.body\.dataset\.stage = idle \? "idle" : "live"/);
   assert.match(orbit, /window\.matchMedia\("\(prefers-color-scheme: dark\)"\)/);
-  assert.match(orbit, /const idleThemeColour = darkScheme\.matches \? "#0d1512" : "#f6f7f6"/);
+  assert.match(orbit, /function isDarkTheme\(/);
+  assert.match(orbit, /const idleThemeColour = isDarkTheme\(\) \? "#0d1512" : "#f6f7f6"/);
   assert.match(orbit, /themeColour\?\.setAttribute\("content", idle \? idleThemeColour : "#0d1512"\)/);
-  assert.match(orbit, /darkScheme\.addEventListener\("change", syncStage\)/);
+  assert.match(orbit, /darkScheme\.addEventListener\("change", \(\) => applyTheme\(readStoredTheme\(\)\)\)/);
+  assert.match(html, /id="theme-toggle"/);
+  assert.match(html, /stampnote-theme/);
   assert.match(css, /body\[data-stage="idle"\]\s*\{[^}]*background:\s*#f6f7f6/);
+  assert.match(css, /:root\[data-theme="light"\]|:root:not\(\[data-theme="light"\]\)/);
+  assert.match(css, /:root\[data-theme="dark"\][\s\S]*?body\[data-stage="idle"\]\s*\{[^}]*background:\s*#0d1512/);
   assert.match(css, /@media \(prefers-color-scheme: dark\)[\s\S]*?body\[data-stage="idle"\]\s*\{[^}]*background:\s*#0d1512/);
   assert.match(css, /@media \(prefers-color-scheme: dark\)[\s\S]*?--surface-solid:\s*#151d1a/);
   assert.match(css, /@media \(prefers-color-scheme: dark\)[\s\S]*?body\[data-stage="idle"\] \.toolbar \.tool\s*\{[^}]*color:\s*rgba\(232, 239, 233, 0\.82\)/);

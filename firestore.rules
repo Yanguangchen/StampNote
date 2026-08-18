@@ -15,6 +15,17 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function hasValidAttendanceReviewState() {
+      return (
+        request.resource.data.source == "face-match"
+        && request.resource.data.reviewStatus == "clear"
+      ) || (
+        request.resource.data.source == "manual"
+        && request.resource.data.reviewStatus == "flagged"
+        && request.resource.data.reviewReason == "manual-entry"
+      );
+    }
+
     // Field staff keep their own photo uploads. Administrators can review and
     // delete every account's photos from Photos & attendance.
     match /users/{userId}/photos/{photoId} {
@@ -51,7 +62,7 @@ service cloud.firestore {
 
     match /{path=**}/entries/{entryId} {
       allow read: if isAdmin();
-      allow create, update: if isSignedIn();
+      allow create, update: if isSignedIn() && hasValidAttendanceReviewState();
       allow delete: if isAdmin();
     }
 
@@ -59,7 +70,7 @@ service cloud.firestore {
       allow read: if isAdmin();
       match /entries/{entryId} {
         allow read: if isAdmin();
-        allow create, update: if isSignedIn();
+        allow create, update: if isSignedIn() && hasValidAttendanceReviewState();
         allow delete: if isAdmin();
       }
     }

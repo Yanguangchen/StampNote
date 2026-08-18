@@ -1,16 +1,18 @@
 (function initializeStampNoteObservability(globalScope) {
   "use strict";
 
-  const SURFACES = new Set([
+  const SURFACE_LIST = Object.freeze([
     "capture",
     "dashboard",
     "ai-dashboard",
     "coordinates",
+    "agent-coordinates",
     "metrics",
     "onboarding",
     "worker-photos",
   ]);
-  const EVENT_NAMES = new Set([
+  const SURFACES = new Set(SURFACE_LIST);
+  const EVENT_NAME_LIST = Object.freeze([
     "client.ready",
     "client.error",
     "web.vital",
@@ -90,6 +92,7 @@
     "worker.photo.sync.completed",
     "worker.photo.sync.failed",
   ]);
+  const EVENT_NAMES = new Set(EVENT_NAME_LIST);
   const NUMBER_FIELDS = new Set([
     "durationMs",
     "batchSize",
@@ -164,7 +167,15 @@
     return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`;
   }
 
-  const pureApi = { safeErrorCode, sanitizeFields };
+  const pureApi = {
+    BOOLEAN_FIELDS: Object.freeze([...BOOLEAN_FIELDS]),
+    ENUM_FIELDS,
+    EVENT_NAMES: EVENT_NAME_LIST,
+    NUMBER_FIELDS: Object.freeze([...NUMBER_FIELDS]),
+    SURFACES: SURFACE_LIST,
+    safeErrorCode,
+    sanitizeFields,
+  };
   if (typeof module !== "undefined" && module.exports) {
     module.exports = pureApi;
   }
@@ -187,6 +198,7 @@
   let flushTimer = null;
   let flushing = false;
   let lastLcp = null;
+  let lastInp = null;
   let cumulativeLayoutShift = 0;
   let longTaskCount = 0;
   let longTaskDuration = 0;
@@ -209,7 +221,37 @@
     }, delay);
   }
 
-  async function flush() {
+  function encodeBatch(events) {
+    return JSON.stringify({ sessionId, surface, events });
+  }
+
+  function restoreBatch(events) {
+    queue.unshift(...events);
+    if (queue.length > MAX_QUEUE) {
+      queue.splice(0, queue.length - MAX_QUEUE);
+    }
+  }
+
+  function sendBeaconBatch(events) {
+    // JSON sendBeacon is same-origin only. Live Server posts cross-origin to
+    // production, and that path needs a CORS preflight sendBeacon cannot run.
+    const BlobCtor = globalScope.Blob;
+    if (
+      endpoint.startsWith("http") ||
+      typeof globalScope.navigator?.sendBeacon !== "function" ||
+      typeof BlobCtor !== "function"
+    ) {
+      return false;
+    }
+    try {
+      const body = new BlobCtor([encodeBatch(events)], { type: "application/json" });
+      return Boolean(globalScope.navigator.sendBeacon(endpoint, body));
+    } catch {
+      return false;
+    }
+  }
+
+  async function flush(options = {}) {
     if (flushing || queue.length === 0) {
       return false;
     }
@@ -219,13 +261,17 @@
     const traceId = createTraceId();
 
     try {
+      if (options.beacon && sendBeaconBatch(events)) {
+        return true;
+      }
+
       const response = await globalScope.fetch(endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-StampNote-Trace-Id": traceId,
         },
-        body: JSON.stringify({ sessionId, surface, events }),
+        body: encodeBatch(events),
         credentials: "same-origin",
         keepalive: true,
       });
@@ -239,10 +285,7 @@
     } catch {
       // Observability must never break the feature it is observing. Keep one
       // bounded retry in memory and remain silent to avoid recursive errors.
-      queue.unshift(...events);
-      if (queue.length > MAX_QUEUE) {
-        queue.splice(0, queue.length - MAX_QUEUE);
-      }
+      restoreBatch(events);
       if (globalScope.navigator.onLine !== false) {
         scheduleFlush(15000);
       }
@@ -294,6 +337,7 @@
   function metricRating(name, value) {
     const thresholds = {
       CLS: [0.1, 0.25],
+      INP: [200, 500],
       LCP: [2500, 4000],
       FCP: [1800, 3000],
       TTFB: [800, 1800],
@@ -363,9 +407,27 @@
       });
       longTasks.observe({ type: "longtask", buffered: true });
     } catch {}
+
+    try {
+      const interactions = new globalScope.PerformanceObserver((list) => {
+        list.getEntries().forEach((entry) => {
+          if (!entry.interactionId) return;
+          lastInp = lastInp === null ? entry.duration : Math.max(lastInp, entry.duration);
+        });
+      });
+      try {
+        interactions.observe({ type: "event", buffered: true, durationThreshold: 16 });
+      } catch {
+        interactions.observe({ type: "event", buffered: true });
+      }
+    } catch {}
   }
 
   function reportFinalPerformance() {
+    if (lastInp !== null) {
+      reportMetric("INP", lastInp);
+      lastInp = null;
+    }
     if (lastLcp !== null) {
       reportMetric("LCP", lastLcp);
       lastLcp = null;
@@ -401,12 +463,12 @@
   globalScope.addEventListener("online", () => scheduleFlush(0));
   globalScope.addEventListener("pagehide", () => {
     reportFinalPerformance();
-    flush();
+    flush({ beacon: true });
   });
   globalScope.document.addEventListener("visibilitychange", () => {
     if (globalScope.document.hidden) {
       reportFinalPerformance();
-      flush();
+      flush({ beacon: true });
     }
   });
 

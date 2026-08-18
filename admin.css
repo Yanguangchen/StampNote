@@ -436,7 +436,7 @@ input {
 }
 
 /* The rail is a band across the top rather than a column down the side. Choosing
-   a site narrows the day, and a day narrows the session, so the three steps read
+   a street narrows the address, then the day and session, so the four steps read
    left to right; as a sidebar they had a quarter of the width to do it in and had
    to run downwards instead. */
 .dashboard-workspace {
@@ -448,8 +448,8 @@ input {
 
 .scope-rail {
   display: grid;
-  /* Location, date, session — one column each, widening together. */
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  /* Street, address, date, session — one column each, widening together. */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px 20px;
   align-items: start;
   min-width: 0;
@@ -483,7 +483,7 @@ input {
   min-width: 0;
 }
 
-/* A ruled gutter so the three read as one narrowing choice rather than three
+/* A ruled gutter so the four read as one narrowing choice rather than four
    unrelated lists that happen to sit beside each other. */
 .scope-step + .scope-step {
   padding-left: 20px;
@@ -1178,10 +1178,26 @@ input {
 }
 
 .attendance-timing {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   grid-column: 2;
+  gap: 6px 8px;
   color: var(--muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+
+.attendance-review-flag {
+  display: inline-flex;
+  padding: 3px 8px;
+  overflow: visible !important;
+  border: 1px solid var(--danger-line);
+  border-radius: 999px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-weight: 760;
+  white-space: normal !important;
 }
 
 .empty-attendance {
@@ -1527,7 +1543,7 @@ input {
     border-radius: 18px;
   }
 
-  /* No room to go sideways on a phone, so the three steps go back to running
+  /* No room to go sideways on a phone, so the four steps go back to running
      down the page and each list gives up its cap and flows. */
   .scope-rail {
     grid-template-columns: minmax(0, 1fr);
@@ -1580,7 +1596,7 @@ input {
   }
 }
 
-/* Three columns still fit here — the rail spans the page at every width now — but
+/* Four columns still fit here — the rail spans the page at every width now — but
    the gutters tighten so none of them squeezes its labels. */
 @media (min-width: 721px) and (max-width: 1040px) {
   .scope-rail {

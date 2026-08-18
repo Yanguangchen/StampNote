@@ -371,13 +371,14 @@ test("health and telemetry Vercel routes delegate to their shared handlers", asy
   }
 });
 
-test("telemetry accepts payloads from all 7 surfaces and validates new operational events", async () => {
+test("telemetry accepts payloads from all application surfaces and validates new operational events", async () => {
   const { handleTelemetryRequest } = await import("../api/_telemetry.mjs");
   const surfaces = [
     "capture",
     "dashboard",
     "ai-dashboard",
     "coordinates",
+    "agent-coordinates",
     "metrics",
     "onboarding",
     "worker-photos",
@@ -458,4 +459,30 @@ test("telemetry accepts payloads from all 7 surfaces and validates new operation
   const result = await traced.value.json();
   assert.equal(result.accepted, 5);
   assert.equal(result.traceId, "ai-trace-555");
+});
+
+test("browser and server telemetry catalogs stay aligned", async () => {
+  const client = require("../observability.js");
+  const { telemetryRequestSchema } = await import("../api/_telemetry.mjs");
+
+  assert.ok(client.SURFACES.includes("agent-coordinates"));
+  assert.ok(client.EVENT_NAMES.includes("onboarding.scan.completed"));
+
+  for (const surface of client.SURFACES) {
+    const parsed = telemetryRequestSchema.safeParse({
+      sessionId: "session_1234",
+      surface,
+      events: [{ name: "client.ready", atMs: 0, fields: {} }],
+    });
+    assert.equal(parsed.success, true, `surface ${surface} should be accepted`);
+  }
+
+  for (const name of client.EVENT_NAMES) {
+    const parsed = telemetryRequestSchema.safeParse({
+      sessionId: "session_1234",
+      surface: "capture",
+      events: [{ name, atMs: 0, fields: {} }],
+    });
+    assert.equal(parsed.success, true, `event ${name} should be accepted`);
+  }
 });

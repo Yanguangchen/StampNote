@@ -58,7 +58,7 @@ function intendedSitePayload() {
 }
 
 test("Gemini receives a grounded, read-only operations question", async () => {
-  const { AI_ASSISTANT_MODEL, answerOperationsQuestion } = await import(
+  const { AI_ASSISTANT_MODEL, AI_ASSISTANT_THINKING_LEVEL, answerOperationsQuestion } = await import(
     "../api/_ai-assistant.mjs"
   );
   let call;
@@ -69,10 +69,13 @@ test("Gemini receives a grounded, read-only operations question", async () => {
     },
   });
 
+  assert.equal(AI_ASSISTANT_MODEL, "gemini-3.6-flash");
+  assert.equal(AI_ASSISTANT_THINKING_LEVEL, "minimal");
   assert.equal(result.model, AI_ASSISTANT_MODEL);
   assert.equal(result.retrieved, 2);
   assert.equal(result.answer, "One session needs review [S2].");
-  assert.equal(call.temperature, 0.1);
+  assert.equal("temperature" in call, false);
+  assert.equal(call.providerOptions.google.thinkingConfig.thinkingLevel, "minimal");
   assert.equal(call.maxOutputTokens, 1_400);
   assert.match(call.instructions, /read-only assistant/);
   assert.match(call.instructions, /Never invent a worker, session, date, location, count/);
@@ -84,10 +87,16 @@ test("Gemini receives a grounded, read-only operations question", async () => {
   assert.match(call.instructions, /If the user confirms a previously offered candidate/);
   assert.match(call.instructions, /name its photo ID and cite that photo's specific flag fact/);
   assert.match(call.instructions, /display the authenticated photo inside the same chat answer/);
+  assert.match(call.instructions, /manual-entry review flag/);
+  assert.match(call.instructions, /Do not describe it as face-matched attendance/);
   assert.match(call.instructions, /same definitions and daily ranges as the StampNote Metrics page/);
   assert.match(call.instructions, /Do not pad an answer with nearby facts/);
   assert.match(call.instructions, /No check-ins were recorded at Airport today/);
   assert.match(call.instructions, /current local date stated in the overview fact/);
+  assert.match(call.instructions, /cannot be calculated, is unavailable, or that no records exist merely because one of the named house numbers has no session/);
+  assert.match(call.instructions, /do not answer that no records exist or that the comparison is unavailable/);
+  assert.match(call.instructions, /Lead with that distance in meters/);
+  assert.match(call.instructions, /Question-named public address" is a Maps geocode case/);
   assert.match(call.messages.at(-1).content, /\[S2\] \(flag\)/);
   assert.match(call.messages.at(-1).content, /Which sessions are flagged/);
 });
@@ -156,6 +165,14 @@ test("the Maps call receives only public location cases and requires safe Google
 
   assert.equal(call.tools.google_maps.type, "provider");
   assert.equal(call.tools.google_maps.id, "google.google_maps");
+  assert.equal(typeof call.tools.geocode_public_address.execute, "function");
+  assert.equal(typeof call.tools.measure_public_distance.execute, "function");
+  assert.equal(typeof call.stopWhen, "function");
+  assert.deepEqual(call.providerOptions.google.retrievalConfig.latLng, {
+    latitude: 1.3521,
+    longitude: 103.8198,
+  });
+  assert.equal(call.providerOptions.google.thinkingConfig.thinkingLevel, "minimal");
   assert.deepEqual(JSON.parse(call.prompt.slice("PUBLIC GEOGRAPHY CASES\n".length)), [
     {
       case: "P1",
@@ -165,7 +182,10 @@ test("the Maps call receives only public location cases and requires safe Google
     },
   ]);
   assert.match(call.instructions, /whether it matches the intended site/);
+  assert.match(call.instructions, /Call them instead of guessing/);
+  assert.match(call.instructions, /measure_public_distance/);
   assert.doesNotMatch(call.prompt, /worker|attendance|Ernest|2026|S2/i);
+  assert.equal(result.provider, "Google Maps");
   assert.equal(result.text, "65 T1 Boulevard is in Changi.");
   assert.deepEqual(result.sources, [
     { title: "Terminal 1", url: "https://maps.google.com/?cid=123" },
@@ -225,7 +245,7 @@ test("the server independently rejects unnecessary Maps activation", async () =>
 });
 
 test("the request schema bounds history, facts, references, and declared scope", async () => {
-  const { assistantRequestSchema, MAX_RETRIEVED_FACTS } = await import(
+  const { assistantRequestSchema, MAX_RETRIEVED_FACTS, shouldVerifyPublicGeography } = await import(
     "../api/_ai-assistant.mjs"
   );
   assert.equal(assistantRequestSchema.safeParse(validPayload()).success, true);
@@ -256,6 +276,23 @@ test("the request schema bounds history, facts, references, and declared scope",
   const duplicatePublicRef = intendedSitePayload();
   duplicatePublicRef.publicSites.push({ ref: "S2", label: "65 T1 Boulevard" });
   assert.equal(assistantRequestSchema.safeParse(duplicatePublicRef).success, false);
+  const namedAddress = validPayload();
+  namedAddress.question = "is 24 Parbury within the GPS margin of error of 32";
+  namedAddress.facts.push({
+    ref: "S3",
+    kind: "session",
+    text:
+      "Question-named public address for GPS accuracy-margin comparison: 24 Parbury Avenue. This is not a recorded StampNote session. Geocode this public address and report the Maps distance in meters. A missing field session at this house number does not make the distance unavailable.",
+  });
+  namedAddress.scope.retrieved = 3;
+  namedAddress.publicSites = [{ ref: "S3", label: "24 Parbury Avenue" }];
+  assert.equal(assistantRequestSchema.safeParse(namedAddress).success, true);
+  assert.equal(shouldVerifyPublicGeography(namedAddress.question, namedAddress.publicSites), true);
+  const inventedOverviewLabel = {
+    ...namedAddress,
+    publicSites: [{ ref: "S3", label: "99 Invented Road" }],
+  };
+  assert.equal(assistantRequestSchema.safeParse(inventedOverviewLabel).success, false);
   const excessive = validPayload();
   excessive.facts = Array.from({ length: MAX_RETRIEVED_FACTS + 1 }, (_, index) => ({
     ref: `S${index + 1}`,
@@ -321,6 +358,142 @@ test("the assistant endpoint requires Firebase auth and rejects unsafe requests"
     }),
   );
   assert.equal(tooLarge.status, 413);
+});
+
+test("GPS accuracy-margin answers include a measured meter map", async () => {
+  const { answerOperationsQuestion, planarDistanceMeters } = await import(
+    "../api/_ai-assistant.mjs"
+  );
+  const payload = validPayload();
+  payload.question = "is 24 Parbury within the GPS margin of error of 32";
+  payload.facts.push(
+    {
+      ref: "S3",
+      kind: "session",
+      text:
+        "Question-named public address for GPS accuracy-margin comparison: 24 Parbury Avenue. This is not a recorded StampNote session. Geocode this public address and report the Maps distance in meters. A missing field session at this house number does not make the distance unavailable.",
+    },
+    {
+      ref: "S4",
+      kind: "session",
+      text:
+        "Question-named public address for GPS accuracy-margin comparison: 32 Parbury Avenue. This is not a recorded StampNote session. Geocode this public address and report the Maps distance in meters. A missing field session at this house number does not make the distance unavailable.",
+    },
+  );
+  payload.scope.retrieved = 4;
+  payload.publicSites = [
+    { ref: "S3", label: "24 Parbury Avenue" },
+    { ref: "S4", label: "32 Parbury Avenue" },
+  ];
+  const from = { label: "24 Parbury Avenue", latitude: 1.316895, longitude: 103.943633 };
+  const to = { label: "32 Parbury Avenue", latitude: 1.316694, longitude: 103.944054 };
+  let grounded;
+  const result = await answerOperationsQuestion(payload, {
+    async geocode(label) {
+      if (String(label).includes("24")) return { ...from, label };
+      if (String(label).includes("32")) return { ...to, label };
+      return null;
+    },
+    async verifyGeography() {
+      return {
+        ref: "G1",
+        provider: "Google Maps",
+        text: "24 Parbury Avenue and 32 Parbury Avenue are neighbouring houses on Parbury Avenue.",
+        sources: [{ title: "Parbury Avenue", url: "https://maps.google.com/?cid=1" }],
+      };
+    },
+    async generate(input) {
+      grounded = input;
+      return { text: "They are 52 m apart, outside the ±20 m GPS accuracy. [G1]" };
+    },
+  });
+
+  const expectedMeters = planarDistanceMeters(from, to);
+  assert.equal(result.map.kind, "public-addresses");
+  assert.equal(result.map.distanceMeters, expectedMeters);
+  assert.equal(result.map.flaggedForReview, expectedMeters > 20);
+  assert.match(result.geography.text, new RegExp(`${expectedMeters} m`));
+  assert.match(grounded.messages.at(-1).content, new RegExp(`${expectedMeters} m`));
+  assert.match(result.answer, /52 m apart/);
+});
+
+test("geography tools geocode supplied labels and keep G1 without Google source URLs", async () => {
+  const { planarDistanceMeters, verifyPublicGeography } = await import("../api/_ai-assistant.mjs");
+  const from = { label: "24 Parbury Avenue", latitude: 1.316895, longitude: 103.943633 };
+  const to = { label: "32 Parbury Avenue", latitude: 1.316694, longitude: 103.944054 };
+  let tools;
+  const result = await verifyPublicGeography(
+    [
+      { ref: "S3", label: "24 Parbury Avenue" },
+      { ref: "S4", label: "32 Parbury Avenue" },
+    ],
+    {
+      async geocode(label) {
+        if (String(label).includes("24")) return { ...from, label };
+        if (String(label).includes("32")) return { ...to, label };
+        return null;
+      },
+      async generate(input) {
+        tools = input.tools;
+        return { text: "24 Parbury Avenue is 52 m from 32 Parbury Avenue.", sources: [] };
+      },
+    },
+  );
+
+  assert.equal(result.provider, "Public geocode");
+  assert.equal(result.sources.length, 0);
+  assert.match(result.text, /52 m/);
+  const measured = await tools.measure_public_distance.execute({
+    fromLabel: "24 Parbury Avenue",
+    toLabel: "32 Parbury Avenue",
+    accuracyMeters: 20,
+  });
+  assert.equal(measured.distanceMeters, planarDistanceMeters(from, to));
+  assert.equal(measured.insideAccuracy, false);
+  const denied = await tools.geocode_public_address.execute({ label: "1 Infinite Loop" });
+  assert.match(String(denied.error), /not one of the supplied public geography cases/);
+});
+
+test("geography text without Google URLs still grounds the private final call", async () => {
+  const { answerOperationsQuestion } = await import("../api/_ai-assistant.mjs");
+  let finalCall;
+  const result = await answerOperationsQuestion(geographyPayload(), {
+    async generateGeography() {
+      return { text: "65 T1 Boulevard is at Changi Airport.", sources: [] };
+    },
+    async generate(input) {
+      finalCall = input;
+      return { text: "Yes. Five check-ins were recorded at the Changi site [G1, S2]." };
+    },
+  });
+
+  assert.equal(Object.hasOwn(result, "geography"), false);
+  assert.equal(Object.hasOwn(finalCall, "tools"), false);
+  assert.match(finalCall.messages.at(-1).content, /\[G1\] \(Public geocode\).*Changi Airport/);
+});
+
+test("OneMap misses fall back to Nominatim for public geocoding", async () => {
+  const { geocodePublicLabel } = await import("../api/_ai-assistant.mjs");
+  const urls = [];
+  const hit = await geocodePublicLabel("24 Parbury Avenue", {
+    async fetchImplementation(url) {
+      urls.push(String(url));
+      if (String(url).includes("onemap.gov.sg")) {
+        return { ok: false, json: async () => ({}) };
+      }
+      return {
+        ok: true,
+        json: async () => [{ lat: "1.316895", lon: "103.943633" }],
+      };
+    },
+  });
+  assert.deepEqual(hit, {
+    label: "24 Parbury Avenue",
+    latitude: 1.316895,
+    longitude: 103.943633,
+  });
+  assert.equal(urls.some((url) => url.includes("onemap.gov.sg")), true);
+  assert.equal(urls.some((url) => url.includes("nominatim.openstreetmap.org")), true);
 });
 
 test("a verified request returns only the generated answer contract", async () => {

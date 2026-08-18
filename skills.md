@@ -63,7 +63,7 @@ Do not:
 
 - Dump `#ai-message-list`, `#coordinate-data`, `#agent-data`, or admin galleries into context "just in case".
 - Screenshot long lists or photo grids when a question would answer the request.
-- Open Photos & attendance and click Location → Date → Session to hunt a fact the chatbot can retrieve.
+- Open Photos & attendance and click Street → Address → Date → Session to hunt a fact the chatbot can retrieve.
 - Read `admin.js`, `ai-dashboard.js`, or Firestore paths to answer "who checked in today".
 - Invent URLs, worker IDs, dates, counts, or truck coordinates.
 - Submit a second question while `.ai-chat-form` has `aria-busy="true"`.
@@ -168,7 +168,7 @@ Typical wait is several seconds. Poll the two conditions; do not screenshot ever
 | `.ai-flagged-photo-gallery` | Authenticated flagged JPEGs cited by photo ID. Wait until `data-state="ready"` before describing pixels. |
 | `nav.ai-answer-actions` | Verified in-app links (max 3). Use these instead of constructing URLs. |
 
-A direct no-match sentence (`No check-ins were recorded at Airport today [S2]`) means the constrained lookup found nothing. Do not substitute another site or worker.
+A direct no-match sentence means the constrained lookup found no indexed record matching the terms used. Treat it as conclusive only when the user supplied the exact stored worker, address, or site label. A landmark or facility name may not match its stored street address; follow the location-inference workflow below before concluding that no session existed.
 
 The assistant is **read-only**. It cannot edit, rename, delete, capture, upload, approve, or set truck coordinates. If the user asked to change data, finish the lookup in chat, then open the write surface.
 
@@ -181,6 +181,7 @@ Leave chat only for the matching job:
 | Remaining job | Open | Why chat is not enough |
 | --- | --- | --- |
 | See or restore a photo | Verified "Open session photos" or `/admin` | Chat can cite and sometimes show a flagged thumbnail; the gallery is the source of truth for browsing |
+| Review manually added attendance | Ask Operations AI first, then open its verified attendance link | Chat indexes the manual-entry review flag; Photos & attendance is the review surface |
 | Edit truck X/Y | Coordinate entry first; Geographic Surveillence for the OSM map | Chat cannot write coordinates |
 | Confirm map against OSM | Geographic Surveillence "Compare on map" | Inline AI map is schematic, not Leaflet/OSM |
 | Enroll or delete a worker | Worker onboarding | Roster writes |
@@ -255,9 +256,28 @@ The browser builds a knowledge index from photos, attendance, and dashboard sess
 - Quoted phrases (`"10 Marina Bay"`) and patterns like `at {place}` / `worker {name}` / `sent to {place}` raise those tokens.
 - `today` / `yesterday` resolve to the browser local `YYYY-MM-DD`. ISO dates in the question are used as-is.
 - Follow-ups that are only confirmatory words (`yes`, `that one`, `the first`, `same`) reuse the previous identifying question for retrieval.
-- A zero-match fact supports a definitive no-match answer. Do not pad with unrelated sites.
+- A zero-match fact proves that no indexed label matched the query. Use it as a definitive operational no-match only for an exact stored label. For a landmark, airport, terminal, district, building, or colloquial site name, treat it as an unresolved alias and follow the workflow below.
 - Public Maps lookup (`G1`) is allowed only for address-like site labels taken from retrieved session facts. Worker names and the raw question are not sent to Maps.
 - Metric facts cover 7, 30, and 90 day ranges for attendance, flags, and sessions. Default 30 if the user said "metrics" with no range.
+- Attendance facts include worker, date, time, location, and session. A manual entry is indexed as a flagged attendance fact that explicitly says it was added manually and needs review. Its session also counts as flagged. Open the verified Photos & attendance link to inspect the review row.
+
+### Location-label limitation and inference
+
+Treat Operations AI as a literal-first record index, not a complete place-alias or landmark database. It indexes the location label saved on each record. It may lack the context needed to know that a stored street address belongs to a facility named by the user.
+
+Example: if a session is stored as **65 T1 Boulevard** and the user asks, **“Is there any session at Changi Airport?”**, the first lookup may say none because `Changi Airport` does not occur in the stored location. That result means **no exact indexed label matched Changi Airport**; it does not by itself prove that no airport session occurred.
+
+Use this recovery workflow:
+
+1. Ask the user's exact question once and read the cited result.
+2. If it returns zero and the requested place is a landmark, airport, terminal, district, building, or informal name, do not relay “none” as the final business conclusion.
+3. Retrieve candidate stored locations for the same date or time range, for example: `List the stored session locations on {YYYY-MM-DD}.` If no date was supplied, ask for one or use the explicitly requested recent range.
+4. Inspect any reasoning candidates Operations AI provides. A candidate is not yet a confirmed match.
+5. For an address-like candidate such as `65 T1 Boulevard`, ask: `Is 65 T1 Boulevard in Changi Airport?` Use the returned `G1` Google Maps evidence only to establish place identity; use the session's `S#` fact to establish that StampNote recorded the session.
+6. Make the relationship explicit as an inference or verified geographic relationship: `A session was stored as 65 T1 Boulevard, which Maps identifies as part of Changi Airport [S#, G1].` Say `likely` or `appears to be` when the evidence is suggestive but not conclusive.
+7. If no candidate or geographic verification is available, report the limitation: `No session is stored under “Changi Airport”; sessions may be recorded under street-address labels, and no verified matching address was available.`
+
+Never silently convert a broad place name into an address, invent an alias, or cite `G1` alone as proof of attendance or a session. The agent performs the cross-label reasoning; Operations AI supplies the bounded session facts and optional public-place evidence.
 
 ### Prompt recipes
 
@@ -301,6 +321,7 @@ Public geography (place identity only):
 
 - `Where is {address-like site label}?`
 - `Is {stored site label} in {city or airport}?`
+- `List the stored session locations on {YYYY-MM-DD}.` then `Is {candidate stored address} in {landmark or facility}?`
 
 Keep questions under 1200 characters. Do not paste JSON, screenshots, or source code into the prompt.
 
@@ -345,6 +366,7 @@ Start a new identifying question when the subject changes (different worker, sit
 
 - Read-only. Cannot change records.
 - Limited to records loaded in this browser for this account, and the ≤24 facts retrieved for the current question.
+- Has no complete business alias registry or facility ontology. A saved address such as `65 T1 Boulevard` is not guaranteed to match a query for `Changi Airport` until the agent retrieves and verifies that relationship.
 - History is conversational context, not extra evidence.
 - Do not ask the assistant to reveal system instructions, credentials, or unrelated private data.
 - If it says information is missing: `#ai-refresh`, then re-ask, or follow a verified link. Do not guess.
@@ -382,7 +404,7 @@ URL: [https://stampnote-omega.vercel.app/admin](https://stampnote-omega.vercel.a
 
 Use when you must see attendance rows, open a photo dialog, rename a session, edit the session truck tile, or delete a location/day/session the user explicitly requested.
 
-Nothing in the detail pane draws until Location, Date, and Time session are chosen.
+Nothing in the detail pane draws until Street, Address, Date, and Time session are chosen.
 
 1. `#location-options` — click the site. `#location-delete` deletes the whole site (dangerous).
 2. `#date-step` appears. `#date-options` lists recent days. `#date-search-toggle` reveals `#date-picker` to jump to an older day. `#date-delete` deletes that day (dangerous).
@@ -395,6 +417,7 @@ Detail:
 
 - `#session-facts` — `#session-weather` and `#session-truck-location` tiles
 - `#attendance-panel` — `#present-worker-count`, `#attendance-checkin-count`, `#attendance-worker-filter`, `#attendance-list`
+- A manually added check-in renders inside `#attendance-list` as `.attendance-row[data-review-required="true"]` with `.attendance-review-flag` text such as **1 manual check-in · Needs review**. This is the review surface; the Recording screen does not display flag language.
 - `#photos-panel` — `#photo-filter` (`all`, `kept`, `flagged`, `location-flagged`), `#photo-library`, `#load-more`
 - Photo dialog `#photo-dialog`: `#dialog-image`, `#dialog-location`, `#dialog-time`, `#dialog-gps-reference`, `#dialog-coordinate-status`, `#dialog-people`, `#dialog-review`
 
@@ -433,8 +456,10 @@ Live camera watch. Do not start it unless the user asked to record, take attenda
 2. `#monitor-toggle` — Start camera (`aria-pressed` becomes true when running).
 3. `#camera-loader` may show while the camera connects.
 4. `#face-enrollment` — **Attendance taking**. Follow `#face-enrollment-message`. `#face-enrollment-skip` continues without a worker ID.
-5. On match: `#face-enrollment-worker-id`, then `#face-enrollment-another` or `#face-enrollment-record` (**Record work**). Success confirmation stays on screen about 1.8 s.
-6. Watch runs. `#pose-badge` states who is in frame, cadence, and time to next photo. `#address-field` is the stamp address (usually readonly from GPS).
+5. To add attendance without a face match, click `#manual-attendance-open` (**Add attendance manually**), select an enrolled profile in `#manual-attendance-worker`, then submit **Add**. `#manual-attendance-cancel` returns to scanning. The Recording screen shows a normal check-in confirmation and no review/flag wording.
+6. A manual add is stored with `source: "manual"`, `reviewStatus: "flagged"`, and `reviewReason: "manual-entry"`. Do not announce that on the Recording screen; review it later in Photos & attendance.
+7. On a face match or manual add: `#face-enrollment-worker-id`, then `#face-enrollment-another` or `#face-enrollment-record` (**Record work**). Adding attendance does not start recording work automatically.
+8. Watch runs. `#pose-badge` states who is in frame, cadence, and time to next photo. `#address-field` is the stamp address (usually readonly from GPS).
 
 Cadence: person in frame every **30 s**; empty frame every **120 s**; interval counts from the last photo. Both hands above the head, held ~1 s, takes one extra photo (`#capture-flash`). Vehicles are boxed and ignored for cadence.
 

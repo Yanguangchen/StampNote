@@ -152,6 +152,7 @@ export const telemetryRequestSchema = z
       "dashboard",
       "ai-dashboard",
       "coordinates",
+      "agent-coordinates",
       "metrics",
       "onboarding",
       "worker-photos",

@@ -72,6 +72,8 @@
   // which is wider than `scanning`: it also covers the seconds spent opening the
   // camera and loading the model, when the card must not be taken away.
   let scanActive = false;
+  let scanTraceId = null;
+  let scanStartedAt = 0;
   let rosterOpen = false;
   let rosterStale = true;
   // Both the roster and the numbering need to know who is already enrolled, so
@@ -420,6 +422,11 @@
       cancelButton.hidden = false;
       setStatus("A worker ID could not be issued, so nothing was saved. Try again.", "error");
       instruction.textContent = "The scan is complete but has not been saved. Try again.";
+      telemetry?.event(
+        "onboarding.worker.save_failed",
+        { sampleCount: samples.length, errorCode: "worker_id_unavailable", status: "failed" },
+        { immediate: true, traceId: scanTraceId },
+      );
       return;
     }
 
@@ -432,6 +439,11 @@
         sampleCount: samples.length,
         profilePhoto: encodeProfilePhoto(),
       });
+      telemetry?.event(
+        "onboarding.worker.saved",
+        { sampleCount: samples.length, status: "success" },
+        { immediate: true, traceId: scanTraceId },
+      );
       releaseScanner("complete");
       progress.max = ONBOARDING_SAMPLES;
       progress.value = ONBOARDING_SAMPLES;
@@ -448,6 +460,15 @@
       cancelButton.hidden = false;
       setStatus(error?.message || "The face template could not be saved.", "error");
       instruction.textContent = "The scan is complete but has not been saved. Try again.";
+      telemetry?.event(
+        "onboarding.worker.save_failed",
+        {
+          sampleCount: samples.length,
+          errorCode: telemetry?.safeErrorCode(error, "save_worker_failed"),
+          status: "failed",
+        },
+        { immediate: true, traceId: scanTraceId },
+      );
     }
   }
 
@@ -474,6 +495,16 @@
       const scanState = recognizer.enrollmentState();
       updateProgress({ ...scanState, samples: samples.length });
       if (samples.length >= ONBOARDING_SAMPLES) {
+        telemetry?.event(
+          "onboarding.scan.completed",
+          {
+            sampleCount: samples.length,
+            durationMs: Math.max(0, performance.now() - scanStartedAt),
+            facing: currentCameraFacing(),
+            status: "success",
+          },
+          { traceId: scanTraceId },
+        );
         await saveEnrollment();
         return;
       }
@@ -526,12 +557,14 @@
     scannerView.dataset.status = "scanning";
     updateProgress({ status: "loading", samples: 0, total: ONBOARDING_SAMPLES });
     const facing = currentCameraFacing();
+    scanTraceId = telemetry?.createTraceId?.() || undefined;
+    scanStartedAt = performance.now();
     setStatus(
       `Starting the ${cameraFacing?.describe(facing) || "camera"} and private face model…`,
     );
 
     try {
-      telemetry?.event("onboarding.scan.started", { facing, status: "ok" });
+      telemetry?.event("onboarding.scan.started", { facing, status: "ok" }, { traceId: scanTraceId });
       stream = await navigator.mediaDevices.getUserMedia({
         video: cameraFacing
           ? cameraFacing.videoConstraints(facing, {
@@ -579,9 +612,10 @@
         "onboarding.scan.failed",
         {
           errorCode: telemetry?.safeErrorCode(error, "scan_start_failed"),
+          facing,
           status: "failed",
         },
-        { immediate: true },
+        { immediate: true, traceId: scanTraceId },
       );
     }
   }
@@ -599,6 +633,7 @@
   cameraFacingToggle?.addEventListener("click", () => {
     cameraFacingPreference?.toggle();
     refreshCameraFacing();
+    telemetry?.event("capture.camera.facing", { facing: currentCameraFacing() });
   });
 
   rosterToggle?.addEventListener("click", () => {

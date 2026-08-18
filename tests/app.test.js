@@ -6,7 +6,10 @@ const vm = require("node:vm");
 
 const appPath = resolve(__dirname, "..", "app.js");
 const cameraFacing = require("../camera-facing.js");
+const captureAttendance = require("../src/services/capture-attendance.js");
+const captureCamera = require("../src/capture/camera-controller.js");
 const cloudData = require("../photo-cloud.js");
+const poseOverlay = require("../src/components/pose-overlay.js");
 
 class FakeElement {
   constructor(tagName = "div") {
@@ -189,6 +192,10 @@ function createAppHarness(options = {}) {
     "face-enrollment-another",
     "face-enrollment-record",
     "face-enrollment-skip",
+    "manual-attendance-open",
+    "manual-attendance-form",
+    "manual-attendance-worker",
+    "manual-attendance-cancel",
     "captures",
     "captures-summary",
     "captures-save",
@@ -215,6 +222,7 @@ function createAppHarness(options = {}) {
   elements["face-enrollment"].hidden = true;
   elements["face-enrollment-match"].hidden = true;
   elements["face-enrollment-actions"].hidden = true;
+  elements["manual-attendance-form"].hidden = true;
   elements["ai-review-loader"].hidden = true;
   elements["camera-loader"].hidden = true;
   elements.viewer.hidden = true;
@@ -304,7 +312,7 @@ function createAppHarness(options = {}) {
   };
 
   const records = [...(options.records || [])];
-  const storeCalls = { marked: [], removed: [], reviews: [] };
+  const storeCalls = { marked: [], removed: [], reviews: [], restored: [] };
   const isAiFlagged = (record) =>
     record?.aiReview?.recommendation === "discard" || record?.aiReview?.action === "discard";
   const store = {
@@ -355,6 +363,7 @@ function createAppHarness(options = {}) {
       if (index >= 0) records.splice(index, 1);
     },
     async restoreAiDiscard(id) {
+      storeCalls.restored.push(id);
       const record = records.find((entry) => entry.id === id);
       if (record) record.aiReview = { ...record.aiReview, action: "keep", recommendation: "keep" };
     },
@@ -491,6 +500,22 @@ function createAppHarness(options = {}) {
         samples: 0,
         total: 3,
         progress: 0,
+      };
+      captureConfiguration?.onUpdate?.({ ...controllerState });
+      return controllerState;
+    },
+    recordManualAttendance(enrollment) {
+      if (controllerState.activityStarted || controllerState.faceEnrollment?.status === "complete") {
+        return controllerState;
+      }
+      controllerState.faceEnrollment = {
+        ...controllerState.faceEnrollment,
+        required: true,
+        status: "complete",
+        workerId: enrollment.workerId,
+        personLabel: enrollment.personLabel,
+        source: "manual",
+        reviewStatus: "flagged",
       };
       captureConfiguration?.onUpdate?.({ ...controllerState });
       return controllerState;
@@ -653,6 +678,8 @@ function createAppHarness(options = {}) {
       createPreference: (preferenceOptions) =>
         cameraFacing.createPreference({ storage: facingStorage, ...preferenceOptions }),
     },
+    StampNoteCaptureAttendance: captureAttendance,
+    StampNoteCaptureCamera: captureCamera,
     StampNoteFirebase: cloud,
     StampNotePhotoCloud: cloudData,
     StampNoteFaceIdentity: options.faceEnrollment
@@ -687,9 +714,10 @@ function createAppHarness(options = {}) {
           },
     StampNoteObservability: telemetry,
     StampNotePose: options.full === false ? null : pose,
+    StampNotePoseOverlay: poseOverlay,
     StampNoteSchedule: options.full === false ? null : schedule,
     StampNoteStamp: stamp,
-    StampNoteStore: options.full === false ? null : storage,
+    StampNoteStore: storage,
     StampNoteTriage: {},
     addEventListener(name, callback) {
       windowListeners.set(name, callback);
@@ -841,6 +869,21 @@ function createAppHarness(options = {}) {
   scope.navigator = navigator;
   scope.performance = performance;
 
+  [
+    resolve(__dirname, "..", "src/components/pose-overlay.js"),
+    resolve(__dirname, "..", "src/services/capture-attendance.js"),
+    resolve(__dirname, "..", "src/capture/camera-controller.js"),
+  ].forEach((file) => {
+    vm.runInContext(readFileSync(file, "utf8"), context, { filename: file });
+  });
+  [
+    "StampNotePoseOverlay",
+    "StampNoteCaptureAttendance",
+    "StampNoteCaptureCamera",
+  ].forEach((key) => {
+    if (context[key]) scope[key] = context[key];
+  });
+
   vm.runInContext(readFileSync(appPath, "utf8"), context, { filename: appPath });
 
   return {
@@ -849,6 +892,7 @@ function createAppHarness(options = {}) {
       authCallback?.(user, error);
     },
     cloudCalls,
+    body,
     get confirmCalls() {
       return confirmCalls;
     },
@@ -1295,6 +1339,7 @@ test("the live camera prompts for attendance taking before the activity starts",
   await settle(8);
 
   assert.equal(harness.elements["face-enrollment"].hidden, false);
+  assert.equal(harness.body.dataset.takingAttendance, "true");
   assert.equal(
     harness.elements["face-enrollment-title"].textContent,
     "Attendance taking",
@@ -1322,6 +1367,7 @@ test("the live camera prompts for attendance taking before the activity starts",
   await harness.elements["face-enrollment-skip"].dispatch("click");
   assert.equal(harness.controllerState.activityStarted, true);
   assert.equal(harness.elements["face-enrollment"].hidden, true);
+  assert.equal(harness.body.dataset.takingAttendance, "false");
   assert.match(harness.elements["monitor-status"].textContent, /match skipped/i);
   assert.ok(harness.events.some((event) => event.name === "face.match.skipped"));
 });
@@ -1372,6 +1418,7 @@ test("recording loads enrolled faces and records each matched worker once", asyn
   assert.match(harness.elements["face-enrollment-message"].textContent, /Ari Tan is checked in/i);
   assert.equal(harness.elements["face-enrollment-actions"].hidden, false);
   assert.equal(harness.controllerState.activityStarted, false);
+  assert.equal(harness.body.dataset.takingAttendance, "true");
 
   await settle();
   assert.equal(harness.cloudCalls.attendance.length, 1);
@@ -1391,6 +1438,7 @@ test("recording loads enrolled faces and records each matched worker once", asyn
   await harness.elements["face-enrollment-record"].dispatch("click");
   assert.equal(harness.controllerState.activityStarted, true);
   assert.equal(harness.elements["face-enrollment"].hidden, true);
+  assert.equal(harness.body.dataset.takingAttendance, "false");
   assert.match(harness.elements["monitor-status"].textContent, /recording work/i);
 
   harness.controllerState.bodies = [
@@ -1483,6 +1531,48 @@ test("each completed check-in can hand the camera to another worker before work 
   await harness.elements["face-enrollment-record"].dispatch("click");
   assert.equal(harness.controllerState.activityStarted, true);
   assert.equal(harness.elements["face-enrollment"].hidden, true);
+});
+
+test("an enrolled worker can add manual attendance that is flagged for review", async () => {
+  const embedding = Array.from({ length: 128 }, (unused, index) => index / 1000);
+  const harness = createAppHarness({
+    camera: true,
+    cloud: true,
+    faceEnrollment: true,
+    workerFaces: [
+      { workerId: "WORKER-7", displayName: "Ari Tan", embedding },
+      { workerId: "WORKER-9", displayName: "Bo Lim", embedding },
+    ],
+  });
+  await settle();
+  await harness.elements["monitor-toggle"].dispatch("click");
+  await settle(8);
+
+  assert.equal(harness.elements["manual-attendance-open"].hidden, false);
+  await harness.elements["manual-attendance-open"].dispatch("click");
+  assert.equal(harness.elements["manual-attendance-form"].hidden, false);
+  assert.equal(harness.elements["face-enrollment"].dataset.manual, "true");
+  assert.deepEqual(
+    harness.elements["manual-attendance-worker"].children.map((option) => option.textContent),
+    ["Choose your name", "Ari Tan · WORKER-7", "Bo Lim · WORKER-9"],
+  );
+
+  harness.elements["manual-attendance-worker"].value = "WORKER-9";
+  await harness.elements["manual-attendance-form"].dispatch("submit");
+  await settle();
+
+  assert.equal(harness.controllerState.faceEnrollment.source, "manual");
+  assert.equal(harness.elements["face-enrollment-title"].textContent, "Attendance added");
+  assert.match(harness.elements["face-enrollment-message"].textContent, /is checked in/i);
+  assert.doesNotMatch(harness.elements["face-enrollment-message"].textContent, /review|flag/i);
+  assert.equal(harness.cloudCalls.attendance.length, 1);
+  assert.equal(harness.cloudCalls.attendance[0].workerId, "WORKER-9");
+  assert.equal(harness.cloudCalls.attendance[0].displayName, "Bo Lim");
+  assert.equal(harness.cloudCalls.attendance[0].source, "manual");
+  assert.equal(harness.cloudCalls.attendance[0].reviewStatus, "flagged");
+  assert.equal(harness.cloudCalls.attendance[0].reviewReason, "manual-entry");
+  assert.ok(harness.events.some((event) => event.name === "attendance.manual.submitted"));
+  assert.equal(harness.events.some((event) => event.name === "face.match.completed"), false);
 });
 
 test("the live overlay paints vehicles, bones, a face and a fallback head", async () => {
@@ -1609,4 +1699,73 @@ test("the AI review bin can be emptied and kept photos can be saved as downloads
     "kept photos download when no folder is armed",
   );
   assert.match(harness.elements["monitor-status"].textContent, /Saved 1 photo/);
+});
+
+test("a discarded capture can be restored from the AI review bin and queued for Firestore", async () => {
+  const flagged = {
+    aiReview: { action: "discard", confidence: 0.88, reason: "Blur.", recommendation: "discard" },
+    blob: new Blob(["flag"], { type: "image/jpeg" }),
+    capturedAt: "2026-08-13T12:01:00.000Z",
+    id: "flag-1",
+    name: "flag-1.jpg",
+    poseDetected: false,
+    status: "local",
+    trigger: "schedule",
+    type: "image/jpeg",
+  };
+  const harness = createAppHarness({ cloud: true, records: [flagged] });
+  await settle();
+  await harness.elements["ai-review-bin"].dispatch("click");
+  await settle();
+  assert.equal(harness.elements.captures.childElementCount, 1);
+
+  await harness.elements.captures.children[0].dispatch("click");
+  assert.equal(harness.elements["viewer-restore"].hidden, false);
+  await harness.elements["viewer-restore"].dispatch("click");
+  await settle(8);
+
+  assert.deepEqual(harness.storeCalls.restored, ["flag-1"]);
+  assert.equal(flagged.aiReview.recommendation, "keep");
+  assert.match(harness.elements["monitor-status"].textContent, /restored locally/);
+});
+
+test("viewer share falls back to save when the browser cannot share files", async () => {
+  const record = {
+    aiReview: { action: "keep", confidence: 0.9, reason: "Clear.", recommendation: "keep" },
+    blob: new Blob(["capture"], { type: "image/jpeg" }),
+    capturedAt: "2026-08-13T12:00:00.000Z",
+    id: "capture-1",
+    name: "capture-1.jpg",
+    status: "local",
+    type: "image/jpeg",
+  };
+  const harness = createAppHarness({ canShare: false, records: [record] });
+  await settle();
+  await harness.elements.captures.children[0].dispatch("click");
+  await harness.elements["viewer-share"].dispatch("click");
+  await settle();
+  assert.equal(harness.shared.length, 0);
+  assert.match(harness.elements["monitor-status"].textContent, /Sharing is not available/);
+});
+
+test("a Firestore upload failure leaves reviewed photos queued", async () => {
+  const record = {
+    aiReview: { action: "keep", confidence: 0.9, reason: "Clear.", recommendation: "keep" },
+    blob: new Blob(["capture"], { type: "image/jpeg" }),
+    capturedAt: "2026-08-13T12:00:00.000Z",
+    id: "capture-1",
+    name: "capture-1.jpg",
+    status: "local",
+    type: "image/jpeg",
+  };
+  const harness = createAppHarness({
+    cloud: true,
+    records: [record],
+    uploadError: Object.assign(new Error("Quota exceeded"), { code: "resource-exhausted" }),
+  });
+  await settle();
+  harness.auth({ email: "owner@example.com", uid: "owner-1" });
+  await settle(8);
+  assert.equal(record.status, "local");
+  assert.ok(harness.events.some((event) => event.name === "cloud.sync.failed"));
 });

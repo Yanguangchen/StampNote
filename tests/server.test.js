@@ -140,6 +140,11 @@ test("the local server exposes public assets and every API boundary without expo
     assert.deepEqual(await assistant.json(), { error: "Use POST for operations questions." });
     assert.ok(assistant.headers.get("x-request-id"));
 
+    const speech = await fetch(`${origin}/api/speech`);
+    assert.equal(speech.status, 405);
+    assert.deepEqual(await speech.json(), { error: "Use POST for Gemini speech." });
+    assert.ok(speech.headers.get("x-request-id"));
+
     const health = await fetch(`${origin}/api/health`);
     assert.equal(health.status, 200);
     assert.equal((await health.json()).status, "ok");

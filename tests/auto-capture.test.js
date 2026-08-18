@@ -230,6 +230,27 @@ test("another attendance resets the face scan while every shutter remains paused
   assert.equal(harness.saved.length, 1);
 });
 
+test("manual attendance reaches the review checkpoint without starting work", async () => {
+  const harness = createHarness({ faceIdentity: createEnrollmentIdentity() });
+  harness.controller.start();
+
+  const manual = harness.controller.recordManualAttendance({
+    workerId: "worker-9",
+    personLabel: "Bo Lim",
+  });
+  assert.equal(manual.activityStarted, false);
+  assert.equal(manual.faceEnrollment.status, "complete");
+  assert.equal(manual.faceEnrollment.workerId, "WORKER-9");
+  assert.equal(manual.faceEnrollment.source, "manual");
+  assert.equal(manual.faceEnrollment.reviewStatus, "flagged");
+
+  await harness.controller.tick();
+  assert.equal(harness.saved.length, 0);
+  harness.controller.startWork();
+  await harness.controller.tick();
+  assert.equal(harness.saved.length, 1);
+});
+
 test("starting the watch takes the first photo straight away", async () => {
   const harness = createHarness();
 
