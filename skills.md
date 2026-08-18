@@ -277,7 +277,13 @@ Use this recovery workflow:
 6. Make the relationship explicit as an inference or verified geographic relationship: `A session was stored as 65 T1 Boulevard, which Maps identifies as part of Changi Airport [S#, G1].` Say `likely` or `appears to be` when the evidence is suggestive but not conclusive.
 7. If no candidate or geographic verification is available, report the limitation: `No session is stored under “Changi Airport”; sessions may be recorded under street-address labels, and no verified matching address was available.`
 
-Never silently convert a broad place name into an address, invent an alias, or cite `G1` alone as proof of attendance or a session. The agent performs the cross-label reasoning; Operations AI supplies the bounded session facts and optional public-place evidence.
+### Intended-address discrepancy
+
+When the user gives a full street address, treat it as the **intended location**, even when its exact label has no session. Find same-street or otherwise plausible stored-address candidates for the requested date/range, then measure the public map distance from the intended address to each candidate. Report the nearest candidate, its distance, and the saved session label before summarizing the session; never silently substitute it.
+
+Example: a request for `32 Parbury Avenue` that yields sessions at `34 Parbury Avenue` should say: `No session is stored at 32 Parbury Avenue. The nearest matching recorded location is 34 Parbury Avenue, about {distance} away; the following details belong to that recorded address.` If distance cannot be verified, say so and describe the candidate only as an unconfirmed nearby match.
+
+Use map/geocoding evidence only for the address-to-address distance. Use the session's `S#` facts as the evidence that activity occurred. Never silently convert a broad place name into an address, invent an alias, or cite `G1` alone as proof of attendance or a session. The agent performs the cross-label reasoning; Operations AI supplies the bounded session facts and optional public-place evidence.
 
 ### Prompt recipes
 
@@ -335,6 +341,17 @@ Keep questions under 1200 characters. Do not paste JSON, screenshots, or source 
 6. Do not submit another question until this loop finishes.
 
 If `data-state="error"`, quote the message. Common cases: not signed in; API unreachable; validation failure. After a network error, one retry is reasonable. Do not retry auth failures by inventing a token.
+
+### Operations AI unavailable
+
+If Operations AI says it is busy, out of quota, or remains unavailable after one retry, manually inspect the **smallest relevant scope** instead of stopping:
+
+1. Open Photos & attendance and select only the requested location/date/session; use the rail to list the relevant dates and sessions, then read attendance, photos, weather, and review flags.
+2. Open Coordinate entry or Geographic Surveillence only for sessions that need GPS/truck checks.
+3. For a date-range summary, enumerate the stored locations and sessions within that range first, then inspect only exception sessions (photo flags, manual attendance, missing coordinates, or distance flags).
+4. Say the answer came from a manual platform review; do not claim an Operations AI summary or invent facts absent from the selected records.
+
+Do not fall back to raw Firestore, source code, unfiltered JSON, or a full gallery walk when the normal platform controls can answer the scoped request.
 
 ### Interpret
 
@@ -422,6 +439,16 @@ Detail:
 - Photo dialog `#photo-dialog`: `#dialog-image`, `#dialog-location`, `#dialog-time`, `#dialog-gps-reference`, `#dialog-coordinate-status`, `#dialog-people`, `#dialog-review`
 
 Do not walk every location in the rail to answer "who was at Airport today". Ask Operations AI.
+
+#### Visual photo review
+
+When the user asks whether photos look suspicious, treat AI reject/keep labels as triage, not conclusions:
+
+1. Open each flagged photo in `#photo-dialog` and inspect the actual image, timestamp, saved address, GPS accuracy, truck status, people count, and review reason.
+2. Inspect at least one retained photo from the same batch to test whether a rejected image is merely redundant. Keep the scope to flagged photos plus the smallest useful comparison sample.
+3. Describe only visible evidence: worksite context, active work, equipment/materials, repeated frames, indoor portrait/selfie framing, or absence of field evidence. A visible face with `0 people` is a detector mismatch worth reporting.
+4. Cross-check attendance and coordinate flags. An indoor portrait stamped with a field address, especially with no attendance or no site context, is suspicious as **field evidence** but is not proof of misconduct.
+5. Report observations separately from judgment: `Visible: ... Metadata: ... Assessment: needs review because ...` Do not identify people from appearance, infer intent, or accuse anyone.
 
 Deep links:
 
