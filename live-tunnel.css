@@ -1,0 +1,360 @@
+/* Live tunnel: a list of cameras that are recording now, and one picture that
+   an administrator can open without a call prompt. The tokens match the rest
+   of the admin workspace so dark/light is a palette swap. */
+:root {
+  color-scheme: light;
+  --ink: #14201c;
+  --on-ink: #fff;
+  --muted: #5c6862;
+  --paper: #f3f5f1;
+  --surface: #fff;
+  --line: #dce2dd;
+  --line-strong: #b9c8c0;
+  --accent: #146b50;
+  --accent-soft: #dff2e9;
+  --danger: #aa4129;
+  --chip: #edf1ee;
+  --stage: #0d1512;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-fast: 140ms;
+  --motion: 220ms;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ink: #e8efe9;
+    --on-ink: #0d1512;
+    --muted: #9aa8a1;
+    --paper: #0d1512;
+    --surface: #151d1a;
+    --line: #2a3733;
+    --line-strong: #435650;
+    --accent: #46d39f;
+    --accent-soft: rgba(70, 211, 159, 0.14);
+    --danger: #ff8f6b;
+    --chip: #222e29;
+    --stage: #050807;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #e8efe9;
+  --on-ink: #0d1512;
+  --muted: #9aa8a1;
+  --paper: #0d1512;
+  --surface: #151d1a;
+  --line: #2a3733;
+  --line-strong: #435650;
+  --accent: #46d39f;
+  --accent-soft: rgba(70, 211, 159, 0.14);
+  --danger: #ff8f6b;
+  --chip: #222e29;
+  --stage: #050807;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+body {
+  min-height: 100dvh;
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Outfit", system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.live-tunnel-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 64px;
+  padding: 12px clamp(18px, 4vw, 48px);
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.account-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.account-name {
+  max-width: min(42vw, 320px);
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.button {
+  min-height: 40px;
+  padding: 0 15px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 650;
+  transition:
+    background var(--motion-fast) var(--ease),
+    border-color var(--motion-fast) var(--ease),
+    transform var(--motion-fast) var(--ease);
+}
+
+.button:not(:disabled):active {
+  transform: scale(0.985);
+}
+
+.button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.button-quiet {
+  border-color: var(--line-strong);
+  background: var(--surface);
+}
+
+.button-quiet:hover {
+  border-color: var(--ink);
+}
+
+.button-primary {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.sign-out-icon {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.live-tunnel-main {
+  width: min(1280px, 100%);
+  margin: 0 auto;
+  padding: clamp(20px, 3vw, 36px) clamp(18px, 4vw, 48px) 64px;
+}
+
+.live-tunnel-status {
+  min-height: 20px;
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.live-tunnel-status[data-state="error"] {
+  color: var(--danger);
+}
+
+.auth-gate {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 48px 24px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+  text-align: center;
+}
+
+.live-tunnel-workspace {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.live-tunnel-rail,
+.live-tunnel-stage {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+}
+
+.live-tunnel-rail-header,
+.live-tunnel-stage-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 16px 18px 0;
+}
+
+.live-tunnel-rail h2,
+.live-tunnel-stage h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.live-tunnel-count {
+  margin: 0 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.live-tunnel-empty {
+  margin: 0;
+  padding: 18px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.live-tunnel-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px 12px;
+}
+
+.live-tunnel-item {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--paper);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.live-tunnel-item[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.live-tunnel-item-location {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.live-tunnel-item-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.live-tunnel-badge {
+  margin: 0 auto 0 0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.live-tunnel-stage-header .button {
+  margin-left: auto;
+}
+
+.live-tunnel-frame {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 16 / 10;
+  margin: 14px 18px 10px;
+  border-radius: 14px;
+  background: var(--stage);
+}
+
+.live-tunnel-frame video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: var(--stage);
+}
+
+.live-tunnel-frame:not([data-live="true"]) video {
+  visibility: hidden;
+}
+
+.live-tunnel-placeholder {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 24px;
+  color: #c5d0cb;
+  font-size: 15px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.live-tunnel-frame[data-live="true"] .live-tunnel-placeholder {
+  display: none;
+}
+
+.live-tunnel-caption {
+  min-height: 1.4em;
+  margin: 0 18px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.live-tunnel-voice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 0 18px 16px;
+}
+
+.live-tunnel-voice-status {
+  flex: 1 1 12rem;
+  min-height: 1.2em;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.live-tunnel-voice-record[aria-pressed="true"] {
+  background: var(--danger);
+  color: var(--on-ink);
+}
+
+@media (max-width: 840px) {
+  .live-tunnel-workspace {
+    grid-template-columns: 1fr;
+  }
+}

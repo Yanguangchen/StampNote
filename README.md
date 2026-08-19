@@ -5,7 +5,7 @@ StampNote is a browser-based image annotation toolkit for field photos, site vis
 A left-hand page menu is shared by every surface and is grouped as:
 
 - **Worker workspace:** Recording and Worker photos.
-- **Admin workspace:** Worker onboarding, Geographic Surveillence, Operations AI, Photos & attendance, and Metrics.
+- **Admin workspace:** Worker onboarding, Geographic Surveillence, Coordinate entry, Operations AI, Photos & attendance, Live tunnel, and Metrics.
 
 Sign-out is a door-and-arrow icon on every signed-in header. The account name already sits beside it. Where one control both signs in and out, the sign-in wording stays visible until an account is connected; Recording keeps the one-word **Account** label and swaps the cloud glyph for the door.
 
@@ -118,7 +118,7 @@ Captures first go to IndexedDB on the device. After Gemini reviews a batch, each
 
 Photo documents remain under `users/{uid}/photos/{photoId}`, worker templates live under `users/{uid}/workers/{workerId}`, and matched check-ins live under `attendanceDays/{date}/entries/{eventId}`. A recording session writes one attendance event per recognized worker: the opening worker is recorded after the three-view check, and additional enrolled workers are recorded after three unambiguous live face matches while capture continues. The same worker is never duplicated within one camera session. Firestore restricts photos and face templates to their signed-in owner; operational sessions and attendance remain available to authenticated team members. Owned templates in the legacy top-level `workers` collection remain readable during the transition, while another account's templates never enter matching. Anonymous visitors remain blocked. No public image URL exists: the authenticated dashboard turns Firestore bytes into a temporary in-browser image URL.
 
-Open **Photos & attendance** (`admin.html`) to browse photos alongside recent attendance grouped by street, recorded address, date, and time session. Open **Worker onboarding** (`onboarding.html`) to enroll, replace, or delete worker templates; the worker ID is issued from the typed name rather than entered by hand. **Worker photos** (`worker-photos.html`) is the field path that does not start the watch: take one photo or pick several, stamp a fresh GPS fix and the day's weather, run Gemini sanitization, then save locally and sync when signed in. **Metrics** (`metrics.html`) plots three independent daily series — attendance taken, flags raised, and sessions created — over the last 7 or 30 days. **Operations AI** (`ai-dashboard.html`) answers questions about those loaded records.
+Open **Photos & attendance** (`admin.html`) to browse photos alongside recent attendance grouped by street, recorded address, date, and time session. Open **Live tunnel** (`live-tunnel.html`) to watch any camera that is recording right now — the picture opens like a video call, without anyone accepting or rejecting it, and an administrator can send a voice message that plays on that device. Open **Worker onboarding** (`onboarding.html`) to enroll, replace, or delete worker templates; the worker ID is issued from the typed name rather than entered by hand. **Worker photos** (`worker-photos.html`) is the field path that does not start the watch: take one photo or pick several, stamp a fresh GPS fix and the day's weather, run Gemini sanitization, then save locally and sync when signed in. **Metrics** (`metrics.html`) plots three independent daily series — attendance taken, flags raised, and sessions created — over the last 7 or 30 days. **Operations AI** (`ai-dashboard.html`) answers questions about those loaded records.
 
 The intended RPA truck-coordinate workflow matches the active session to the nearest truck by GPS
 proximity; it does not infer the session address from the truck coordinate. The conservative match,
@@ -216,7 +216,7 @@ The Firebase browser configuration is public by design and already points at `st
 
 The Firestore rules distinguish two signed-in classes. **Current users are all superadmins:** a signed-in account can open every page unless Firebase explicitly marks it `stampnoteRole: "worker"`. Field staff with that worker claim can record attendance, write their own photos, and read the shared face roster. Anonymous requests are denied. The checked-in Firestore index enables the dashboard's cross-date attendance query and the administrator photo collection-group query. Realtime Database is configured but the current application still stores photos, attendance, and worker templates in Firestore. The Google sign-in allowlist is the security boundary; a worker claim is the only way to narrow a signed-in account. Analytics initialization is best-effort: a blocker may disable it without breaking Authentication or Firestore.
 
-Field staff use Recording and Worker photos. Superadmins also use Worker onboarding, Geographic Surveillence, Operations AI, Photos & attendance, and Metrics. Photos uploaded by field staff appear on the administrator dashboard. See the [Firebase CLI reference](https://firebase.google.com/docs/cli) and [Google provider configuration guide](https://firebase.google.com/docs/auth/configure-providers-cli) for the upstream command contract.
+Field staff use Recording and Worker photos. Superadmins also use Worker onboarding, Geographic Surveillence, Operations AI, Photos & attendance, Live tunnel, and Metrics. Photos uploaded by field staff appear on the administrator dashboard. See the [Firebase CLI reference](https://firebase.google.com/docs/cli) and [Google provider configuration guide](https://firebase.google.com/docs/auth/configure-providers-cli) for the upstream command contract.
 
 Before exposing the app publicly, configure Google API quotas or billing alerts and add Vercel Firewall rate-limit rules for `POST /api/triage`, `POST /api/assistant`, and `POST /api/speech`. Photo review still relies on same-site checks and request validation rather than Firebase identity, so the firewall remains the cost boundary for direct scripted triage traffic. Operations questions and Gemini voice requests require a verified administrator Firebase ID token in addition to those checks.
 
@@ -244,7 +244,7 @@ npm test
 npm run test:coverage
 ```
 
-The suite contains more than 400 focused tests. It runs the browser entrypoints in controlled VM environments, starts the actual local HTTP server for boundary checks, and covers Firebase initialization/authentication/Firestore behavior, IndexedDB CRUD and fallbacks, the authenticated dashboard, Geographic Surveillence, Metrics, Operations AI, Worker photos, observability and health endpoints, Gemini review and assistant validation, cloud synchronization, manual stamping/share, AI review, and camera start/stop behavior.
+The suite contains more than 400 focused tests. It runs the browser entrypoints in controlled VM environments, starts the actual local HTTP server for boundary checks, and covers Firebase initialization/authentication/Firestore behavior, IndexedDB CRUD and fallbacks, the authenticated dashboard, Geographic Surveillence, Metrics, Live tunnel, Operations AI, Worker photos, observability and health endpoints, Gemini review and assistant validation, cloud synchronization, manual stamping/share, AI review, and camera start/stop behavior.
 
 The capture stack has focused tests for landmark mapping, anonymous session identity, aligned face embeddings, occluded joints, vehicle classification, synthetic fallback-detection scenes, tracker hysteresis, both capture cadences, gesture captures, local triage, storage pruning, and the controller driving a two-hour watch on a fake clock.
 
@@ -297,9 +297,11 @@ See [OBSERVABILITY.md](OBSERVABILITY.md) for the event catalog, production log c
 - `api/_health.mjs`, `api/health.mjs` — deployment and Gemini configuration health check
 - `observability.js` — bounded browser telemetry, error capture and performance signals
 - `auto-capture.js` — the watch loop joining tracker, schedule and store
-- `firebase.js` — Google Authentication plus Firestore photo, attendance, and worker-template access
+- `firebase.js` — Google Authentication plus Firestore photo, attendance, worker-template, and live-tunnel access
 - `sidebar.js`, `sidebar.css` — shared page menu mounted on every surface
 - `admin.html`, `admin.css`, `admin.js` — combined authenticated photo and attendance dashboard
+- `live-tunnel.html`, `live-tunnel.css`, `live-tunnel.js` — administrator live view of any camera that is recording
+- `src/services/live-tunnel.js` — WebRTC publisher/viewer with Firestore signaling and no call prompt
 - `coordinates.html`, `coordinates.css`, `coordinates.js` — Geographic Surveillence GPS comparison and truck-coordinate entry workspace
 - `ai-dashboard.html`, `ai-dashboard.css`, `ai-dashboard.js` — Operations AI conversation over loaded workspace records
 - `metrics.html`, `metrics.css`, `metrics.js` — 7- and 30-day attendance, flag and session counts

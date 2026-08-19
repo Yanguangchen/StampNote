@@ -230,6 +230,7 @@ test("pages load the split modules from src/ and the local server exposes that f
   assert.match(capture, /src\/components\/pose-overlay\.js/);
   assert.match(capture, /src\/services\/capture-attendance\.js/);
   assert.match(capture, /src\/capture\/camera-controller\.js/);
+  assert.match(capture, /src\/services\/live-tunnel\.js/);
   assert.match(admin, /src\/services\/admin-scope\.js/);
   assert.match(admin, /src\/services\/operations-data\.js/);
   assert.match(coordinatesPage, /src\/services\/coordinate-sessions\.js/);

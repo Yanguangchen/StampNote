@@ -17,6 +17,7 @@ Sidebar labels and files:
 - Coordinate entry → `agent-coordinates.html`
 - Operations AI → `ai-dashboard.html`
 - Photos & attendance → `admin.html`
+- Live tunnel → `live-tunnel.html`
 - Metrics → `metrics.html`
 
 Sign-in/out control IDs differ per page (table below). Do not click Sign out unless the user asked.
@@ -27,6 +28,7 @@ Sign-in/out control IDs differ per page (table below). Do not click Sign out unl
 | Photos & attendance | `dashboard` | `#sign-in` | `#sign-out` | `#dashboard-workspace` |
 | Geographic Surveillence | `coordinates` | `#coordinate-sign-in` | `#coordinate-sign-out` | `#coordinate-workspace` |
 | Coordinate entry | `agent-coordinates` | `#agent-sign-in` | `#agent-sign-out` | `#agent-workspace` |
+| Live tunnel | `live-tunnel` | `#live-tunnel-sign-in` | `#live-tunnel-sign-out` | `#live-tunnel-workspace` |
 | Metrics | `metrics` | `#metrics-sign-in` | `#metrics-sign-out` | `#metrics-workspace` |
 | Recording | `capture` | `#cloud-auth` | same button, door icon when signed in | camera stage |
 | Worker photos | `worker-photos` | `#worker-photo-auth` | same | send enabled after files |
@@ -67,6 +69,17 @@ admin.html?location={locationKey}&date={YYYY-MM-DD}&session={sessionId}#session-
 ```
 
 Allowed hashes: `attendance-panel`, `photos-panel`, `session-facts`, `session-truck-location`.
+
+## Live tunnel (`live-tunnel.html`)
+
+Watch a camera that is recording right now. The recording device does not accept or reject the tunnel.
+
+1. `#live-tunnel-sign-in` if the gate is shown.
+2. Click a `.live-tunnel-item` in `#live-tunnel-list`.
+3. `#live-tunnel-video` is the live picture. `#live-tunnel-leave` disconnects.
+4. `#live-tunnel-voice-record` sends a voice message that plays on the recording device. There is no accept/reject step.
+
+Deep link: `live-tunnel.html?tunnel={tunnelId}`.
 
 ## Metrics (`metrics.html`)
 

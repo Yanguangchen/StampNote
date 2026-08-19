@@ -18,6 +18,7 @@
   const overlay = window.StampNotePoseOverlay;
   const captureAttendanceApi = window.StampNoteCaptureAttendance;
   const captureCamera = window.StampNoteCaptureCamera;
+  const liveTunnelApi = window.StampNoteLiveTunnel;
   const REQUIRED_ATTENDANCE_MATCH_VOTES = 3;
   const addressField = document.querySelector("#address-field");
   const status = document.querySelector("#location-status");
@@ -41,6 +42,7 @@
   const captureFlash = document.querySelector("#capture-flash");
   const poseOverlay = document.querySelector("#pose-overlay");
   const poseBadge = document.querySelector("#pose-badge");
+  const liveVoiceNotice = document.querySelector("#live-voice-notice");
   const cameraLoader = document.querySelector("#camera-loader");
   const cameraLoaderDetail = document.querySelector("#camera-loader-detail");
   const faceEnrollment = document.querySelector("#face-enrollment");
@@ -522,6 +524,8 @@
   });
 
   let stream = null;
+  let livePublisher = null;
+  let incomingVoiceUrl = "";
   let controller = null;
   let cameraSwitching = false;
   let monitorStarting = false;
@@ -796,7 +800,11 @@
         status: user ? "signed_in" : "signed_out",
       });
       if (!user) {
+        stopLiveTunnel();
         return;
+      }
+      if (isRunning()) {
+        startLiveTunnel();
       }
 
       syncPendingReviewedCaptures()
@@ -2116,6 +2124,7 @@
       );
       return false;
     }
+    livePublisher?.setStream?.();
     return true;
   }
 
@@ -2204,6 +2213,68 @@
         sampleTimer = window.setTimeout(look, Math.max(autoCapture.SAMPLE_INTERVAL, spent));
       }
     }
+  }
+
+  function sessionForLiveTunnel() {
+    const data = cloudData || window.StampNoteCloudData;
+    const capturedAt = new Date();
+    const session = data?.sessionDefinitionFor?.(capturedAt) || { id: "", label: "" };
+    return {
+      location: addressField?.value || "",
+      dateKey: data?.createDateKey?.(capturedAt),
+      sessionId: session.id,
+      sessionLabel: session.label,
+      startedAtMs: capturedAt.getTime(),
+    };
+  }
+
+  function stopIncomingVoice() {
+    if (incomingVoiceUrl) {
+      URL.revokeObjectURL(incomingVoiceUrl);
+      incomingVoiceUrl = "";
+    }
+    if (liveVoiceNotice) liveVoiceNotice.hidden = true;
+  }
+
+  function playIncomingVoiceMessage(message) {
+    const blob = liveTunnelApi?.voiceMessageToBlob?.(message);
+    if (!blob) return;
+    const AudioCtor = window.Audio;
+    stopIncomingVoice();
+    incomingVoiceUrl = URL.createObjectURL(blob);
+    if (liveVoiceNotice) liveVoiceNotice.hidden = false;
+    if (typeof AudioCtor !== "function") return;
+    const audio = new AudioCtor(incomingVoiceUrl);
+    audio.addEventListener("ended", stopIncomingVoice);
+    audio.addEventListener("error", stopIncomingVoice);
+    audio.play?.()?.catch?.(() => stopIncomingVoice());
+  }
+
+  // Administrators tunnel into this camera without a call prompt, so the
+  // recording only has to be signed in and running. A failed publish must not
+  // stop capture: the photographs still matter if the live picture does not.
+  async function startLiveTunnel() {
+    if (!cloud || !signedInUser || !liveTunnelApi?.createPublisher || livePublisher) return;
+    livePublisher = liveTunnelApi.createPublisher({
+      cloud,
+      getStream: () => stream,
+      onVoiceMessage: playIncomingVoiceMessage,
+    });
+    try {
+      await livePublisher.publish(sessionForLiveTunnel());
+    } catch (error) {
+      livePublisher = null;
+      console.warn("[StampNote live tunnel] The live camera could not be shared.", {
+        errorCode: telemetry?.safeErrorCode(error, "live_tunnel_publish_failed"),
+      });
+    }
+  }
+
+  function stopLiveTunnel() {
+    const publisher = livePublisher;
+    livePublisher = null;
+    stopIncomingVoice();
+    publisher?.close?.();
   }
 
   async function startMonitor() {
@@ -2366,6 +2437,7 @@
 
     controller.start();
     await recordAutomaticSessionGpsLocation();
+    await startLiveTunnel();
     target = null;
     drawn = null;
     window.cancelAnimationFrame(painter);
@@ -2415,6 +2487,7 @@
     stream?.getTracks().forEach((track) => track.stop());
     stream = null;
     monitorVideo.srcObject = null;
+    stopLiveTunnel();
 
     controller?.stop();
     // The model holds WebAssembly memory and a GPU context; dropping the

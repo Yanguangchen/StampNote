@@ -78,12 +78,13 @@ Do not:
 
 Clean URLs work (`/ai-dashboard` as well as `/ai-dashboard.html`). Prefer the production shortcut unless the user asked to use a local server.
 
-Shared chrome: `#sidebar-toggle` opens `#app-sidebar`. Groups are **Worker workspace** (Recording, Worker photos) and **Admin workspace** (Worker onboarding, Geographic Surveillence, Coordinate entry, Operations AI, Photos & attendance, Metrics). Appearance/theme lives in the drawer when the page has `#theme-toggle`.
+Shared chrome: `#sidebar-toggle` opens `#app-sidebar`. Groups are **Worker workspace** (Recording, Worker photos) and **Admin workspace** (Worker onboarding, Geographic Surveillence, Coordinate entry, Operations AI, Photos & attendance, Live tunnel, Metrics). Appearance/theme lives in the drawer when the page has `#theme-toggle`.
 
 | Page | Path on production | Role | Writes data? |
 | --- | --- | --- | --- |
 | Operations AI | [/ai-dashboard](https://stampnote-omega.vercel.app/ai-dashboard) | Read-only Q&A over loaded records | No |
 | Photos & attendance | [/admin](https://stampnote-omega.vercel.app/admin) | Session rail, attendance, photos, weather, truck tile | Rename/delete session; truck X/Y |
+| Live tunnel | [/live-tunnel](https://stampnote-omega.vercel.app/live-tunnel) | Live camera of any recording, no call accept/reject | No |
 | Geographic Surveillence | [/coordinates](https://stampnote-omega.vercel.app/coordinates) | GPS vs truck list, map compare, RPA JSON | Truck X/Y |
 | Coordinate entry | [/agent-coordinates](https://stampnote-omega.vercel.app/agent-coordinates) | Agent search, filters, batch JSON, truck X/Y | Truck X/Y |
 | Metrics | [/metrics](https://stampnote-omega.vercel.app/metrics) | 7/30/90-day attendance, flags, sessions | No |
@@ -91,7 +92,7 @@ Shared chrome: `#sidebar-toggle` opens `#app-sidebar`. Groups are **Worker works
 | Worker photos | [/worker-photos](https://stampnote-omega.vercel.app/worker-photos) | Take/pick stamped photos without the watch | Photos |
 | Worker onboarding | [/onboarding](https://stampnote-omega.vercel.app/onboarding) | Enroll/replace/delete face templates | Worker roster |
 
-`html[data-surface]` names the page: `ai-dashboard`, `dashboard`, `coordinates`, `agent-coordinates`, `metrics`, `capture`, `worker-photos`, `onboarding`.
+`html[data-surface]` names the page: `ai-dashboard`, `dashboard`, `coordinates`, `agent-coordinates`, `metrics`, `live-tunnel`, `capture`, `worker-photos`, `onboarding`.
 
 ## Default workflow
 
@@ -186,6 +187,7 @@ Leave chat only for the matching job:
 | Confirm map against OSM | Geographic Surveillence "Compare on map" | Inline AI map is schematic, not Leaflet/OSM |
 | Enroll or delete a worker | Worker onboarding | Roster writes |
 | Start the camera / take attendance | Recording | Live capture |
+| Watch a live recording | Live tunnel | Real-time camera; no call accept/reject |
 | Stamp photos without the watch | Worker photos | Capture path |
 | Delete a location/day/session | Photos & attendance rail (user must confirm) | Destructive; never do this unless explicitly asked |
 | Read raw JSON for many sessions | `#agent-data` or `#coordinate-data` after filtering | Chat returns at most 24 facts |
@@ -408,6 +410,7 @@ Every page mounts `#sidebar-toggle` into `[data-sidebar-mount]`. Click it to ope
 | Photos & attendance | `dashboard` | `#sign-in` | `#sign-out` | `#dashboard-workspace` |
 | Geographic Surveillence | `coordinates` | `#coordinate-sign-in` | `#coordinate-sign-out` | `#coordinate-workspace` |
 | Coordinate entry | `agent-coordinates` | `#agent-sign-in` | `#agent-sign-out` | `#agent-workspace` |
+| Live tunnel | `live-tunnel` | `#live-tunnel-sign-in` | `#live-tunnel-sign-out` | `#live-tunnel-workspace` |
 | Metrics | `metrics` | `#metrics-sign-in` | `#metrics-sign-out` | `#metrics-workspace` |
 | Recording | `capture` | `#cloud-auth` | same button, door icon when signed in | camera stage |
 | Worker photos | `worker-photos` | `#worker-photo-auth` | same | send enabled after files |
@@ -459,6 +462,20 @@ https://stampnote-omega.vercel.app/admin?location={locationKey}&date={YYYY-MM-DD
 ```
 
 Allowed hashes: `attendance-panel`, `photos-panel`, `session-facts`, `session-truck-location`.
+
+### Live tunnel
+
+URL: [https://stampnote-omega.vercel.app/live-tunnel](https://stampnote-omega.vercel.app/live-tunnel)
+
+Use when the user asked to watch a recording that is happening now. Do not start Recording just to look around.
+
+1. If `#live-tunnel-auth-gate` is visible, click `#live-tunnel-sign-in`.
+2. `#live-tunnel-list` shows cameras that are live. Each `.live-tunnel-item` is a site; click it to tunnel in. There is no accept/reject step on the recording device.
+3. `#live-tunnel-video` shows the live picture. `#live-tunnel-leave` disconnects.
+4. `#live-tunnel-voice-record` records a voice message and sends it to the recording device. The recording plays it without an accept/reject step. `#live-tunnel-voice-cancel` discards a take.
+5. `#live-tunnel-empty` means nobody is recording right now.
+
+Deep link: `live-tunnel.html?tunnel={tunnelId}`.
 
 ### Metrics
 

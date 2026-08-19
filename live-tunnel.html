@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en" data-surface="live-tunnel">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#f3f5f1" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d1512" media="(prefers-color-scheme: dark)" />
+    <title>Live tunnel · StampNote</title>
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="icons/stampnote.svg" type="image/svg+xml" />
+    <link
+      rel="preload"
+      href="vendor/fonts/outfit-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="vendor/fonts/outfit.css" />
+    <link rel="stylesheet" href="sidebar.css" />
+    <link rel="stylesheet" href="live-tunnel.css" />
+    <script>
+      try {
+        const saved = localStorage.getItem("stampnote-theme");
+        if (saved === "dark" || saved === "light") {
+          document.documentElement.dataset.theme = saved;
+        }
+      } catch (error) {
+        /* A blocked storage jar just leaves the system theme in charge. */
+      }
+    </script>
+    <script src="observability.js" defer></script>
+    <script src="photo-cloud.js" defer></script>
+    <script src="firebase.js?v=20260819-1" defer></script>
+    <script src="src/services/live-tunnel.js" defer></script>
+    <script src="live-tunnel.js" defer></script>
+    <script src="sidebar.js" defer></script>
+  </head>
+  <body>
+    <header class="live-tunnel-header" data-sidebar-mount>
+      <div class="account-controls">
+        <span class="account-name" id="live-tunnel-account"></span>
+        <button
+          class="button button-quiet theme-toggle"
+          id="theme-toggle"
+          type="button"
+          aria-pressed="false"
+          title="Switch to dark theme"
+        >
+          <span class="theme-toggle-icon" id="theme-toggle-icon" aria-hidden="true">☾</span>
+          <span class="theme-toggle-label" id="theme-toggle-label">Dark</span>
+        </button>
+        <button
+          class="button button-quiet sign-out"
+          id="live-tunnel-sign-out"
+          type="button"
+          title="Sign out"
+          hidden
+        >
+          <svg class="sign-out-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M9.5 4.6H6.4A1.9 1.9 0 0 0 4.5 6.5v11a1.9 1.9 0 0 0 1.9 1.9h3.1" />
+            <path d="M10.2 12h9.3" />
+            <path d="m16.2 8.4 3.3 3.6-3.3 3.6" />
+          </svg>
+          <span class="sign-out-label">Sign out</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="live-tunnel-main">
+      <h1 class="visually-hidden" id="live-tunnel-title">Live tunnel</h1>
+      <p class="live-tunnel-status" id="live-tunnel-status" role="status" aria-live="polite"></p>
+
+      <section class="auth-gate" id="live-tunnel-auth-gate" aria-label="Sign in">
+        <button class="button button-primary" id="live-tunnel-sign-in" type="button">
+          Continue with Google
+        </button>
+      </section>
+
+      <div class="live-tunnel-workspace" id="live-tunnel-workspace" hidden>
+        <section class="live-tunnel-rail" aria-labelledby="live-tunnel-list-title">
+          <div class="live-tunnel-rail-header">
+            <h2 id="live-tunnel-list-title">Live recordings</h2>
+            <p class="live-tunnel-count" id="live-tunnel-count"></p>
+          </div>
+          <p class="live-tunnel-empty" id="live-tunnel-empty">
+            No live recordings. A tunnel appears here as soon as a signed-in device starts the camera on Recording.
+          </p>
+          <ul class="live-tunnel-list" id="live-tunnel-list"></ul>
+        </section>
+
+        <section class="live-tunnel-stage" id="live-tunnel-stage" aria-labelledby="live-tunnel-stage-title">
+          <div class="live-tunnel-stage-header">
+            <h2 id="live-tunnel-stage-title">Tunnel</h2>
+            <p class="live-tunnel-badge" id="live-tunnel-badge" hidden>Live</p>
+            <button class="button button-quiet" id="live-tunnel-leave" type="button" hidden>
+              Leave
+            </button>
+          </div>
+          <div class="live-tunnel-frame" id="live-tunnel-frame">
+            <video id="live-tunnel-video" playsinline autoplay muted></video>
+            <p class="live-tunnel-placeholder" id="live-tunnel-placeholder">
+              Choose a live recording. The camera opens here without anyone accepting a call.
+            </p>
+          </div>
+          <p class="live-tunnel-caption" id="live-tunnel-caption"></p>
+          <div class="live-tunnel-voice" id="live-tunnel-voice" hidden>
+            <button class="button button-primary live-tunnel-voice-record" id="live-tunnel-voice-record" type="button" aria-pressed="false">
+              Voice message
+            </button>
+            <button class="button button-quiet" id="live-tunnel-voice-cancel" type="button" hidden>
+              Cancel
+            </button>
+            <p class="live-tunnel-voice-status" id="live-tunnel-voice-status" role="status"></p>
+          </div>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

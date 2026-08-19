@@ -94,12 +94,57 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // A live recording publishes its camera so an administrator can tunnel in
+    // without a call prompt. The owner heartbeats the document; viewer docs are
+    // WebRTC offers the recording answers automatically.
+    match /liveTunnels/{tunnelId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.ownerId == request.auth.uid);
+      allow create: if isSignedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.status == "live";
+      allow update: if isSignedIn() && resource.data.ownerId == request.auth.uid;
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.ownerId == request.auth.uid);
+
+      match /viewers/{viewerId} {
+        allow read: if isAdmin()
+          || (isSignedIn() && resource.data.publisherUid == request.auth.uid);
+        allow create: if isAdmin()
+          && request.resource.data.viewerUid == request.auth.uid
+          && request.resource.data.publisherUid is string;
+        allow update: if (isAdmin() && resource.data.viewerUid == request.auth.uid)
+          || (isSignedIn() && resource.data.publisherUid == request.auth.uid);
+        allow delete: if isAdmin()
+          || (isSignedIn() && resource.data.publisherUid == request.auth.uid);
+
+        match /ice/{iceId} {
+          allow read: if isAdmin()
+            || (isSignedIn() && resource.data.publisherUid == request.auth.uid);
+          allow create: if isSignedIn()
+            && request.resource.data.publisherUid is string
+            && request.resource.data.from in ["publisher", "viewer"]
+            && (
+              (
+                request.resource.data.from == "publisher"
+                && request.resource.data.publisherUid == request.auth.uid
+              ) || (
+                isAdmin()
+                && request.resource.data.from == "viewer"
+                && request.resource.data.viewerUid == request.auth.uid
+              )
+            );
+          allow delete: if isAdmin()
+            || (isSignedIn() && resource.data.publisherUid == request.auth.uid);
+        }
+      }
+    }
+
     match /{collection}/{document=**} {
       allow read, write: if isAdmin()
         && collection != "users"
         && collection != "workers"
         && collection != "attendanceDays"
-        && collection != "dashboardSessions";
+        && collection != "dashboardSessions"
+        && collection != "liveTunnels";
     }
   }
 }

@@ -799,6 +799,10 @@ test("cloud photos require sign-in and the admin dashboard groups them by place 
   assert.match(firestoreRules, /request\.resource\.data\.reviewReason == "manual-entry"/);
   assert.match(firestoreRules, /collection != "users"/);
   assert.match(firestoreRules, /collection != "workers"/);
+  assert.match(firestoreRules, /collection != "attendanceDays"/);
+  assert.match(firestoreRules, /collection != "dashboardSessions"/);
+  assert.match(firestoreRules, /match \/liveTunnels\/\{tunnelId\}/);
+  assert.match(firestoreRules, /collection != "liveTunnels"/);
   assert.equal(/allow read, write: if true/.test(firestoreRules), false);
 });
 

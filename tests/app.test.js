@@ -9,6 +9,7 @@ const cameraFacing = require("../camera-facing.js");
 const captureAttendance = require("../src/services/capture-attendance.js");
 const captureCamera = require("../src/capture/camera-controller.js");
 const cloudData = require("../photo-cloud.js");
+const liveTunnel = require("../src/services/live-tunnel.js");
 const poseOverlay = require("../src/components/pose-overlay.js");
 
 class FakeElement {
@@ -179,6 +180,7 @@ function createAppHarness(options = {}) {
     "capture-flash",
     "pose-overlay",
     "pose-badge",
+    "live-voice-notice",
     "camera-loader",
     "camera-loader-title",
     "camera-loader-detail",
@@ -388,6 +390,7 @@ function createAppHarness(options = {}) {
   const cloudCalls = {
     attendance: [],
     deleted: [],
+    liveTunnels: [],
     sessionGps: [],
     signIn: 0,
     signOut: 0,
@@ -421,6 +424,20 @@ function createAppHarness(options = {}) {
           cloudCalls.sessionGps.push({ session, gpsLocation });
           if (options.sessionGpsError) throw options.sessionGpsError;
           return { ...session, gpsLocation };
+        },
+        async publishLiveTunnel(session) {
+          cloudCalls.liveTunnels.push({ type: "publish", session });
+          if (options.liveTunnelError) throw options.liveTunnelError;
+          return { id: "live-1", ownerId: "owner-1", status: "live", ...session };
+        },
+        async heartbeatLiveTunnel(id) {
+          cloudCalls.liveTunnels.push({ type: "heartbeat", id });
+        },
+        async endLiveTunnel(id) {
+          cloudCalls.liveTunnels.push({ type: "end", id });
+        },
+        subscribeTunnelViewers() {
+          return () => {};
         },
         ...(Array.isArray(options.workerFaces)
           ? {
@@ -681,6 +698,7 @@ function createAppHarness(options = {}) {
     StampNoteCaptureAttendance: captureAttendance,
     StampNoteCaptureCamera: captureCamera,
     StampNoteFirebase: cloud,
+    StampNoteLiveTunnel: liveTunnel,
     StampNotePhotoCloud: cloudData,
     StampNoteFaceIdentity: options.faceEnrollment
       ? {
@@ -1226,6 +1244,67 @@ test("recording start stores GPS on the session before any reviewed photo is upl
     accuracyMeters: 12.5,
   });
   assert.ok(harness.events.some((event) => event.name === "session.gps.saved"));
+  assert.ok(
+    harness.cloudCalls.liveTunnels.some((entry) => entry.type === "publish"),
+    "session GPS must still write when a live tunnel is also published",
+  );
+});
+
+test("recording publishes a live tunnel without a call prompt and ends it when the camera stops", async () => {
+  const harness = createAppHarness({ camera: true, cloud: true });
+  await settle();
+  harness.auth({ email: "owner@example.com", uid: "owner-1" });
+  await settle();
+
+  await harness.elements["monitor-toggle"].dispatch("click");
+  await settle(8);
+
+  assert.equal(harness.controllerState.running, true);
+  const published = harness.cloudCalls.liveTunnels.find((entry) => entry.type === "publish");
+  assert.ok(published, "the live camera should be published as soon as recording starts");
+  assert.equal(published.session.location, "10 Marina Boulevard");
+  assert.equal(harness.cloudCalls.liveTunnels.some((entry) => entry.type === "end"), false);
+
+  await harness.elements["monitor-toggle"].dispatch("click");
+  await settle(4);
+  assert.ok(
+    harness.cloudCalls.liveTunnels.some((entry) => entry.type === "end" && entry.id === "live-1"),
+  );
+});
+
+test("a failed live tunnel does not stop recording or session GPS", async () => {
+  const harness = createAppHarness({
+    camera: true,
+    cloud: true,
+    liveTunnelError: Object.assign(new Error("Missing or insufficient permissions."), {
+      code: "permission-denied",
+    }),
+  });
+  await settle();
+  harness.auth({ email: "owner@example.com", uid: "owner-1" });
+  await settle();
+
+  await harness.elements["monitor-toggle"].dispatch("click");
+  await settle(8);
+
+  assert.equal(harness.controllerState.running, true);
+  assert.equal(harness.confirmCalls, 0, "recording should start without a blocking dialog");
+  assert.equal(harness.cloudCalls.sessionGps.length, 1);
+  assert.ok(harness.events.some((event) => event.name === "capture.monitor.started"));
+  assert.ok(harness.events.some((event) => event.name === "session.gps.saved"));
+});
+
+test("recording still starts without publishing a tunnel when the account is signed out", async () => {
+  const harness = createAppHarness({ camera: true, cloud: true });
+  await settle();
+
+  await harness.elements["monitor-toggle"].dispatch("click");
+  await settle(8);
+
+  assert.equal(harness.controllerState.running, true);
+  assert.equal(harness.cloudCalls.liveTunnels.length, 0);
+  assert.equal(harness.cloudCalls.sessionGps.length, 0);
+  assert.ok(harness.events.some((event) => event.name === "capture.monitor.started"));
 });
 
 test("initial camera startup uses a prominent loader until the stream is ready", async () => {
@@ -1284,8 +1363,11 @@ test("the device picks which camera watches, and is remembered", async () => {
 test("switching cameras mid-watch swaps the lens without stopping the watch", async () => {
   const harness = createAppHarness({
     camera: true,
+    cloud: true,
     storedFacing: { "stampnote-camera-facing": "user" },
   });
+  await settle();
+  harness.auth({ email: "owner@example.com", uid: "owner-1" });
   await settle();
 
   // A device already set up for the front camera opens on it.
@@ -1294,6 +1376,7 @@ test("switching cameras mid-watch swaps the lens without stopping the watch", as
   await settle(8);
   assert.equal(harness.cameraConstraints.video.facingMode, "user");
   assert.equal(harness.controllerState.running, true);
+  assert.ok(harness.cloudCalls.liveTunnels.some((entry) => entry.type === "publish"));
 
   await harness.elements["camera-facing-toggle"].dispatch("click");
   await settle(4);
@@ -1305,6 +1388,11 @@ test("switching cameras mid-watch swaps the lens without stopping the watch", as
   assert.equal(harness.controllerState.running, true);
   assert.equal(harness.controllerState.paused, false);
   assert.equal(harness.elements["camera-facing-name"].textContent, "Back");
+  assert.equal(
+    harness.cloudCalls.liveTunnels.some((entry) => entry.type === "end"),
+    false,
+    "swapping the lens must not end the live tunnel",
+  );
 });
 
 test("a camera that refuses to open leaves the one already working in place", async () => {

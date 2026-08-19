@@ -15,6 +15,7 @@ const aiDashboardHtml = readFileSync(resolve(root, "ai-dashboard.html"), "utf8")
 const onboardingHtml = readFileSync(resolve(root, "onboarding.html"), "utf8");
 const workerPhotosHtml = readFileSync(resolve(root, "worker-photos.html"), "utf8");
 const metricsHtml = readFileSync(resolve(root, "metrics.html"), "utf8");
+const liveTunnelHtml = readFileSync(resolve(root, "live-tunnel.html"), "utf8");
 const server = readFileSync(resolve(root, "server.js"), "utf8");
 
 class FakeElement {
@@ -148,7 +149,7 @@ function createSidebarHarness(pathname, options = {}) {
 }
 
 test("every switchable page loads the drawer and marks where its toggle goes", () => {
-  [captureHtml, adminHtml, coordinatesHtml, agentCoordinatesHtml, aiDashboardHtml, onboardingHtml, workerPhotosHtml].forEach((html) => {
+  [captureHtml, adminHtml, coordinatesHtml, agentCoordinatesHtml, aiDashboardHtml, onboardingHtml, workerPhotosHtml, liveTunnelHtml].forEach((html) => {
     assert.match(html, /<link rel="stylesheet" href="sidebar\.css" \/>/);
     assert.match(html, /<script src="sidebar\.js" defer><\/script>/);
     assert.match(html, /<header[^>]*data-sidebar-mount/);
@@ -173,6 +174,7 @@ test("sign-out is a door icon on every account control", () => {
     ["onboarding.html", onboardingHtml],
     ["worker-photos.html", workerPhotosHtml],
     ["ai-dashboard.html", aiDashboardHtml],
+    ["live-tunnel.html", liveTunnelHtml],
     ["metrics.html", metricsHtml],
   ].forEach(([name, html]) => {
     assert.match(html, /class="sign-out-icon"/, `${name} should use the door sign-out icon`);
@@ -232,6 +234,7 @@ test("the drawer lists every page and marks the one being viewed", () => {
       "agent-coordinates.html",
       "ai-dashboard.html",
       "admin.html",
+      "live-tunnel.html",
       "metrics.html",
     ],
   );
@@ -243,9 +246,13 @@ test("the drawer lists every page and marks the one being viewed", () => {
     links.find((link) => link.href === "agent-coordinates.html")?.textContent,
     "Coordinate entry",
   );
+  assert.equal(
+    links.find((link) => link.href === "live-tunnel.html")?.textContent,
+    "Live tunnel",
+  );
   assert.deepEqual(
     links.map((link) => link.getAttribute("aria-current")),
-    [null, null, "page", null, null, null, null, null],
+    [null, null, "page", null, null, null, null, null, null],
   );
 
   // Each link carries an icon and its label, with no extra hint descriptions.
@@ -269,7 +276,8 @@ test("the drawer lists every page and marks the one being viewed", () => {
   assert.equal(createSidebarHarness("/agent-coordinates").links[4].getAttribute("aria-current"), "page");
   assert.equal(createSidebarHarness("/ai-dashboard").links[5].getAttribute("aria-current"), "page");
   assert.equal(createSidebarHarness("/worker-photos").links[1].getAttribute("aria-current"), "page");
-  assert.equal(createSidebarHarness("/metrics").links[7].getAttribute("aria-current"), "page");
+  assert.equal(createSidebarHarness("/live-tunnel").links[7].getAttribute("aria-current"), "page");
+  assert.equal(createSidebarHarness("/metrics").links[8].getAttribute("aria-current"), "page");
   assert.equal(createSidebarHarness("/").links[0].getAttribute("aria-current"), "page");
 });
 

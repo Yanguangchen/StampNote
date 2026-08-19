@@ -17,6 +17,8 @@ function createHarness(options = {}) {
     redirects: [],
     revoked: [],
     signOut: [],
+    snapshots: [],
+    unsubscribedSnapshots: [],
     writes: [],
   };
   const auth = {
@@ -196,6 +198,29 @@ function createHarness(options = {}) {
     },
     async setDoc(reference, value, writeOptions) {
       calls.writes.push({ reference, value, writeOptions });
+    },
+    onSnapshot(target, onNext, onError) {
+      calls.snapshots.push({ target, onNext, onError });
+      const docs = options.liveTunnelDocs || [];
+      queueMicrotask(() => {
+        onNext({
+          id: target?.segments?.at?.(-1),
+          exists: () => docs.length > 0,
+          docs: docs.map((entry) => ({
+            id: entry.id,
+            data: () => {
+              const { id, ...rest } = entry;
+              return rest;
+            },
+          })),
+          size: docs.length,
+          empty: docs.length === 0,
+          data: () => (docs[0] ? { ...docs[0] } : undefined),
+        });
+      });
+      return () => {
+        calls.unsubscribedSnapshots.push(target);
+      };
     },
     startAfter(value) {
       return { kind: "startAfter", value };
@@ -1548,4 +1573,93 @@ test("signed-in accounts without a worker claim are superadmins", async () => {
     role: "admin",
     canAccessAdmin: true,
   });
+});
+
+test("a signed-in recording publishes a live tunnel that administrators can subscribe to", async () => {
+  const harness = createHarness();
+  await harness.client.ready;
+
+  const published = await harness.client.publishLiveTunnel({
+    location: "10 Marina Bay",
+    tunnelId: "live_user-1_test",
+    startedAtMs: Date.parse("2026-08-19T10:00:00.000Z"),
+  });
+  assert.equal(published.id, "live_user-1_test");
+  assert.equal(published.status, "live");
+  assert.equal(published.ownerId, "user-1");
+  assert.equal(published.location, "10 Marina Bay");
+  const write = harness.calls.writes.at(-1);
+  assert.deepEqual(write.reference.segments.slice(1), ["liveTunnels", "live_user-1_test"]);
+  assert.equal(write.value.status, "live");
+  assert.equal(write.writeOptions.merge, true);
+
+  await harness.client.heartbeatLiveTunnel("live_user-1_test");
+  assert.equal(harness.calls.writes.at(-1).value.status, "live");
+  assert.ok(harness.calls.writes.at(-1).value.lastSeenAtMs > 0);
+
+  await harness.client.endLiveTunnel("live_user-1_test");
+  assert.equal(harness.calls.writes.at(-1).value.status, "ended");
+
+  const viewer = await harness.client.createTunnelViewer("live_user-1_test", {
+    publisherUid: "user-1",
+    viewerId: "view-admin",
+    offer: { type: "offer", sdp: "v=0" },
+  });
+  assert.equal(viewer.id, "view-admin");
+  const viewerWrite = harness.calls.writes.at(-1);
+  assert.deepEqual(viewerWrite.reference.segments.slice(1), [
+    "liveTunnels",
+    "live_user-1_test",
+    "viewers",
+    "view-admin",
+  ]);
+  assert.equal(viewerWrite.value.offer.sdp, "v=0");
+  assert.equal(viewerWrite.value.status, "joining");
+
+  await harness.client.setTunnelViewerAnswer("live_user-1_test", "view-admin", {
+    type: "answer",
+    sdp: "v=1",
+  });
+  assert.equal(harness.calls.writes.at(-1).value.answer.sdp, "v=1");
+
+  await harness.client.addTunnelIce("live_user-1_test", "view-admin", {
+    from: "publisher",
+    publisherUid: "user-1",
+    iceId: "ice-1",
+    candidate: { candidate: "candidate:1", sdpMid: "0", sdpMLineIndex: 0 },
+  });
+  assert.deepEqual(harness.calls.writes.at(-1).reference.segments.slice(1), [
+    "liveTunnels",
+    "live_user-1_test",
+    "viewers",
+    "view-admin",
+    "ice",
+    "ice-1",
+  ]);
+
+  const seen = [];
+  const stop = harness.client.subscribeLiveTunnels((records) => seen.push(records));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(harness.calls.snapshots.length, 1);
+  assert.equal(harness.calls.snapshots[0].target.clauses[0].kind, "where");
+  stop();
+});
+
+test("field staff cannot watch live tunnels", async () => {
+  const fieldUser = {
+    uid: "worker-1",
+    email: "worker@example.com",
+    async getIdTokenResult() {
+      return { claims: { stampnoteRole: "worker" } };
+    },
+  };
+  const harness = createHarness({ user: fieldUser });
+  await harness.client.ready;
+  await assert.rejects(
+    harness.client.createTunnelViewer("live_1", {
+      publisherUid: "user-1",
+      offer: { type: "offer", sdp: "v=0" },
+    }),
+    (error) => error.code === "admin-required",
+  );
 });

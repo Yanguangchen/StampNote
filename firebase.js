@@ -1120,6 +1120,264 @@
     return new scope.Blob([bytes], { type: photo.imageContentType || "image/jpeg" });
   }
 
+    function requireTunnelId(tunnelId) {
+      const id = String(tunnelId || "").trim();
+      if (!id) {
+        throw new Error("The live tunnel has no ID.");
+      }
+      return id;
+    }
+
+    function requireViewerId(viewerId) {
+      const id = String(viewerId || "").trim();
+      if (!id) {
+        throw new Error("The live tunnel viewer has no ID.");
+      }
+      return id;
+    }
+
+    function requireSdp(description, kind) {
+      const type = String(description?.type || "");
+      const sdp = String(description?.sdp || "");
+      if ((kind === "offer" && type !== "offer") || (kind === "answer" && type !== "answer")) {
+        throw new Error(`The live tunnel is missing a WebRTC ${kind}.`);
+      }
+      if (!sdp) {
+        throw new Error(`The live tunnel is missing a WebRTC ${kind}.`);
+      }
+      return { type, sdp };
+    }
+
+    function liveTunnelDoc(cloud, tunnelId) {
+      return cloud.firestoreSdk.doc(cloud.db, "liveTunnels", tunnelId);
+    }
+
+    function liveViewerDoc(cloud, tunnelId, viewerId) {
+      return cloud.firestoreSdk.doc(cloud.db, "liveTunnels", tunnelId, "viewers", viewerId);
+    }
+
+    function snapshotRecords(snapshot) {
+      return (snapshot?.docs || []).map((entry) => ({ id: entry.id, ...entry.data() }));
+    }
+
+    function listen(subscribe, onError) {
+      let cancelled = false;
+      let unsubscribe = () => {};
+      Promise.resolve()
+        .then(subscribe)
+        .then((stop) => {
+          if (typeof stop === "function") unsubscribe = stop;
+          if (cancelled) unsubscribe();
+        })
+        .catch((error) => {
+          if (!cancelled) onError?.(error);
+        });
+      return () => {
+        cancelled = true;
+        unsubscribe();
+      };
+    }
+
+    async function publishLiveTunnel(sessionInput = {}) {
+      const cloud = services || (await ready);
+      const user = requireUser(cloud, "Sign in with Google before sharing a live recording.");
+      const data = requireCloudData();
+      const startedAtMs = Number(sessionInput.startedAtMs) || Date.now();
+      const capturedAt = new Date(startedAtMs);
+      const session = data.sessionDefinitionFor(capturedAt);
+      const location = data.normalizeLocation(sessionInput.location);
+      const tunnelId = String(sessionInput.tunnelId || `live_${user.uid}_${startedAtMs.toString(36)}`);
+      const record = {
+        ownerId: user.uid,
+        ownerEmail: String(user.email || ""),
+        location,
+        locationKey: data.createLocationKey(location),
+        dateKey: sessionInput.dateKey || data.createDateKey(capturedAt),
+        sessionId: String(sessionInput.sessionId || session.id),
+        sessionLabel: String(sessionInput.sessionLabel || session.label || session.id),
+        status: "live",
+        startedAtMs,
+        lastSeenAtMs: startedAtMs,
+        updatedAt: cloud.firestoreSdk.serverTimestamp(),
+      };
+      await cloud.firestoreSdk.setDoc(liveTunnelDoc(cloud, tunnelId), record, { merge: true });
+      return { id: tunnelId, ...record };
+    }
+
+    async function heartbeatLiveTunnel(tunnelId) {
+      const cloud = services || (await ready);
+      requireUser(cloud, "Sign in with Google before sharing a live recording.");
+      const id = requireTunnelId(tunnelId);
+      await cloud.firestoreSdk.setDoc(
+        liveTunnelDoc(cloud, id),
+        {
+          status: "live",
+          lastSeenAtMs: Date.now(),
+          updatedAt: cloud.firestoreSdk.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    }
+
+    async function endLiveTunnel(tunnelId) {
+      const cloud = services || (await ready);
+      requireUser(cloud, "Sign in with Google before sharing a live recording.");
+      const id = requireTunnelId(tunnelId);
+      const endedAtMs = Date.now();
+      await cloud.firestoreSdk.setDoc(
+        liveTunnelDoc(cloud, id),
+        {
+          status: "ended",
+          lastSeenAtMs: endedAtMs,
+          endedAtMs,
+          updatedAt: cloud.firestoreSdk.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    }
+
+    function subscribeLiveTunnels(onChange, onError) {
+      return listen(async () => {
+        const cloud = services || (await ready);
+        await requireAdmin(cloud, "Administrator access is required to watch live recordings.");
+        return cloud.firestoreSdk.onSnapshot(
+          cloud.firestoreSdk.query(
+            cloud.firestoreSdk.collection(cloud.db, "liveTunnels"),
+            cloud.firestoreSdk.where("status", "==", "live"),
+          ),
+          (snapshot) => onChange?.(snapshotRecords(snapshot)),
+          (error) => onError?.(error),
+        );
+      }, onError);
+    }
+
+    function subscribeTunnelViewers(tunnelId, onChange, onError) {
+      const id = requireTunnelId(tunnelId);
+      return listen(async () => {
+        const cloud = services || (await ready);
+        requireUser(cloud, "Sign in with Google before sharing a live recording.");
+        return cloud.firestoreSdk.onSnapshot(
+          cloud.firestoreSdk.collection(cloud.db, "liveTunnels", id, "viewers"),
+          (snapshot) => onChange?.(snapshotRecords(snapshot)),
+          (error) => onError?.(error),
+        );
+      }, onError);
+    }
+
+    function subscribeTunnelViewer(tunnelId, viewerId, onChange, onError) {
+      const id = requireTunnelId(tunnelId);
+      const viewer = requireViewerId(viewerId);
+      return listen(async () => {
+        const cloud = services || (await ready);
+        await requireAdmin(cloud, "Administrator access is required to watch live recordings.");
+        return cloud.firestoreSdk.onSnapshot(
+          liveViewerDoc(cloud, id, viewer),
+          (snapshot) => {
+            const exists = typeof snapshot?.exists === "function" ? snapshot.exists() : snapshot?.exists;
+            const data = typeof snapshot?.data === "function" ? snapshot.data() : null;
+            if (!exists || !data) {
+              onChange?.(null);
+              return;
+            }
+            onChange?.({ id: snapshot.id || viewer, ...data });
+          },
+          (error) => onError?.(error),
+        );
+      }, onError);
+    }
+
+    function subscribeTunnelIce(tunnelId, viewerId, onChange, onError) {
+      const id = requireTunnelId(tunnelId);
+      const viewer = requireViewerId(viewerId);
+      return listen(async () => {
+        const cloud = services || (await ready);
+        requireUser(cloud, "Sign in with Google before sharing a live recording.");
+        return cloud.firestoreSdk.onSnapshot(
+          cloud.firestoreSdk.collection(cloud.db, "liveTunnels", id, "viewers", viewer, "ice"),
+          (snapshot) => onChange?.(snapshotRecords(snapshot)),
+          (error) => onError?.(error),
+        );
+      }, onError);
+    }
+
+    async function createTunnelViewer(tunnelId, input = {}) {
+      const cloud = services || (await ready);
+      const user = await requireAdmin(cloud, "Administrator access is required to watch live recordings.");
+      const id = requireTunnelId(tunnelId);
+      const publisherUid = String(input.publisherUid || "").trim();
+      if (!publisherUid) {
+        throw new Error("The live recording has no publisher.");
+      }
+      const offer = requireSdp(input.offer, "offer");
+      const viewerId = String(input.viewerId || `view_${user.uid}_${Date.now().toString(36)}`);
+      await cloud.firestoreSdk.setDoc(liveViewerDoc(cloud, id, viewerId), {
+        publisherUid,
+        viewerUid: user.uid,
+        viewerEmail: String(user.email || ""),
+        offer,
+        status: "joining",
+        createdAtMs: Date.now(),
+        updatedAt: cloud.firestoreSdk.serverTimestamp(),
+      });
+      return { id: viewerId, tunnelId: id, publisherUid, viewerUid: user.uid, offer, status: "joining" };
+    }
+
+    async function setTunnelViewerAnswer(tunnelId, viewerId, answerInput) {
+      const cloud = services || (await ready);
+      requireUser(cloud, "Sign in with Google before sharing a live recording.");
+      const answer = requireSdp(answerInput, "answer");
+      await cloud.firestoreSdk.setDoc(
+        liveViewerDoc(cloud, requireTunnelId(tunnelId), requireViewerId(viewerId)),
+        {
+          answer,
+          status: "connected",
+          updatedAt: cloud.firestoreSdk.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    }
+
+    async function addTunnelIce(tunnelId, viewerId, input = {}) {
+      const cloud = services || (await ready);
+      const user = requireUser(cloud, "Sign in with Google before sharing a live recording.");
+      const candidateValue = String(input.candidate?.candidate || input.candidate || "");
+      if (!candidateValue) return null;
+      const from = input.from === "publisher" ? "publisher" : "viewer";
+      const iceId = String(input.iceId || `ice_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`);
+      const record = {
+        from,
+        publisherUid: String(input.publisherUid || ""),
+        viewerUid: String(input.viewerUid || user.uid),
+        candidate: candidateValue,
+        sdpMid: input.candidate?.sdpMid == null ? null : String(input.candidate.sdpMid),
+        sdpMLineIndex: Number.isFinite(Number(input.candidate?.sdpMLineIndex))
+          ? Number(input.candidate.sdpMLineIndex)
+          : null,
+        createdAtMs: Date.now(),
+      };
+      await cloud.firestoreSdk.setDoc(
+        cloud.firestoreSdk.doc(
+          cloud.db,
+          "liveTunnels",
+          requireTunnelId(tunnelId),
+          "viewers",
+          requireViewerId(viewerId),
+          "ice",
+          iceId,
+        ),
+        record,
+      );
+      return { id: iceId, ...record };
+    }
+
+    async function leaveTunnelViewer(tunnelId, viewerId) {
+      const cloud = services || (await ready);
+      requireUser(cloud, "Sign in with Google before leaving a live recording.");
+      await cloud.firestoreSdk.deleteDoc(
+        liveViewerDoc(cloud, requireTunnelId(tunnelId), requireViewerId(viewerId)),
+      );
+    }
+
     return Object.freeze({
       ready,
       deleteWorkerFace,
@@ -1144,6 +1402,17 @@
       deleteReviewedPhoto,
       getPhotosPage,
       getPhotoBlob,
+      publishLiveTunnel,
+      heartbeatLiveTunnel,
+      endLiveTunnel,
+      subscribeLiveTunnels,
+      subscribeTunnelViewers,
+      subscribeTunnelViewer,
+      subscribeTunnelIce,
+      createTunnelViewer,
+      setTunnelViewerAnswer,
+      addTunnelIce,
+      leaveTunnelViewer,
     });
   }
 

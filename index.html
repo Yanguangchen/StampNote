@@ -61,7 +61,8 @@
     <script src="src/components/pose-overlay.js" defer></script>
     <script src="src/services/capture-attendance.js?v=20260818-1" defer></script>
     <script src="src/capture/camera-controller.js" defer></script>
-    <script src="app.js?v=20260818-6" defer></script>
+    <script src="src/services/live-tunnel.js" defer></script>
+    <script src="app.js?v=20260819-1" defer></script>
     <script src="orbit.js?v=20260818-1" defer></script>
   </head>
   <body>
@@ -231,6 +232,7 @@
       </div>
 
       <p class="monitor-badge" id="pose-badge" role="status" aria-live="polite"></p>
+      <p class="live-voice-notice" id="live-voice-notice" hidden>Playing a voice message</p>
       <p class="status stage-status" id="monitor-status" role="status" aria-live="polite"></p>
     </main>
 

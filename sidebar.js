@@ -44,6 +44,10 @@
           icon: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1c-1.3 0-2.4.84-2.82 2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm-7 0a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm-5 6h10v2H7V9zm0 4h10v2H7v-2zm0 4h7v2H7v-2z"/></svg>',
         },
         {
+          file: "live-tunnel.html", label: "Live tunnel",
+          icon: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/><circle cx="8" cy="12" r="1.6" fill="currentColor" stroke="none"/></svg>',
+        },
+        {
           file: "metrics.html", label: "Metrics",
           icon: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 19h16v2H2V3h2v16zm4-3H6v-5h2v5zm4 0h-2V7h2v9zm4 0h-2v-8h2v8zm4 0h-2V4h2v12z"/></svg>',
         },
