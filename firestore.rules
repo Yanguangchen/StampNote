@@ -7,8 +7,19 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      // Signed-in accounts are superadmins unless explicitly marked worker.
-      return isSignedIn() && request.auth.token.stampnoteRole != "worker";
+      // Main superadmins are verified Google accounts listed here. Explicit
+      // admin/superadmin custom claims remain supported for future accounts.
+      return isSignedIn()
+        && (
+          (
+            request.auth.token.email_verified == true
+            && request.auth.token.email in [
+              "yanguangchensp@gmail.com",
+              "shen.hocklim@gmail.com"
+            ]
+          )
+          || request.auth.token.stampnoteRole in ["admin", "superadmin"]
+        );
     }
 
     function isOwner(userId) {

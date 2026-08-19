@@ -787,7 +787,10 @@ test("cloud photos require sign-in and the admin dashboard groups them by place 
   assert.match(firebase, /imageData:/);
   assert.match(firestoreRules, /match \/users\/\{userId\}\/photos\/\{photoId\}/);
   assert.match(firestoreRules, /match \/users\/\{userId\}\/workers\/\{workerId\}/);
-  assert.match(firestoreRules, /request\.auth\.token\.stampnoteRole != "worker"/);
+  assert.match(firestoreRules, /request\.auth\.token\.email_verified == true/);
+  assert.match(firestoreRules, /"yanguangchensp@gmail\.com"/);
+  assert.match(firestoreRules, /"shen\.hocklim@gmail\.com"/);
+  assert.match(firestoreRules, /request\.auth\.token\.stampnoteRole in \["admin", "superadmin"\]/);
   assert.match(firestoreRules, /request\.auth\.uid == userId/);
   assert.match(firestoreRules, /resource\.data\.ownerId == request\.auth\.uid/);
   assert.match(firestoreRules, /match \/\{path=\*\*\}\/entries\/\{entryId\}/);
