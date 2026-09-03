@@ -301,7 +301,7 @@ See [OBSERVABILITY.md](OBSERVABILITY.md) for the event catalog, production log c
 - `sidebar.js`, `sidebar.css` — shared page menu mounted on every surface
 - `admin.html`, `admin.css`, `admin.js` — combined authenticated photo and attendance dashboard
 - `live-tunnel.html`, `live-tunnel.css`, `live-tunnel.js` — administrator live view of any camera that is recording
-- `src/services/live-tunnel.js` — WebRTC publisher/viewer with Firestore signaling and no call prompt
+- `src/services/live-tunnel.js` — WebRTC publisher/viewer with Firestore signaling, JPEG picture relay, and no call prompt
 - `coordinates.html`, `coordinates.css`, `coordinates.js` — Geographic Surveillence GPS comparison and truck-coordinate entry workspace
 - `ai-dashboard.html`, `ai-dashboard.css`, `ai-dashboard.js` — Operations AI conversation over loaded workspace records
 - `metrics.html`, `metrics.css`, `metrics.js` — 7- and 30-day attendance, flag and session counts

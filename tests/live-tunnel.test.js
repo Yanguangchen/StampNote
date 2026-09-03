@@ -45,6 +45,10 @@ function createMemoryCloud() {
   const viewerListListeners = [];
   const viewerDocListeners = [];
   const iceListeners = [];
+  const pictureListeners = [];
+  const voiceListeners = [];
+  const pictures = new Map();
+  const voices = [];
 
   function viewerKey(tunnelId, viewerId) {
     return `${tunnelId}/${viewerId}`;
@@ -135,6 +139,44 @@ function createMemoryCloud() {
     async leaveTunnelViewer(tunnelId, viewerId) {
       viewersByTunnel.get(tunnelId)?.delete(viewerId);
       emitViewers(tunnelId);
+    },
+    async publishLiveTunnelPicture(tunnelId, input) {
+      const record = { id: "picture", tunnelId, ...input };
+      pictures.set(tunnelId, record);
+      pictureListeners
+        .filter((listener) => listener.tunnelId === tunnelId)
+        .forEach((listener) => listener.onChange(record));
+      return record;
+    },
+    subscribeTunnelPicture(tunnelId, onChange) {
+      const listener = { tunnelId, onChange };
+      pictureListeners.push(listener);
+      onChange(pictures.get(tunnelId) || null);
+      return () => {
+        const index = pictureListeners.indexOf(listener);
+        if (index >= 0) pictureListeners.splice(index, 1);
+      };
+    },
+    async sendTunnelVoice(tunnelId, input) {
+      const record = {
+        id: input.voiceId || `voice-${voices.length + 1}`,
+        tunnelId,
+        ...input,
+      };
+      voices.push(record);
+      voiceListeners
+        .filter((listener) => listener.tunnelId === tunnelId)
+        .forEach((listener) => listener.onChange([...voices]));
+      return record;
+    },
+    subscribeTunnelVoices(tunnelId, onChange) {
+      const listener = { tunnelId, onChange };
+      voiceListeners.push(listener);
+      onChange([...voices]);
+      return () => {
+        const index = voiceListeners.indexOf(listener);
+        if (index >= 0) voiceListeners.splice(index, 1);
+      };
     },
   };
 }
@@ -331,6 +373,144 @@ test("a voice message is encoded, sent on the open tunnel, and played without an
   assert.equal(received[0].durationMs, 1200);
 });
 
+test("ICE candidates that arrive before the answer are applied once the tunnel completes", async () => {
+  pendingVoiceRemote = null;
+  const cloud = createMemoryCloud();
+  const peers = [];
+  class StrictIcePeer extends FakePeerConnection {
+    constructor(config) {
+      super(config);
+      peers.push(this);
+    }
+
+    async addIceCandidate(candidate) {
+      if (!this.remoteDescription) {
+        throw new Error("Remote description is required.");
+      }
+      this.ice.push(candidate);
+    }
+  }
+
+  const viewer = liveTunnel.createViewer({
+    cloud,
+    RTCPeerConnection: StrictIcePeer,
+  });
+  await viewer.connect({ id: "live-1", ownerId: "owner-1" });
+  await cloud.addTunnelIce("live-1", "view-1", {
+    iceId: "ice-early",
+    from: "publisher",
+    candidate: { candidate: "candidate:1", sdpMid: "0", sdpMLineIndex: 0 },
+  });
+  await settle();
+  assert.equal(peers[0].ice.length, 0, "candidates must wait for the answer");
+
+  await cloud.setTunnelViewerAnswer("live-1", "view-1", {
+    type: "answer",
+    sdp: "answer-sdp",
+  });
+  await settle();
+  assert.equal(peers[0].ice.length, 1);
+  assert.equal(peers[0].ice[0].candidate, "candidate:1");
+});
+
+test("a Firestore picture keeps the tunnel live when this network cannot complete WebRTC", async () => {
+  pendingVoiceRemote = null;
+  const cloud = createMemoryCloud();
+  const states = [];
+  const pictures = [];
+  const stream = {
+    getTracks: () => [{ kind: "video", id: "cam" }],
+    getVideoTracks: () => [{ kind: "video", id: "cam" }],
+    getAudioTracks: () => [],
+  };
+  const publisher = liveTunnel.createPublisher({
+    cloud,
+    getStream: () => stream,
+    RTCPeerConnection: FakePeerConnection,
+    pictureMs: 20,
+    async capturePicture() {
+      return { mimeType: "image/jpeg", image: "qqq", capturedAtMs: 1 };
+    },
+  });
+  await publisher.publish({ tunnelId: "live-1", location: "10 Marina Bay" });
+  await settle();
+
+  const viewer = liveTunnel.createViewer({
+    cloud,
+    networkFailMs: 20,
+    RTCPeerConnection: class FailingPeer extends FakePeerConnection {
+      async setRemoteDescription(description) {
+        this.remoteDescription = description;
+        this.connectionState = "failed";
+        this.onconnectionstatechange?.();
+      }
+    },
+    onPicture(record) {
+      pictures.push(record);
+    },
+    onState(state) {
+      states.push(state);
+    },
+  });
+  await viewer.connect({ id: "live-1", ownerId: "owner-1" });
+  await settle();
+
+  assert.ok(pictures.some((entry) => entry.image === "qqq"));
+  assert.equal(states.at(-1), "live");
+  assert.equal(states.includes("failed"), false);
+  await publisher.close();
+});
+
+test("a voice message still reaches the recording when the WebRTC channel never opens", async () => {
+  pendingVoiceRemote = null;
+  const received = [];
+  const cloud = createMemoryCloud();
+  const stream = {
+    getTracks: () => [{ kind: "video", id: "cam" }],
+    getVideoTracks: () => [{ kind: "video", id: "cam" }],
+    getAudioTracks: () => [],
+  };
+  const publisher = liveTunnel.createPublisher({
+    cloud,
+    getStream: () => stream,
+    RTCPeerConnection: FakePeerConnection,
+    onVoiceMessage(message) {
+      received.push(message);
+    },
+  });
+  await publisher.publish({ tunnelId: "live-1", location: "10 Marina Bay" });
+
+  const viewer = liveTunnel.createViewer({
+    cloud,
+    voiceChannelMs: 10,
+    RTCPeerConnection: class SilentVoicePeer extends FakePeerConnection {
+      createDataChannel(label) {
+        const local = new FakeDataChannel(label);
+        local.readyState = "connecting";
+        this.voiceChannel = local;
+        return local;
+      }
+    },
+  });
+  await viewer.connect({ id: "live-1", ownerId: "owner-1" });
+  await settle();
+
+  const blob = new Blob([Uint8Array.of(7, 8, 9)], { type: "audio/webm" });
+  await viewer.sendVoiceMessage(blob, { durationMs: 900 });
+  await settle();
+  assert.equal(received.length, 1);
+  assert.equal(received[0].type, "voice-message");
+  assert.equal(received[0].durationMs, 900);
+});
+
+test("a picture payload becomes a data URL the stage can show", () => {
+  assert.equal(
+    liveTunnel.pictureToDataUrl({ mimeType: "image/jpeg", image: "abc" }),
+    "data:image/jpeg;base64,abc",
+  );
+  assert.equal(liveTunnel.picturePayload({ image: "" }), null);
+});
+
 test("an empty or oversized voice message is refused", async () => {
   await assert.rejects(liveTunnel.encodeVoiceMessage(new Blob([])), /empty/i);
   const huge = new Blob([new Uint8Array(liveTunnel.MAX_VOICE_BYTES + 1)]);
@@ -371,6 +551,7 @@ test("the page is a dedicated admin surface with no accept or reject controls", 
   assert.match(html, /Continue with Google/);
   assert.match(html, /id="live-tunnel-list"/);
   assert.match(html, /id="live-tunnel-video"/);
+  assert.match(html, /id="live-tunnel-picture"/);
   assert.match(html, /without anyone accepting a call/);
   assert.match(html, /id="live-tunnel-voice-record"/);
   assert.match(html, /Voice message/);
@@ -397,6 +578,7 @@ class FakeElement {
     this.srcObject = null;
     this.listeners = new Map();
     this.parentElement = null;
+    this.src = "";
   }
 
   append(...children) {
@@ -425,6 +607,11 @@ class FakeElement {
     return this.attributes.get(name) ?? null;
   }
 
+  removeAttribute(name) {
+    this.attributes.delete(name);
+    if (name === "src") this.src = "";
+  }
+
   async dispatch(name, event = {}) {
     const list = this.listeners.get(name) || [];
     for (const callback of list) {
@@ -450,6 +637,7 @@ function createPageHarness(options = {}) {
     "live-tunnel-empty",
     "live-tunnel-count",
     "live-tunnel-video",
+    "live-tunnel-picture",
     "live-tunnel-frame",
     "live-tunnel-placeholder",
     "live-tunnel-caption",
@@ -519,6 +707,15 @@ function createPageHarness(options = {}) {
     },
     addTunnelIce() {},
     leaveTunnelViewer() {},
+    subscribeTunnelPicture(tunnelId, onChange) {
+      queueMicrotask(() => onChange(options.picture || null));
+      return () => {};
+    },
+    async sendTunnelVoice(tunnelId, input) {
+      cloudCalls.voices = cloudCalls.voices || [];
+      cloudCalls.voices.push({ tunnelId, input });
+      return { id: "voice-1", tunnelId, ...input };
+    },
   };
 
   const document = {
@@ -580,7 +777,7 @@ function createPageHarness(options = {}) {
         },
       },
     },
-    RTCPeerConnection: FakePeerConnection,
+    RTCPeerConnection: options.PeerConnection || FakePeerConnection,
     StampNoteFirebase: cloud,
     StampNoteLiveTunnel: liveTunnel,
     StampNoteObservability: {
@@ -626,6 +823,32 @@ test("signing in lists live recordings and tunnels in without an accept step", a
   assert.equal(harness.cloudCalls.joined[0].input.offer.type, "offer");
   assert.equal(harness.elements["live-tunnel-leave"].hidden, false);
   assert.match(harness.elements["live-tunnel-caption"].textContent, /10 Marina Bay/);
+});
+
+test("the page shows a live picture when this network cannot open the camera call", async () => {
+  const harness = createPageHarness({
+    picture: { mimeType: "image/jpeg", image: "abc123", capturedAtMs: 1 },
+    PeerConnection: class FailingPeer extends FakePeerConnection {
+      async setRemoteDescription(description) {
+        this.remoteDescription = description;
+        this.connectionState = "failed";
+        this.onconnectionstatechange?.();
+      }
+    },
+  });
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  await harness.elements["live-tunnel-list"].children[0].dispatch("click");
+  await settle();
+
+  assert.match(harness.elements["live-tunnel-picture"].src, /data:image\/jpeg;base64,abc123/);
+  assert.equal(harness.elements["live-tunnel-frame"].dataset.live, "true");
+  assert.equal(harness.elements["live-tunnel-frame"].dataset.mode, "relay");
+  assert.equal(harness.elements["live-tunnel-status"].dataset.state, "idle");
+  assert.doesNotMatch(
+    harness.elements["live-tunnel-status"].textContent,
+    /could not open a live picture/i,
+  );
 });
 
 test("a live tunnel can record and send a voice message without an accept step", async () => {

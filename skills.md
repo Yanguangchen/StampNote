@@ -471,8 +471,8 @@ Use when the user asked to watch a recording that is happening now. Do not start
 
 1. If `#live-tunnel-auth-gate` is visible, click `#live-tunnel-sign-in`.
 2. `#live-tunnel-list` shows cameras that are live. Each `.live-tunnel-item` is a site; click it to tunnel in. There is no accept/reject step on the recording device.
-3. `#live-tunnel-video` shows the live picture. `#live-tunnel-leave` disconnects.
-4. `#live-tunnel-voice-record` records a voice message and sends it to the recording device. The recording plays it without an accept/reject step. `#live-tunnel-voice-cancel` discards a take.
+3. `#live-tunnel-video` shows the live picture when the two devices can open a camera call. `#live-tunnel-picture` shows updating stills when this network cannot complete that call. `#live-tunnel-leave` disconnects.
+4. `#live-tunnel-voice-record` records a voice message and sends it to the recording device. The recording plays it without an accept/reject step. `#live-tunnel-voice-cancel` discards a take. Voice still sends when the camera call cannot open.
 5. `#live-tunnel-empty` means nobody is recording right now.
 
 Deep link: `live-tunnel.html?tunnel={tunnelId}`.

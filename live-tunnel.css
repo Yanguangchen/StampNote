@@ -296,7 +296,8 @@ button {
   background: var(--stage);
 }
 
-.live-tunnel-frame video {
+.live-tunnel-frame video,
+.live-tunnel-frame img {
   display: block;
   width: 100%;
   height: 100%;
@@ -304,7 +305,15 @@ button {
   background: var(--stage);
 }
 
-.live-tunnel-frame:not([data-live="true"]) video {
+.live-tunnel-frame img {
+  position: absolute;
+  inset: 0;
+}
+
+.live-tunnel-frame:not([data-live="true"]) video,
+.live-tunnel-frame:not([data-live="true"]) img,
+.live-tunnel-frame[data-mode="relay"] video,
+.live-tunnel-frame[data-mode="webrtc"] img {
   visibility: hidden;
 }
 

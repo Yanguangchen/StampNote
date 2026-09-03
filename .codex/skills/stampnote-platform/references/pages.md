@@ -76,8 +76,8 @@ Watch a camera that is recording right now. The recording device does not accept
 
 1. `#live-tunnel-sign-in` if the gate is shown.
 2. Click a `.live-tunnel-item` in `#live-tunnel-list`.
-3. `#live-tunnel-video` is the live picture. `#live-tunnel-leave` disconnects.
-4. `#live-tunnel-voice-record` sends a voice message that plays on the recording device. There is no accept/reject step.
+3. `#live-tunnel-video` is the live picture when the camera call opens. `#live-tunnel-picture` is the updating still path when this network cannot complete that call. `#live-tunnel-leave` disconnects.
+4. `#live-tunnel-voice-record` sends a voice message that plays on the recording device. There is no accept/reject step. Voice still sends when the camera call cannot open.
 
 Deep link: `live-tunnel.html?tunnel={tunnelId}`.
 

@@ -20,7 +20,15 @@
   const ICE_SERVERS = Object.freeze([
     Object.freeze({ urls: "stun:stun.l.google.com:19302" }),
     Object.freeze({ urls: "stun:stun1.l.google.com:19302" }),
+    Object.freeze({ urls: "stun:stun.cloudflare.com:3478" }),
   ]);
+  const PICTURE_WIDTH = 400;
+  const PICTURE_QUALITY = 0.4;
+  const PICTURE_MS = 550;
+  const MAX_PICTURE_BYTES = 180_000;
+  const MAX_PICTURE_CHARS = 240_000;
+  const NETWORK_FAIL_MS = 8_000;
+  const VOICE_CHANNEL_MS = 2_000;
 
   function isLiveTunnel(record, now = Date.now()) {
     if (!record || record.status !== "live") return false;
@@ -60,21 +68,98 @@
   }
 
   function attachRemoteIce(pc, records, seen) {
+    if (!pc?.remoteDescription) return;
     (records || []).forEach((entry) => {
       if (!entry?.id || seen.has(entry.id)) return;
       const line = String(entry.candidate || "");
       if (!line) return;
       seen.add(entry.id);
       try {
-        pc.addIceCandidate({
-          candidate: line,
-          sdpMid: entry.sdpMid,
-          sdpMLineIndex: entry.sdpMLineIndex,
+        Promise.resolve(
+          pc.addIceCandidate({
+            candidate: line,
+            sdpMid: entry.sdpMid,
+            sdpMLineIndex: entry.sdpMLineIndex,
+          }),
+        ).catch(() => {
+          seen.delete(entry.id);
         });
       } catch {
-        // A candidate that arrives before remote description is ignored; the
-        // next snapshot after setRemoteDescription retries with a fresh set.
+        seen.delete(entry.id);
       }
+    });
+  }
+
+  function picturePayload(input) {
+    const mimeType = String(input?.mimeType || "image/jpeg");
+    const image = String(input?.image || "");
+    if (!image || !mimeType.startsWith("image/")) return null;
+    if (image.length > MAX_PICTURE_CHARS) return null;
+    return {
+      mimeType,
+      image,
+      capturedAtMs: Math.max(0, Number(input?.capturedAtMs) || Date.now()),
+    };
+  }
+
+  function pictureToDataUrl(record) {
+    const payload = picturePayload(record);
+    if (!payload) return "";
+    if (payload.image.startsWith("data:")) return payload.image;
+    return `data:${payload.mimeType};base64,${payload.image}`;
+  }
+
+  async function encodeLivePicture(stream, options = {}) {
+    const tracks = stream?.getVideoTracks?.() || [];
+    if (!tracks.length) return null;
+    const documentRef = options.document || globalScope.document;
+    if (!documentRef?.createElement) return null;
+
+    const video = options.previewVideo || documentRef.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.setAttribute?.("playsinline", "");
+    if (video.srcObject !== stream) {
+      video.srcObject = stream;
+      try {
+        await video.play?.();
+      } catch {
+        /* A paused element can still yield a frame after metadata arrives. */
+      }
+    }
+
+    const width = Number(video.videoWidth) || 0;
+    const height = Number(video.videoHeight) || 0;
+    if (!width || !height) return null;
+
+    const targetWidth = Math.min(Number(options.width) || PICTURE_WIDTH, width);
+    const targetHeight = Math.max(1, Math.round((height * targetWidth) / width));
+    const canvas = options.canvas || documentRef.createElement("canvas");
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const context = canvas.getContext?.("2d", { alpha: false });
+    if (!context) return null;
+    context.drawImage(video, 0, 0, targetWidth, targetHeight);
+
+    const blob = await new Promise((resolve) => {
+      if (typeof canvas.toBlob !== "function") {
+        resolve(null);
+        return;
+      }
+      canvas.toBlob(
+        (value) => resolve(value),
+        "image/jpeg",
+        Number.isFinite(Number(options.quality)) ? Number(options.quality) : PICTURE_QUALITY,
+      );
+    });
+    if (!blob || blob.size === 0 || blob.size > MAX_PICTURE_BYTES) return null;
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    if (bytes.byteLength === 0 || bytes.byteLength > MAX_PICTURE_BYTES) return null;
+    return picturePayload({
+      mimeType: "image/jpeg",
+      image: bytesToBase64(bytes),
+      capturedAtMs: Date.now(),
     });
   }
 
@@ -250,7 +335,13 @@
     const onVoiceMessage = options.onVoiceMessage || (() => {});
     let tunnel = null;
     let heartbeatTimer = null;
+    let pictureTimer = null;
+    let pictureBusy = false;
+    let previewVideo = null;
+    let pictureCanvas = null;
     let unsubscribeViewers = null;
+    let unsubscribeVoices = null;
+    const seenVoices = new Set();
     const peers = new Map();
 
     function currentStream() {
@@ -292,7 +383,7 @@
 
       const pc = new RTCPeerConnection(peerConfig());
       const seenIce = new Set();
-      const peer = { pc, seenIce, unsubscribeIce: null };
+      const peer = { pc, seenIce, iceRecords: [], unsubscribeIce: null };
       peers.set(viewer.id, peer);
       addLocalTracks(pc);
       pc.ondatachannel = (event) => {
@@ -321,12 +412,18 @@
           tunnel.id,
           viewer.id,
           (records) => {
+            peer.iceRecords = records || [];
             attachRemoteIce(
               pc,
-              (records || []).filter((entry) => entry.from === "viewer"),
+              peer.iceRecords.filter((entry) => entry.from === "viewer"),
               seenIce,
             );
           },
+        );
+        attachRemoteIce(
+          pc,
+          peer.iceRecords.filter((entry) => entry.from === "viewer"),
+          seenIce,
         );
       } catch {
         closePeer(viewer.id);
@@ -367,12 +464,79 @@
       }
     }
 
+    function handleRelayVoice(record) {
+      if (!record?.id || seenVoices.has(record.id)) return;
+      const decoded = decodeVoiceMessage(record);
+      if (!decoded) return;
+      seenVoices.add(record.id);
+      onVoiceMessage(decoded);
+    }
+
+    function stopPictureRelay() {
+      if (pictureTimer != null) {
+        globalScope.clearInterval(pictureTimer);
+        pictureTimer = null;
+      }
+      pictureBusy = false;
+      if (previewVideo) {
+        previewVideo.srcObject = null;
+      }
+    }
+
+    function startPictureRelay() {
+      stopPictureRelay();
+      if (!cloud?.publishLiveTunnelPicture || !tunnel) return;
+      const documentRef = options.document || globalScope.document;
+      if (!previewVideo && documentRef?.createElement) {
+        previewVideo = documentRef.createElement("video");
+        previewVideo.muted = true;
+        previewVideo.playsInline = true;
+        previewVideo.setAttribute?.("playsinline", "");
+      }
+      if (!pictureCanvas && documentRef?.createElement) {
+        pictureCanvas = documentRef.createElement("canvas");
+      }
+
+      const tick = async () => {
+        if (pictureBusy || !tunnel) return;
+        pictureBusy = true;
+        try {
+          const payload = options.capturePicture
+            ? await options.capturePicture(currentStream())
+            : await encodeLivePicture(currentStream(), {
+                document: documentRef,
+                previewVideo,
+                canvas: pictureCanvas,
+                width: options.pictureWidth,
+                quality: options.pictureQuality,
+              });
+          if (payload?.image && tunnel) {
+            await cloud.publishLiveTunnelPicture(tunnel.id, payload);
+          }
+        } catch {
+          /* A missed frame must not stop the recording or the WebRTC path. */
+        } finally {
+          pictureBusy = false;
+        }
+      };
+      pictureTimer = globalScope.setInterval(tick, options.pictureMs || PICTURE_MS);
+      pictureTimer?.unref?.();
+      tick();
+    }
+
     async function publish(sessionInput) {
       if (!cloud?.publishLiveTunnel) return null;
       await close();
       const session = sessionInput || getSession() || {};
       tunnel = await cloud.publishLiveTunnel(session);
       startHeartbeat();
+      startPictureRelay();
+      unsubscribeVoices = cloud.subscribeTunnelVoices?.(
+        tunnel.id,
+        (records) => {
+          (records || []).forEach(handleRelayVoice);
+        },
+      );
       unsubscribeViewers = cloud.subscribeTunnelViewers?.(
         tunnel.id,
         (viewers) => {
@@ -394,8 +558,12 @@
 
     async function close() {
       stopHeartbeat();
+      stopPictureRelay();
       unsubscribeViewers?.();
+      unsubscribeVoices?.();
       unsubscribeViewers = null;
+      unsubscribeVoices = null;
+      seenVoices.clear();
       [...peers.keys()].forEach(closePeer);
       const ending = tunnel;
       tunnel = null;
@@ -428,17 +596,53 @@
     let viewer = null;
     let unsubscribeViewer = null;
     let unsubscribeIce = null;
+    let unsubscribePicture = null;
     const seenIce = new Set();
+    let iceRecords = [];
+    let lastPicture = null;
+    let failTimer = null;
     let closed = false;
 
     function setState(state, detail) {
       onState(state, detail);
     }
 
+    function clearFailTimer() {
+      if (failTimer != null) {
+        globalScope.clearTimeout(failTimer);
+        failTimer = null;
+      }
+    }
+
+    function markLiveFromPicture(record) {
+      lastPicture = picturePayload(record);
+      if (lastPicture) options.onPicture?.(lastPicture);
+      if (lastPicture && pc?.connectionState !== "connected") {
+        clearFailTimer();
+        setState("live");
+      }
+    }
+
+    function failIfNoPicture(detail) {
+      if (lastPicture) {
+        setState("live");
+        return;
+      }
+      clearFailTimer();
+      failTimer = globalScope.setTimeout(() => {
+        failTimer = null;
+        if (closed || lastPicture || pc?.connectionState === "connected") return;
+        setState("failed", detail || "This network could not open a live picture.");
+      }, options.networkFailMs || NETWORK_FAIL_MS);
+      failTimer?.unref?.();
+    }
+
     async function connect(record) {
       await disconnect();
       closed = false;
       tunnel = record;
+      lastPicture = null;
+      iceRecords = [];
       if (!record?.id || !record.ownerId) {
         throw new Error("The live recording is missing.");
       }
@@ -460,9 +664,12 @@
       };
       pc.onconnectionstatechange = () => {
         const state = pc?.connectionState;
-        if (state === "connected") setState("live");
-        if (state === "failed" || state === "disconnected") {
-          setState("failed", "This network could not open a live picture.");
+        if (state === "connected") {
+          clearFailTimer();
+          setState("live");
+        }
+        if (state === "failed") {
+          failIfNoPicture("This network could not open a live picture.");
         }
       };
       pc.onicecandidate = (event) => {
@@ -484,14 +691,23 @@
       });
       if (closed) return viewer;
 
+      unsubscribePicture = cloud.subscribeTunnelPicture?.(
+        tunnel.id,
+        (next) => {
+          if (closed) return;
+          markLiveFromPicture(next);
+        },
+        (error) => failIfNoPicture(error?.message),
+      );
       unsubscribeIce = cloud.subscribeTunnelIce?.(
         tunnel.id,
         viewer.id,
         (records) => {
+          iceRecords = records || [];
           if (!pc) return;
           attachRemoteIce(
             pc,
-            (records || []).filter((entry) => entry.from === "publisher"),
+            iceRecords.filter((entry) => entry.from === "publisher"),
             seenIce,
           );
         },
@@ -503,11 +719,16 @@
           if (!pc || !next?.answer || pc.remoteDescription) return;
           try {
             await pc.setRemoteDescription(next.answer);
+            attachRemoteIce(
+              pc,
+              iceRecords.filter((entry) => entry.from === "publisher"),
+              seenIce,
+            );
           } catch {
-            setState("failed", "The live recording could not complete the tunnel.");
+            failIfNoPicture("The live recording could not complete the tunnel.");
           }
         },
-        (error) => setState("failed", error?.message),
+        (error) => failIfNoPicture(error?.message),
       );
       return viewer;
     }
@@ -520,32 +741,51 @@
       return new Promise((resolve, reject) => {
         const timer = globalScope.setTimeout(() => {
           reject(new Error("The voice channel is not open yet."));
-        }, 8_000);
+        }, options.voiceChannelMs || VOICE_CHANNEL_MS);
         timer?.unref?.();
+        const previous = voiceChannel.onopen;
         voiceChannel.onopen = () => {
           globalScope.clearTimeout(timer);
+          previous?.();
           resolve(voiceChannel);
         };
       });
     }
 
     async function sendVoiceMessage(blob, extra = {}) {
-      if (closed || !voiceChannel) {
+      if (closed || !tunnel) {
         throw new Error("Join a live recording before sending a voice message.");
       }
-      const channel = await waitForVoiceChannel();
       const payload = await encodeVoiceMessage(blob, extra);
+      if (voiceChannel?.readyState === "open") {
+        voiceChannel.send(JSON.stringify(payload));
+        return payload;
+      }
+      if (cloud?.sendTunnelVoice) {
+        await cloud.sendTunnelVoice(tunnel.id, {
+          ...payload,
+          publisherUid: tunnel.ownerId,
+          viewerUid: viewer?.viewerUid,
+        });
+        return payload;
+      }
+      const channel = await waitForVoiceChannel();
       channel.send(JSON.stringify(payload));
       return payload;
     }
 
     async function disconnect() {
       closed = true;
+      clearFailTimer();
       unsubscribeViewer?.();
       unsubscribeIce?.();
+      unsubscribePicture?.();
       unsubscribeViewer = null;
       unsubscribeIce = null;
+      unsubscribePicture = null;
       seenIce.clear();
+      iceRecords = [];
+      lastPicture = null;
       const leaving = viewer;
       const leavingTunnel = tunnel;
       viewer = null;
@@ -589,12 +829,20 @@
     VOICE_CHANNEL,
     VOICE_MESSAGE_TYPE,
     ICE_SERVERS,
+    PICTURE_WIDTH,
+    PICTURE_QUALITY,
+    PICTURE_MS,
+    MAX_PICTURE_BYTES,
+    NETWORK_FAIL_MS,
     isLiveTunnel,
     liveTunnels,
     chooseVoiceMimeType,
     encodeVoiceMessage,
     decodeVoiceMessage,
     voiceMessageToBlob,
+    picturePayload,
+    pictureToDataUrl,
+    encodeLivePicture,
     createVoiceRecorder,
     createPublisher,
     createViewer,

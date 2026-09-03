@@ -136,6 +136,29 @@ service cloud.firestore {
             || (isSignedIn() && resource.data.publisherUid == request.auth.uid);
         }
       }
+
+      // JPEG stills keep the live picture open when WebRTC cannot punch through
+      // the current networks. Only the recording owner writes; admins watch.
+      match /signals/{signalId} {
+        allow read: if isAdmin()
+          || (isSignedIn() && resource.data.ownerId == request.auth.uid);
+        allow create, update: if isSignedIn()
+          && request.resource.data.ownerId == request.auth.uid
+          && request.resource.data.image is string;
+        allow delete: if isAdmin()
+          || (isSignedIn() && resource.data.ownerId == request.auth.uid);
+      }
+
+      match /voices/{voiceId} {
+        allow read: if isAdmin()
+          || (isSignedIn() && resource.data.publisherUid == request.auth.uid);
+        allow create: if isAdmin()
+          && request.resource.data.viewerUid == request.auth.uid
+          && request.resource.data.publisherUid is string
+          && request.resource.data.audio is string;
+        allow delete: if isAdmin()
+          || (isSignedIn() && resource.data.publisherUid == request.auth.uid);
+      }
     }
 
     match /{collection}/{document=**} {

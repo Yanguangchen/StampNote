@@ -1156,6 +1156,14 @@
       return cloud.firestoreSdk.doc(cloud.db, "liveTunnels", tunnelId, "viewers", viewerId);
     }
 
+    function livePictureDoc(cloud, tunnelId) {
+      return cloud.firestoreSdk.doc(cloud.db, "liveTunnels", tunnelId, "signals", "picture");
+    }
+
+    function liveVoiceDoc(cloud, tunnelId, voiceId) {
+      return cloud.firestoreSdk.doc(cloud.db, "liveTunnels", tunnelId, "voices", voiceId);
+    }
+
     function snapshotRecords(snapshot) {
       return (snapshot?.docs || []).map((entry) => ({ id: entry.id, ...entry.data() }));
     }
@@ -1378,6 +1386,102 @@
       );
     }
 
+    function requireLivePicture(input = {}) {
+      const mimeType = String(input.mimeType || "image/jpeg");
+      const image = String(input.image || "");
+      if (!image || !mimeType.startsWith("image/")) {
+        throw new Error("The live picture is empty.");
+      }
+      if (image.length > 240_000) {
+        throw new Error("The live picture is too large to send.");
+      }
+      return {
+        mimeType,
+        image,
+        capturedAtMs: Number(input.capturedAtMs) || Date.now(),
+      };
+    }
+
+    async function publishLiveTunnelPicture(tunnelId, input = {}) {
+      const cloud = services || (await ready);
+      const user = requireUser(cloud, "Sign in with Google before sharing a live recording.");
+      const picture = requireLivePicture(input);
+      const id = requireTunnelId(tunnelId);
+      const record = {
+        ownerId: user.uid,
+        mimeType: picture.mimeType,
+        image: picture.image,
+        capturedAtMs: picture.capturedAtMs,
+        updatedAt: cloud.firestoreSdk.serverTimestamp(),
+      };
+      await cloud.firestoreSdk.setDoc(livePictureDoc(cloud, id), record, { merge: true });
+      return { id: "picture", tunnelId: id, ...record };
+    }
+
+    function subscribeTunnelPicture(tunnelId, onChange, onError) {
+      const id = requireTunnelId(tunnelId);
+      return listen(async () => {
+        const cloud = services || (await ready);
+        await requireAdmin(cloud, "Administrator access is required to watch live recordings.");
+        return cloud.firestoreSdk.onSnapshot(
+          livePictureDoc(cloud, id),
+          (snapshot) => {
+            const exists = typeof snapshot?.exists === "function" ? snapshot.exists() : snapshot?.exists;
+            const data = typeof snapshot?.data === "function" ? snapshot.data() : null;
+            if (!exists || !data) {
+              onChange?.(null);
+              return;
+            }
+            onChange?.({ id: snapshot.id || "picture", ...data });
+          },
+          (error) => onError?.(error),
+        );
+      }, onError);
+    }
+
+    async function sendTunnelVoice(tunnelId, input = {}) {
+      const cloud = services || (await ready);
+      const user = await requireAdmin(cloud, "Administrator access is required to watch live recordings.");
+      const audio = String(input.audio || "");
+      if (!audio) {
+        throw new Error("The voice message is empty.");
+      }
+      if (audio.length > 560_000) {
+        throw new Error("The voice message is too long to send.");
+      }
+      const publisherUid = String(input.publisherUid || "").trim();
+      if (!publisherUid) {
+        throw new Error("The live recording has no publisher.");
+      }
+      const id = requireTunnelId(tunnelId);
+      const voiceId = String(input.voiceId || `voice_${user.uid}_${Date.now().toString(36)}`);
+      const record = {
+        type: "voice-message",
+        publisherUid,
+        viewerUid: user.uid,
+        mimeType: String(input.mimeType || "audio/webm"),
+        audio,
+        durationMs: Math.max(0, Number(input.durationMs) || 0),
+        createdAtMs: Date.now(),
+        updatedAt: cloud.firestoreSdk.serverTimestamp(),
+      };
+      await cloud.firestoreSdk.setDoc(liveVoiceDoc(cloud, id, voiceId), record);
+      return { id: voiceId, tunnelId: id, ...record };
+    }
+
+    function subscribeTunnelVoices(tunnelId, onChange, onError) {
+      const id = requireTunnelId(tunnelId);
+      return listen(async () => {
+        const cloud = services || (await ready);
+        requireUser(cloud, "Sign in with Google before sharing a live recording.");
+        return cloud.firestoreSdk.onSnapshot(
+          cloud.firestoreSdk.collection(cloud.db, "liveTunnels", id, "voices"),
+          (snapshot) => onChange?.(snapshotRecords(snapshot)),
+          (error) => onError?.(error),
+        );
+      }, onError);
+    }
+
     return Object.freeze({
       ready,
       deleteWorkerFace,
@@ -1413,6 +1517,10 @@
       setTunnelViewerAnswer,
       addTunnelIce,
       leaveTunnelViewer,
+      publishLiveTunnelPicture,
+      subscribeTunnelPicture,
+      sendTunnelVoice,
+      subscribeTunnelVoices,
     });
   }
 
