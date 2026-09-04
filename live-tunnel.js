@@ -32,6 +32,22 @@
   const themeToggle = document.querySelector("#theme-toggle");
   const themeToggleIcon = document.querySelector("#theme-toggle-icon");
   const themeToggleLabel = document.querySelector("#theme-toggle-label");
+  const roverConnect = document.querySelector("#rover-connect");
+  const roverDisconnect = document.querySelector("#rover-disconnect");
+  const roverStatus = document.querySelector("#rover-status");
+  const roverModule = globalScope.StampNoteRoverBridge;
+  const roverBridge = roverModule?.createBridge?.({
+    pairing: roverModule.pendingPairing,
+    video,
+    onStatus(state, message) {
+      if (roverStatus) roverStatus.textContent = message;
+      if (roverConnect) roverConnect.disabled = state !== "error" || roverBridge.isConnected();
+      if (roverDisconnect) roverDisconnect.disabled = state !== "connecting" && !roverBridge.isConnected();
+    },
+  });
+  if (roverConnect) roverConnect.disabled = !roverModule?.pendingPairing;
+  if (roverStatus && roverModule?.pendingPairing) roverStatus.textContent = "Pairing link ready. Choose your live recording, then connect Rover Control.";
+  if (roverStatus && roverModule?.pairingError) roverStatus.textContent = roverModule.pairingError;
 
   telemetry?.configure({ surface: "live-tunnel" });
 
@@ -179,6 +195,7 @@
     const url = liveTunnel?.pictureToDataUrl?.(record) || "";
     if (!picture || !url) return;
     picture.src = url;
+    void roverBridge?.forward?.(record, url);
     picture.hidden = false;
     if (viewerState !== "live") viewerState = "live";
     setStatus("");
@@ -189,6 +206,7 @@
   function attachStream(stream) {
     if (!video) return;
     video.srcObject = stream || null;
+    roverBridge?.attachVideo?.(stream ? video : null);
     if (stream) {
       video.play?.()?.catch?.(() => {});
     }
@@ -214,6 +232,7 @@
     viewer = null;
     viewerState = "idle";
     selectedId = "";
+    await roverBridge?.disconnect?.();
     voiceBusy = false;
     await voiceRecorder?.cancel?.();
     setVoiceAvailable(false);
@@ -442,6 +461,16 @@
   voiceCancel?.addEventListener("click", () => cancelVoiceRecord());
   signOutButton?.addEventListener("click", () => cloud.signOut());
   leaveButton?.addEventListener("click", () => leaveTunnel());
+  roverConnect?.addEventListener("click", async () => {
+    if (!signedInUser || !selectedId || viewerState !== "live") {
+      if (roverStatus) roverStatus.textContent = "Choose a live recording before connecting Rover Control.";
+      return;
+    }
+    try { await roverBridge?.connect(selectedId); }
+    catch (error) { if (roverStatus && !roverStatus.textContent.includes("Cannot reach")) roverStatus.textContent = error.message; }
+  });
+  roverDisconnect?.addEventListener("click", () => { void roverBridge?.disconnect(); });
+  globalScope.addEventListener?.("pagehide", () => { void roverBridge?.disconnect(); });
 
   if (!cloud || !liveTunnel) {
     setStatus("The live tunnel dependencies are unavailable. Reload the page.", "error");
