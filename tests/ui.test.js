@@ -802,6 +802,8 @@ test("cloud photos require sign-in and the admin dashboard groups them by place 
   assert.match(firestoreRules, /collection != "attendanceDays"/);
   assert.match(firestoreRules, /collection != "dashboardSessions"/);
   assert.match(firestoreRules, /match \/liveTunnels\/\{tunnelId\}/);
+  assert.match(firestoreRules, /match \/signals\/\{signalId\}/);
+  assert.match(firestoreRules, /match \/voices\/\{voiceId\}/);
   assert.match(firestoreRules, /collection != "liveTunnels"/);
   assert.equal(/allow read, write: if true/.test(firestoreRules), false);
 });

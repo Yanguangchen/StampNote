@@ -1643,6 +1643,35 @@ test("a signed-in recording publishes a live tunnel that administrators can subs
   assert.equal(harness.calls.snapshots.length, 1);
   assert.equal(harness.calls.snapshots[0].target.clauses[0].kind, "where");
   stop();
+
+  await harness.client.publishLiveTunnelPicture("live_user-1_test", {
+    mimeType: "image/jpeg",
+    image: "abc",
+    capturedAtMs: 10,
+  });
+  assert.deepEqual(harness.calls.writes.at(-1).reference.segments.slice(1), [
+    "liveTunnels",
+    "live_user-1_test",
+    "signals",
+    "picture",
+  ]);
+  assert.equal(harness.calls.writes.at(-1).value.image, "abc");
+  assert.equal(harness.calls.writes.at(-1).writeOptions.merge, true);
+
+  await harness.client.sendTunnelVoice("live_user-1_test", {
+    publisherUid: "user-1",
+    voiceId: "voice-1",
+    mimeType: "audio/webm",
+    audio: "qqq",
+    durationMs: 900,
+  });
+  assert.deepEqual(harness.calls.writes.at(-1).reference.segments.slice(1), [
+    "liveTunnels",
+    "live_user-1_test",
+    "voices",
+    "voice-1",
+  ]);
+  assert.equal(harness.calls.writes.at(-1).value.audio, "qqq");
 });
 
 test("field staff cannot watch live tunnels", async () => {

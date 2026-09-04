@@ -19,6 +19,7 @@
   const empty = document.querySelector("#live-tunnel-empty");
   const countLabel = document.querySelector("#live-tunnel-count");
   const video = document.querySelector("#live-tunnel-video");
+  const picture = document.querySelector("#live-tunnel-picture");
   const frame = document.querySelector("#live-tunnel-frame");
   const placeholder = document.querySelector("#live-tunnel-placeholder");
   const caption = document.querySelector("#live-tunnel-caption");
@@ -146,11 +147,34 @@
     }
   }
 
-  function setStageLive(live) {
-    if (frame) frame.dataset.live = live ? "true" : "false";
+  function setStageLive(live, mode) {
+    if (frame) {
+      frame.dataset.live = live ? "true" : "false";
+      if (mode) frame.dataset.mode = mode;
+      else if (!live) delete frame.dataset.mode;
+    }
     if (badge) badge.hidden = !live;
     if (leaveButton) leaveButton.hidden = viewerState === "idle";
     setVoiceAvailable(live && viewerState === "live");
+  }
+
+  function clearPicture() {
+    if (!picture) return;
+    picture.removeAttribute("src");
+    picture.hidden = true;
+  }
+
+  function attachPicture(record) {
+    const url = liveTunnel?.pictureToDataUrl?.(record) || "";
+    if (!picture || !url) return;
+    picture.src = url;
+    picture.hidden = false;
+    if (viewerState !== "live") viewerState = "live";
+    if (!video?.srcObject) {
+      setStatus("");
+      if (placeholder) placeholder.textContent = "";
+      setStageLive(true, "relay");
+    }
   }
 
   function attachStream(stream) {
@@ -158,8 +182,11 @@
     video.srcObject = stream || null;
     if (stream) {
       video.play?.()?.catch?.(() => {});
+      clearPicture();
+      setStageLive(viewerState === "live", "webrtc");
+      return;
     }
-    setStageLive(Boolean(stream) && viewerState === "live");
+    setStageLive(Boolean(picture?.src) && viewerState === "live", picture?.src ? "relay" : "");
   }
 
   function describeTunnel(record) {
@@ -178,6 +205,7 @@
     setVoiceAvailable(false);
     await active?.disconnect?.();
     attachStream(null);
+    clearPicture();
     if (placeholder) {
       placeholder.textContent =
         "Choose a live recording. The camera opens here without anyone accepting a call.";
@@ -205,19 +233,28 @@
       cloud,
       RTCPeerConnection: globalScope.RTCPeerConnection,
       onStream: attachStream,
+      onPicture: attachPicture,
       onState(state, detail) {
         viewerState = state;
         if (state === "live") {
           setStatus("");
           if (placeholder) placeholder.textContent = "";
-          setStageLive(true);
+          setStageLive(true, video?.srcObject ? "webrtc" : picture?.src ? "relay" : "");
           setVoiceAvailable(true);
         } else if (state === "failed") {
+          if (picture?.src) {
+            viewerState = "live";
+            setStatus("");
+            if (placeholder) placeholder.textContent = "";
+            setStageLive(true, "relay");
+            setVoiceAvailable(true);
+            return;
+          }
           setStatus(detail || "This network could not open a live picture.", "error");
           if (placeholder) {
             placeholder.textContent =
               detail ||
-              "This network could not open a live picture. Try the same Wi-Fi, or a phone hotspot.";
+              "This network could not open a live picture. The recording is still sending stills if this network can reach Firestore.";
           }
           setStageLive(false);
         } else if (state === "connecting") {
