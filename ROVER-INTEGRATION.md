@@ -1,0 +1,13 @@
+# Local Rover Control observations
+
+Live Tunnel remains entirely in Stampnote. The optional Rover Control connection samples frames from its existing WebRTC video and forwards those observations to a local receiver on the viewer's computer. It creates no camera capture, screen capture, publisher, or additional WebRTC viewer, and carries no wheel commands.
+
+The local controller generates a 30-minute pairing link while disarmed. Open that link, select the robot's live recording, and click **Connect Rover Control**. The pairing credential is consumed from the fragment before observability loads and kept in memory. Authorize local network access if the browser asks. Leave/sign-out/disconnect revokes the pairing; repeat the local pairing flow to reconnect. Live Tunnel continues normally when only the rover is disconnected.
+
+`requestVideoFrameCallback` samples new frames from the existing video element at up to 5 fps, scaled to fit 640×480. RTP/media timestamps prevent repeated frames from refreshing freshness. Sampling stops on disconnect and ignores paused, muted or ended tracks. The callback uses the WebRTC capture timestamp where available, otherwise the receive or presentation timestamp; `timestampKind` makes that distinction explicit in the local UI/API. Receive/decode age does not measure upstream capture latency. These are AI observations; Stampnote's WebRTC video keeps its normal frame rate. See [the browser frame callback documentation](https://developer.mozilla.org/en-US/docs/Web/API/HTMLVideoElement/requestVideoFrameCallback).
+
+When fresh WebRTC frames are unavailable for 800 ms, the existing `onPicture` callback supplies JPEG relay pictures with their original `capturedAtMs` (400px, 550 ms target interval). The bridge drops old/duplicate frames and skips frames while a request is pending. It never queues or repeatedly captures a frozen picture. Nothing is forwarded before the user connects. Network delay and publisher clock skew can make observations stale; the local controller independently enforces its 1.5-second freshness limit.
+
+The receiver must run on the same computer at the loopback address included by its pairing link. Its separate frame-only endpoints allow the exact production Stampnote origin; all robot-control APIs remain local-only. A failed local-network permission or connection displays an error. No fallback screen sharing is used.
+
+Validation: `node --test tests/live-tunnel.test.js tests/rover-bridge.test.js`. The local workspace also contains `integration/stampnote-rover.test.mjs` and a synthetic two-peer WebRTC browser check at `integration/browser-webrtc-check.js`. These changes do not modify Firebase rules, cloud records, or camera publisher behaviour.

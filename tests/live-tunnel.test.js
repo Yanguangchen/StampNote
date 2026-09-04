@@ -727,6 +727,9 @@ function createPageHarness(options = {}) {
     "theme-toggle",
     "theme-toggle-icon",
     "theme-toggle-label",
+    "rover-connect",
+    "rover-disconnect",
+    "rover-status",
   ];
   const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement()]));
   elements["live-tunnel-workspace"].hidden = true;
@@ -857,6 +860,7 @@ function createPageHarness(options = {}) {
     RTCPeerConnection: options.PeerConnection || FakePeerConnection,
     StampNoteFirebase: cloud,
     StampNoteLiveTunnel: liveTunnel,
+    StampNoteRoverBridge: options.roverModule,
     StampNoteObservability: {
       configure() {},
       event() { return true; },
@@ -900,6 +904,32 @@ test("signing in lists live recordings and tunnels in without an accept step", a
   assert.equal(harness.cloudCalls.joined[0].input.offer.type, "offer");
   assert.equal(harness.elements["live-tunnel-leave"].hidden, false);
   assert.match(harness.elements["live-tunnel-caption"].textContent, /10 Marina Bay/);
+});
+
+test("rover connection uses the selected Stampnote session and disconnects on sign-out", async () => {
+  const calls = []; let connected = false;
+  const harness = createPageHarness({
+    picture: { mimeType: "image/jpeg", image: "abc123", capturedAtMs: Date.now() },
+    roverModule: { pendingPairing: {}, createBridge({ onStatus }) {
+      return {
+        async connect(id) { connected = true; calls.push({ connect: id }); onStatus("connected", "Paired"); },
+        async forward(record, jpeg) { calls.push({ picture: record, jpeg }); },
+        async disconnect() { if (connected) { connected = false; calls.push({ disconnected: true }); onStatus("disconnected", "Disconnected"); } },
+        isConnected() { return connected; },
+      };
+    } },
+  });
+  await harness.elements["rover-connect"].dispatch("click");
+  assert.equal(calls.length, 0);
+  await harness.auth({ email: "admin@example.com", uid: "admin-1" }); await settle();
+  await harness.elements["live-tunnel-list"].children[0].dispatch("click"); await settle();
+  assert.ok(calls.some(call => call.jpeg === "data:image/jpeg;base64,abc123"));
+  await harness.elements["rover-connect"].dispatch("click");
+  assert.ok(calls.some(call => call.connect === "live-1"));
+  assert.equal(harness.elements["rover-connect"].disabled, true);
+  await harness.auth(null);
+  assert.ok(calls.some(call => call.disconnected));
+  assert.equal(harness.elements["rover-disconnect"].disabled, true);
 });
 
 test("the page shows a live picture when this network cannot open the camera call", async () => {

@@ -5,3 +5,5 @@ server.js
 # Not needed at runtime
 tests/
 README.md
+ROVER-INTEGRATION.md
+*.log
