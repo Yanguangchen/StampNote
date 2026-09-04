@@ -115,22 +115,29 @@
     const documentRef = options.document || globalScope.document;
     if (!documentRef?.createElement) return null;
 
-    const video = options.previewVideo || documentRef.createElement("video");
-    video.muted = true;
-    video.playsInline = true;
-    video.setAttribute?.("playsinline", "");
-    if (video.srcObject !== stream) {
-      video.srcObject = stream;
-      try {
-        await video.play?.();
-      } catch {
-        /* A paused element can still yield a frame after metadata arrives. */
+    const preview =
+      options.previewVideo ||
+      (typeof options.getPreview === "function" ? options.getPreview() : null);
+    let source =
+      preview && (Number(preview.videoWidth) || Number(preview.width) || Number(preview.naturalWidth))
+        ? preview
+        : null;
+
+    if (!source) {
+      const ImageCaptureCtor = options.ImageCapture || globalScope.ImageCapture;
+      if (typeof ImageCaptureCtor === "function") {
+        try {
+          const grabber = options.imageCapture || new ImageCaptureCtor(tracks[0]);
+          source = await grabber.grabFrame();
+        } catch {
+          source = null;
+        }
       }
     }
 
-    const width = Number(video.videoWidth) || 0;
-    const height = Number(video.videoHeight) || 0;
-    if (!width || !height) return null;
+    const width = Number(source?.videoWidth || source?.width || source?.naturalWidth || 0);
+    const height = Number(source?.videoHeight || source?.height || source?.naturalHeight || 0);
+    if (!source || !width || !height) return null;
 
     const targetWidth = Math.min(Number(options.width) || PICTURE_WIDTH, width);
     const targetHeight = Math.max(1, Math.round((height * targetWidth) / width));
@@ -139,7 +146,8 @@
     canvas.height = targetHeight;
     const context = canvas.getContext?.("2d", { alpha: false });
     if (!context) return null;
-    context.drawImage(video, 0, 0, targetWidth, targetHeight);
+    context.drawImage(source, 0, 0, targetWidth, targetHeight);
+    source.close?.();
 
     const blob = await new Promise((resolve) => {
       if (typeof canvas.toBlob !== "function") {
@@ -337,8 +345,9 @@
     let heartbeatTimer = null;
     let pictureTimer = null;
     let pictureBusy = false;
-    let previewVideo = null;
     let pictureCanvas = null;
+    let imageCapture = null;
+    let imageCaptureTrack = null;
     let unsubscribeViewers = null;
     let unsubscribeVoices = null;
     const seenVoices = new Set();
@@ -478,8 +487,23 @@
         pictureTimer = null;
       }
       pictureBusy = false;
-      if (previewVideo) {
-        previewVideo.srcObject = null;
+      imageCapture = null;
+      imageCaptureTrack = null;
+    }
+
+    function pictureGrabber(track) {
+      if (!track) return null;
+      if (imageCapture && imageCaptureTrack === track) return imageCapture;
+      const ImageCaptureCtor = options.ImageCapture || globalScope.ImageCapture;
+      if (typeof ImageCaptureCtor !== "function") return null;
+      try {
+        imageCapture = new ImageCaptureCtor(track);
+        imageCaptureTrack = track;
+        return imageCapture;
+      } catch {
+        imageCapture = null;
+        imageCaptureTrack = null;
+        return null;
       }
     }
 
@@ -487,12 +511,6 @@
       stopPictureRelay();
       if (!cloud?.publishLiveTunnelPicture || !tunnel) return;
       const documentRef = options.document || globalScope.document;
-      if (!previewVideo && documentRef?.createElement) {
-        previewVideo = documentRef.createElement("video");
-        previewVideo.muted = true;
-        previewVideo.playsInline = true;
-        previewVideo.setAttribute?.("playsinline", "");
-      }
       if (!pictureCanvas && documentRef?.createElement) {
         pictureCanvas = documentRef.createElement("canvas");
       }
@@ -501,12 +519,16 @@
         if (pictureBusy || !tunnel) return;
         pictureBusy = true;
         try {
+          const media = currentStream();
+          const track = media?.getVideoTracks?.()[0] || null;
           const payload = options.capturePicture
-            ? await options.capturePicture(currentStream())
-            : await encodeLivePicture(currentStream(), {
+            ? await options.capturePicture(media)
+            : await encodeLivePicture(media, {
                 document: documentRef,
-                previewVideo,
+                getPreview: options.getPreview,
                 canvas: pictureCanvas,
+                ImageCapture: options.ImageCapture || globalScope.ImageCapture,
+                imageCapture: pictureGrabber(track),
                 width: options.pictureWidth,
                 quality: options.pictureQuality,
               });
@@ -617,7 +639,7 @@
     function markLiveFromPicture(record) {
       lastPicture = picturePayload(record);
       if (lastPicture) options.onPicture?.(lastPicture);
-      if (lastPicture && pc?.connectionState !== "connected") {
+      if (lastPicture) {
         clearFailTimer();
         setState("live");
       }
@@ -660,7 +682,20 @@
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.ontrack = (event) => {
         const media = event.streams?.[0] || (event.track && new globalScope.MediaStream([event.track]));
+        const track = event.track;
         if (media) onStream(media);
+        if (track) {
+          track.onmute = () => {
+            if (lastPicture) setState("live");
+          };
+          track.onunmute = () => {
+            if (media) onStream(media);
+            setState("live");
+          };
+          track.onended = () => {
+            if (lastPicture) setState("live");
+          };
+        }
       };
       pc.onconnectionstatechange = () => {
         const state = pc?.connectionState;
@@ -668,7 +703,7 @@
           clearFailTimer();
           setState("live");
         }
-        if (state === "failed") {
+        if (state === "disconnected" || state === "failed") {
           failIfNoPicture("This network could not open a live picture.");
         }
       };

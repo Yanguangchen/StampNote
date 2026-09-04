@@ -461,6 +461,53 @@ test("a Firestore picture keeps the tunnel live when this network cannot complet
   await publisher.close();
 });
 
+test("a dropped camera call keeps the stills instead of going black", async () => {
+  pendingVoiceRemote = null;
+  const cloud = createMemoryCloud();
+  const states = [];
+  const stream = {
+    getTracks: () => [{ kind: "video", id: "cam" }],
+    getVideoTracks: () => [{ kind: "video", id: "cam" }],
+    getAudioTracks: () => [],
+  };
+  const publisher = liveTunnel.createPublisher({
+    cloud,
+    getStream: () => stream,
+    RTCPeerConnection: FakePeerConnection,
+    pictureMs: 20,
+    async capturePicture() {
+      return { mimeType: "image/jpeg", image: "qqq", capturedAtMs: 1 };
+    },
+  });
+  await publisher.publish({ tunnelId: "live-1", location: "10 Marina Bay" });
+  await settle();
+
+  const viewer = liveTunnel.createViewer({
+    cloud,
+    networkFailMs: 20,
+    RTCPeerConnection: class FlakyPeer extends FakePeerConnection {
+      async setRemoteDescription(description) {
+        this.remoteDescription = description;
+        this.connectionState = "connected";
+        this.onconnectionstatechange?.();
+        queueMicrotask(() => {
+          this.connectionState = "disconnected";
+          this.onconnectionstatechange?.();
+        });
+      }
+    },
+    onState(state) {
+      states.push(state);
+    },
+  });
+  await viewer.connect({ id: "live-1", ownerId: "owner-1" });
+  await settle();
+
+  assert.equal(states.at(-1), "live");
+  assert.equal(states.includes("failed"), false);
+  await publisher.close();
+});
+
 test("a voice message still reaches the recording when the WebRTC channel never opens", async () => {
   pendingVoiceRemote = null;
   const received = [];
@@ -509,6 +556,34 @@ test("a picture payload becomes a data URL the stage can show", () => {
     "data:image/jpeg;base64,abc",
   );
   assert.equal(liveTunnel.picturePayload({ image: "" }), null);
+});
+
+test("live stills are taken from the recording preview, not a second camera element", async () => {
+  const created = [];
+  const encoded = await liveTunnel.encodeLivePicture(
+    { getVideoTracks: () => [{ id: "cam" }] },
+    {
+      getPreview: () => ({ videoWidth: 800, videoHeight: 400 }),
+      document: {
+        createElement(name) {
+          created.push(name);
+          return {
+            width: 0,
+            height: 0,
+            getContext() {
+              return { drawImage() {} };
+            },
+            toBlob(callback) {
+              callback(new Blob([Uint8Array.of(1, 2, 3)], { type: "image/jpeg" }));
+            },
+          };
+        },
+      },
+    },
+  );
+  assert.equal(created.includes("video"), false);
+  assert.equal(encoded.mimeType, "image/jpeg");
+  assert.ok(encoded.image);
 });
 
 test("an empty or oversized voice message is refused", async () => {
@@ -579,6 +654,8 @@ class FakeElement {
     this.listeners = new Map();
     this.parentElement = null;
     this.src = "";
+    this.videoWidth = 0;
+    this.videoHeight = 0;
   }
 
   append(...children) {
@@ -849,6 +926,46 @@ test("the page shows a live picture when this network cannot open the camera cal
     harness.elements["live-tunnel-status"].textContent,
     /could not open a live picture/i,
   );
+});
+
+test("a black camera call keeps the stills instead of covering them", async () => {
+  const harness = createPageHarness({
+    picture: { mimeType: "image/jpeg", image: "abc123", capturedAtMs: 1 },
+    PeerConnection: class ConnectedBlackPeer extends FakePeerConnection {
+      async setRemoteDescription(description) {
+        this.remoteDescription = description;
+        this.connectionState = "connected";
+        this.onconnectionstatechange?.();
+        this.ontrack?.({
+          streams: [{ id: "remote" }],
+          track: { kind: "video", readyState: "live", muted: true },
+        });
+      }
+    },
+  });
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  await harness.elements["live-tunnel-list"].children[0].dispatch("click");
+  await settle();
+
+  assert.match(harness.elements["live-tunnel-picture"].src, /data:image\/jpeg;base64,abc123/);
+  assert.equal(harness.elements["live-tunnel-frame"].dataset.live, "true");
+  assert.equal(harness.elements["live-tunnel-frame"].dataset.mode, "relay");
+  assert.ok(harness.elements["live-tunnel-video"].srcObject);
+
+  harness.elements["live-tunnel-video"].videoWidth = 640;
+  harness.elements["live-tunnel-video"].videoHeight = 360;
+  await harness.elements["live-tunnel-video"].dispatch("playing");
+  await settle();
+  assert.equal(harness.elements["live-tunnel-frame"].dataset.mode, "webrtc");
+  assert.match(harness.elements["live-tunnel-picture"].src, /data:image\/jpeg;base64,abc123/);
+
+  harness.elements["live-tunnel-video"].videoWidth = 0;
+  harness.elements["live-tunnel-video"].videoHeight = 0;
+  await harness.elements["live-tunnel-video"].dispatch("waiting");
+  await settle();
+  assert.equal(harness.elements["live-tunnel-frame"].dataset.mode, "relay");
+  assert.match(harness.elements["live-tunnel-picture"].src, /data:image\/jpeg;base64,abc123/);
 });
 
 test("a live tunnel can record and send a voice message without an accept step", async () => {
