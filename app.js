@@ -2258,6 +2258,7 @@
     livePublisher = liveTunnelApi.createPublisher({
       cloud,
       getStream: () => stream,
+      getPreview: () => monitorVideo,
       onVoiceMessage: playIncomingVoiceMessage,
     });
     try {

@@ -147,11 +147,22 @@
     }
   }
 
+  function hasPaintedVideo() {
+    return Boolean(video?.srcObject) && Number(video.videoWidth) > 0 && Number(video.videoHeight) > 0;
+  }
+
+  function preferredMode() {
+    if (hasPaintedVideo()) return "webrtc";
+    if (picture?.src) return "relay";
+    return "";
+  }
+
   function setStageLive(live, mode) {
     if (frame) {
       frame.dataset.live = live ? "true" : "false";
-      if (mode) frame.dataset.mode = mode;
-      else if (!live) delete frame.dataset.mode;
+      const nextMode = live ? mode || preferredMode() : "";
+      if (nextMode) frame.dataset.mode = nextMode;
+      else delete frame.dataset.mode;
     }
     if (badge) badge.hidden = !live;
     if (leaveButton) leaveButton.hidden = viewerState === "idle";
@@ -170,11 +181,9 @@
     picture.src = url;
     picture.hidden = false;
     if (viewerState !== "live") viewerState = "live";
-    if (!video?.srcObject) {
-      setStatus("");
-      if (placeholder) placeholder.textContent = "";
-      setStageLive(true, "relay");
-    }
+    setStatus("");
+    if (placeholder) placeholder.textContent = "";
+    setStageLive(true, preferredMode());
   }
 
   function attachStream(stream) {
@@ -182,12 +191,17 @@
     video.srcObject = stream || null;
     if (stream) {
       video.play?.()?.catch?.(() => {});
-      clearPicture();
-      setStageLive(viewerState === "live", "webrtc");
-      return;
     }
-    setStageLive(Boolean(picture?.src) && viewerState === "live", picture?.src ? "relay" : "");
+    if (viewerState === "idle") return;
+    setStageLive(viewerState === "live" || Boolean(picture?.src), preferredMode());
   }
+
+  ["loadeddata", "playing", "resize", "waiting", "stalled", "emptied", "pause"].forEach((name) => {
+    video?.addEventListener(name, () => {
+      if (viewerState === "idle") return;
+      setStageLive(viewerState === "live" || Boolean(picture?.src), preferredMode());
+    });
+  });
 
   function describeTunnel(record) {
     if (!record) return "";
@@ -239,7 +253,7 @@
         if (state === "live") {
           setStatus("");
           if (placeholder) placeholder.textContent = "";
-          setStageLive(true, video?.srcObject ? "webrtc" : picture?.src ? "relay" : "");
+          setStageLive(true, preferredMode());
           setVoiceAvailable(true);
         } else if (state === "failed") {
           if (picture?.src) {
