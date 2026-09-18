@@ -19,6 +19,7 @@ const publicFiles = new Set([
   "photo-triage.js",
   "worker-face.js",
   "camera-facing.js",
+  "computer-vision.js",
   "frame-scaler.js",
   "face-identity.js",
   "person-tracker.js",

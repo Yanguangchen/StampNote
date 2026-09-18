@@ -30,6 +30,10 @@ const eventNames = [
   "capture.monitor.failed",
   "capture.camera.facing",
   "capture.camera.facing.failed",
+  "capture.vision.changed",
+  "capture.vision.started",
+  "capture.vision.stopped",
+  "capture.vision.failed",
   "capture.saved",
   "capture.work.started",
   "face.match.completed",
@@ -127,6 +131,7 @@ const telemetryFieldsSchema = z
     online: z.boolean().optional(),
     persistent: z.boolean().optional(),
     flagged: z.boolean().optional(),
+    vision: z.boolean().optional(),
     status: z
       .enum(["ok", "degraded", "success", "failed", "signed_in", "signed_out"])
       .optional(),

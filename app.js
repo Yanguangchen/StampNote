@@ -13,6 +13,7 @@
   const personIdentity = window.StampNotePersonTracker;
   const frameScaling = window.StampNoteFrameScaler;
   const cameraFacing = window.StampNoteCameraFacing;
+  const computerVision = window.StampNoteComputerVision;
   const triage = window.StampNoteTriage;
   const autoCapture = window.StampNoteAutoCapture;
   const overlay = window.StampNotePoseOverlay;
@@ -39,6 +40,8 @@
   const monitorStatus = document.querySelector("#monitor-status");
   const cameraFacingToggle = document.querySelector("#camera-facing-toggle");
   const cameraFacingName = document.querySelector("#camera-facing-name");
+  const computerVisionToggle = document.querySelector("#computer-vision-toggle");
+  const computerVisionName = document.querySelector("#computer-vision-name");
   const captureFlash = document.querySelector("#capture-flash");
   const poseOverlay = document.querySelector("#pose-overlay");
   const poseBadge = document.querySelector("#pose-badge");
@@ -522,13 +525,18 @@
   const cameraFacingPreference = cameraFacing?.createPreference({
     fallback: cameraFacing.BACK,
   });
+  const computerVisionPreference = computerVision?.createPreference({
+    fallback: computerVision.ON,
+  });
 
   let stream = null;
   let livePublisher = null;
   let incomingVoiceUrl = "";
   let controller = null;
   let cameraSwitching = false;
+  let computerVisionSwitching = false;
   let monitorStarting = false;
+  let monitorActive = false;
   let sampleTimer = null;
   let wakeLock = null;
   let faceDetector = null;
@@ -999,7 +1007,11 @@
   }
 
   function isRunning() {
-    return Boolean(controller?.getState().running);
+    return monitorActive;
+  }
+
+  function computerVisionEnabled() {
+    return computerVisionPreference ? computerVisionPreference.enabled() : true;
   }
 
   function setToggleLabel(running) {
@@ -2072,6 +2084,24 @@
     }
   }
 
+  function setComputerVisionLabel() {
+    if (!computerVisionToggle) return;
+
+    const enabled = computerVisionEnabled();
+    const mode = enabled ? computerVision?.ON || "on" : computerVision?.OFF || "off";
+    computerVisionToggle.dataset.vision = mode;
+    computerVisionToggle.setAttribute("aria-pressed", String(enabled));
+    computerVisionToggle.setAttribute(
+      "aria-label",
+      enabled
+        ? "Computer vision is on. Switch to video streaming."
+        : "Video streaming is on. Switch to computer vision.",
+    );
+    if (computerVisionName) {
+      computerVisionName.textContent = computerVision?.name(mode) || (enabled ? "Vision" : "Stream");
+    }
+  }
+
   // Phones routinely refuse to hold both cameras open at once, so the one in
   // hand is released before the other is asked for. That leaves a moment with
   // no camera at all, which is why a refusal reopens the camera that was
@@ -2133,7 +2163,9 @@
   // same element. So a running camera swaps its track rather than restarting,
   // and the count of photographs, the cadence and the enrolled match survive.
   async function switchCameraFacing() {
-    if (!cameraFacingPreference || cameraSwitching || monitorStarting) return;
+    if (!cameraFacingPreference || cameraSwitching || monitorStarting || computerVisionSwitching) {
+      return;
+    }
 
     const previousFacing = currentCameraFacing();
     const facing = cameraFacingPreference.toggle();
@@ -2174,6 +2206,9 @@
     try {
       const before = activeController.getState().captures;
       const state = await activeController.tick();
+      if (controller !== activeController) {
+        return;
+      }
       saveVisibleAttendance(state.bodies);
 
       if (state.captures !== before) {
@@ -2278,25 +2313,13 @@
     publisher?.close?.();
   }
 
-  async function startMonitor() {
-    if (monitorStarting || isRunning()) return;
-    monitorStarting = true;
-    manualAttendanceFormOpen = false;
-    setCameraLoader(true);
-    try {
-    const monitorStartedAt = performance.now();
-    attendanceRecorder.resetSession();
-    populateManualAttendanceOptions();
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setMonitorStatus("This browser cannot open a live camera — choose a photo instead.", "error");
-      telemetry?.event(
-        "capture.monitor.failed",
-        { errorCode: "camera_unsupported", status: "failed" },
-        { immediate: true },
-      );
-      return;
-    }
+  function releaseCameraTracks() {
+    stream?.getTracks().forEach((track) => track.stop());
+    stream = null;
+    if (monitorVideo) monitorVideo.srcObject = null;
+  }
 
+  async function loadEnrolledWorkers() {
     let enrolledWorkers = [];
     if (cloud?.getWorkerFaces && facialRecognition) {
       setMonitorStatus("Loading enrolled worker IDs…");
@@ -2310,14 +2333,14 @@
             : "Enrolled worker faces could not be loaded. Try again.",
           "error",
         );
-        return;
+        return { ok: false, enrolledWorkers: [] };
       }
       if (enrolledWorkers.length === 0) {
         setMonitorStatus(
           "No worker faces are enrolled. Open worker onboarding before recording.",
           "error",
         );
-        return;
+        return { ok: false, enrolledWorkers: [] };
       }
     }
     enrolledWorkers.forEach((worker) => {
@@ -2326,32 +2349,15 @@
       if (workerId) attendanceRecorder.rememberEnrollment(workerId, displayName || workerId);
     });
     populateManualAttendanceOptions();
+    return { ok: true, enrolledWorkers };
+  }
 
-    setMonitorStatus(`Starting the ${cameraFacing?.describe(currentCameraFacing()) || "camera"}…`);
-    setCameraLoaderDetail("Waiting for camera permission and a secure video stream…");
-
-    try {
-      stream = await navigator.mediaDevices.getUserMedia(cameraRequest());
-    } catch (error) {
-      setMonitorStatus(describeCameraError(error), "error");
-      telemetry?.event(
-        "capture.monitor.failed",
-        {
-          durationMs: performance.now() - monitorStartedAt,
-          errorCode: telemetry.safeErrorCode(error, "camera_failed"),
-          status: "failed",
-        },
-        { immediate: true },
-      );
-      return;
-    }
-
-    monitorVideo.srcObject = stream;
-    try {
-      await monitorVideo.play();
-    } catch {
-      // Some browsers resolve the frame without play() ever settling.
-    }
+  // MediaPipe (or the built-in fallback) plus attendance and auto capture. The
+  // camera and live tunnel do not depend on this, so a stream-only recording
+  // can skip it, and a running camera can turn it off without dropping the
+  // picture administrators are already watching.
+  async function startComputerVision(enrolledWorkers, options = {}) {
+    if (controller) return true;
 
     setCameraLoaderDetail("Camera connected. Preparing on-device vision…");
 
@@ -2359,31 +2365,28 @@
     try {
       detectorSetup = await createDetector();
     } catch (error) {
-      stream?.getTracks().forEach((track) => track.stop());
-      stream = null;
-      monitorVideo.srcObject = null;
       setMonitorStatus("The tracking model could not start. Try again.", "error");
       telemetry?.event(
-        "capture.monitor.failed",
+        options.alreadyStreaming ? "capture.vision.failed" : "capture.monitor.failed",
         {
-          durationMs: performance.now() - monitorStartedAt,
+          ...(Number.isFinite(options.startedAt)
+            ? { durationMs: performance.now() - options.startedAt }
+            : {}),
           errorCode: telemetry.safeErrorCode(error, "detector_start_failed"),
           status: "failed",
         },
         { immediate: true },
       );
-      return;
+      return false;
     }
     const { detector, model } = detectorSetup;
     if (enrolledWorkers.length > 0 && !model) {
-      stream?.getTracks().forEach((track) => track.stop());
-      stream = null;
-      monitorVideo.srcObject = null;
+      detector.close?.();
       setMonitorStatus(
         "Worker ID matching needs the face model, which could not start. Try again.",
         "error",
       );
-      return;
+      return false;
     }
     modelDetector = detector.kind === "model" ? detector : null;
     // Only the trained model is handed whole frames; the built-in fallback asks
@@ -2437,18 +2440,13 @@
     });
 
     controller.start();
-    await recordAutomaticSessionGpsLocation();
-    await startLiveTunnel();
     target = null;
     drawn = null;
     window.cancelAnimationFrame(painter);
     painter = window.requestAnimationFrame(paint);
     look();
+    if (poseOverlay) poseOverlay.hidden = false;
 
-    if (monitorFrame) {
-      monitorFrame.hidden = false;
-    }
-    setToggleLabel(true);
     setMonitorStatus(
       model && faceIdentity && enrolledWorkers.length > 0
         ? "Move closer for attendance taking before recording begins."
@@ -2456,39 +2454,19 @@
           ? "Move closer for attendance taking before auto capture begins."
         : model
           ? "Watching for people — anonymous tracking stays on this device."
-        : "Watching with the built-in detector — photos save themselves.",
+          : "Watching with the built-in detector — photos save themselves.",
       model && !faceIdentity ? "success" : "idle",
     );
-    telemetry?.event("capture.monitor.started", {
-      durationMs: performance.now() - monitorStartedAt,
-      status: "success",
-    });
-    requestWakeLock();
-    renderCaptures();
-    reviewCapturesWithAi({ automatic: true });
-    } finally {
-      monitorStarting = false;
-      setCameraLoader(false);
-    }
+    return true;
   }
 
-  function stopMonitor() {
+  function stopComputerVision() {
     window.clearTimeout(sampleTimer);
     sampleTimer = null;
-    window.clearTimeout(captureFlashTimer);
-    captureFlashTimer = null;
-    attendanceRecorder.resetSession();
-    populateManualAttendanceOptions();
-    captureFlash?.classList.remove("is-visible");
     window.cancelAnimationFrame(painter);
     painter = null;
     target = null;
     drawn = null;
-
-    stream?.getTracks().forEach((track) => track.stop());
-    stream = null;
-    monitorVideo.srcObject = null;
-    stopLiveTunnel();
 
     controller?.stop();
     // The model holds WebAssembly memory and a GPU context; dropping the
@@ -2500,16 +2478,18 @@
     controller = null;
     faceDetector = null;
     faceHint = null;
+    usingModel = false;
     frameScaler?.release?.();
     frameScaler = null;
 
-    releaseWakeLock();
+    attendanceRecorder.resetSession();
+    populateManualAttendanceOptions();
 
-    if (poseOverlay?.width) {
-      poseOverlay.getContext("2d").clearRect(0, 0, poseOverlay.width, poseOverlay.height);
-    }
-    if (monitorFrame) {
-      monitorFrame.hidden = true;
+    if (poseOverlay) {
+      if (poseOverlay.width) {
+        poseOverlay.getContext("2d").clearRect(0, 0, poseOverlay.width, poseOverlay.height);
+      }
+      poseOverlay.hidden = true;
     }
     if (poseBadge) {
       poseBadge.textContent = "";
@@ -2521,8 +2501,157 @@
     faceEnrollmentWasScanning = false;
     manualAttendanceFormOpen = false;
     document.body.dataset.takingAttendance = "false";
+  }
+
+  async function toggleComputerVision() {
+    if (!computerVisionPreference || computerVisionSwitching || monitorStarting || cameraSwitching) {
+      return;
+    }
+
+    if (!isRunning()) {
+      const next = computerVisionPreference.toggle();
+      setComputerVisionLabel();
+      telemetry?.event("capture.vision.changed", {
+        vision: computerVision.isEnabled(next),
+        status: "success",
+      });
+      return;
+    }
+
+    computerVisionSwitching = true;
+    if (computerVisionToggle) computerVisionToggle.disabled = true;
+    try {
+      if (computerVisionEnabled()) {
+        computerVisionPreference.set(computerVision.OFF);
+        setComputerVisionLabel();
+        stopComputerVision();
+        setMonitorStatus("Streaming video — computer vision is off.");
+        telemetry?.event("capture.vision.stopped", { status: "success" });
+        return;
+      }
+
+      setCameraLoader(true, "Preparing on-device vision…");
+      const loaded = await loadEnrolledWorkers();
+      if (!loaded.ok || !(await startComputerVision(loaded.enrolledWorkers, { alreadyStreaming: true }))) {
+        return;
+      }
+      computerVisionPreference.set(computerVision.ON);
+      setComputerVisionLabel();
+      telemetry?.event("capture.vision.started", { status: "success" });
+    } finally {
+      computerVisionSwitching = false;
+      if (computerVisionToggle) computerVisionToggle.disabled = false;
+      setCameraLoader(false);
+    }
+  }
+
+  async function startMonitor() {
+    if (monitorStarting || isRunning()) return;
+    monitorStarting = true;
+    manualAttendanceFormOpen = false;
+    setCameraLoader(true);
+    try {
+    const monitorStartedAt = performance.now();
+    attendanceRecorder.resetSession();
+    populateManualAttendanceOptions();
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setMonitorStatus("This browser cannot open a live camera — choose a photo instead.", "error");
+      telemetry?.event(
+        "capture.monitor.failed",
+        { errorCode: "camera_unsupported", status: "failed" },
+        { immediate: true },
+      );
+      return;
+    }
+
+    const visionWanted = computerVisionEnabled();
+    let enrolledWorkers = [];
+    if (visionWanted) {
+      const loaded = await loadEnrolledWorkers();
+      if (!loaded.ok) return;
+      enrolledWorkers = loaded.enrolledWorkers;
+    }
+
+    setMonitorStatus(`Starting the ${cameraFacing?.describe(currentCameraFacing()) || "camera"}…`);
+    setCameraLoaderDetail("Waiting for camera permission and a secure video stream…");
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(cameraRequest());
+    } catch (error) {
+      setMonitorStatus(describeCameraError(error), "error");
+      telemetry?.event(
+        "capture.monitor.failed",
+        {
+          durationMs: performance.now() - monitorStartedAt,
+          errorCode: telemetry.safeErrorCode(error, "camera_failed"),
+          status: "failed",
+        },
+        { immediate: true },
+      );
+      return;
+    }
+
+    monitorVideo.srcObject = stream;
+    try {
+      await monitorVideo.play();
+    } catch {
+      // Some browsers resolve the frame without play() ever settling.
+    }
+
+    if (visionWanted) {
+      const visionStarted = await startComputerVision(enrolledWorkers, { startedAt: monitorStartedAt });
+      if (!visionStarted) {
+        releaseCameraTracks();
+        return;
+      }
+    } else {
+      if (poseOverlay) poseOverlay.hidden = true;
+      setMonitorStatus("Streaming video — computer vision is off.");
+    }
+
+    await recordAutomaticSessionGpsLocation();
+    await startLiveTunnel();
+
+    if (monitorFrame) {
+      monitorFrame.hidden = false;
+    }
+    monitorActive = true;
+    setToggleLabel(true);
+    telemetry?.event("capture.monitor.started", {
+      durationMs: performance.now() - monitorStartedAt,
+      status: "success",
+      vision: visionWanted,
+    });
+    requestWakeLock();
+    renderCaptures();
+    reviewCapturesWithAi({ automatic: true });
+    } finally {
+      monitorStarting = false;
+      setCameraLoader(false);
+    }
+  }
+
+  function stopMonitor() {
+    const hadVision = Boolean(controller);
+    monitorActive = false;
+    window.clearTimeout(captureFlashTimer);
+    captureFlashTimer = null;
+    captureFlash?.classList.remove("is-visible");
+    stopComputerVision();
+
+    releaseCameraTracks();
+    stopLiveTunnel();
+    releaseWakeLock();
+
+    if (monitorFrame) {
+      monitorFrame.hidden = true;
+    }
     setToggleLabel(false);
-    setMonitorStatus("Auto capture stopped. Your photos are still stored on this device.");
+    setMonitorStatus(
+      hadVision
+        ? "Auto capture stopped. Your photos are still stored on this device."
+        : "Video streaming stopped. Your photos are still stored on this device.",
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -2705,7 +2834,7 @@
   }
 
   monitorToggle.addEventListener("click", async () => {
-    if (monitorStarting) return;
+    if (monitorStarting || computerVisionSwitching) return;
     if (isRunning()) {
       stopMonitor();
       return;
@@ -2724,6 +2853,7 @@
   });
 
   cameraFacingToggle?.addEventListener("click", switchCameraFacing);
+  computerVisionToggle?.addEventListener("click", toggleComputerVision);
 
   faceEnrollmentSkip?.addEventListener("click", () => {
     manualAttendanceFormOpen = false;
@@ -2821,16 +2951,16 @@
   // pauses rather than scoring stale frames, and picks the schedule back up on
   // return.
   document.addEventListener("visibilitychange", () => {
-    if (!controller) {
+    if (!isRunning()) {
       return;
     }
 
     if (document.hidden) {
-      controller.setPaused(true);
+      controller?.setPaused(true);
       return;
     }
 
-    controller.setPaused(false);
+    controller?.setPaused(false);
     monitorVideo.play().catch(() => {});
     if (!wakeLock) {
       requestWakeLock();
@@ -2848,6 +2978,7 @@
 
   setToggleLabel(false);
   setCameraFacingLabel();
+  setComputerVisionLabel();
   setSaveLabel();
   store
     .ready()

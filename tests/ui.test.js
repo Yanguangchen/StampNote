@@ -213,6 +213,35 @@ test("which lens the device watches through is a control, not an assumption", ()
   assert.match(app, /controller\?\.setPaused\(true\);/);
 });
 
+test("computer vision can be turned off for typical video streaming", () => {
+  const toggle = tagWithId("button", "computer-vision-toggle");
+
+  assert.ok(html.indexOf('id="computer-vision-toggle"') > html.indexOf('id="camera-facing-toggle"'));
+  assert.ok(html.indexOf('id="computer-vision-toggle"') < html.indexOf('id="monitor-toggle"'));
+  assert.ok(hasAttribute(toggle, "class", "tool"));
+  assert.ok(hasAttribute(toggle, "type", "button"));
+  assert.ok(hasAttribute(toggle, "aria-pressed", "true"));
+  assert.ok(hasAttribute(toggle, "data-vision", "on"));
+  assert.ok(
+    hasAttribute(toggle, "aria-label", "Computer vision is on. Switch to video streaming."),
+  );
+  assert.match(html, /id=["']computer-vision-name["'][^>]*>Vision</);
+  assert.match(html, /<script\s+src=["']computer-vision\.js["']\s+defer><\/script>/i);
+
+  const app = captureSource();
+  assert.match(app, /async function toggleComputerVision\(\)/);
+  assert.match(app, /function computerVisionEnabled\(\)/);
+  assert.match(app, /async function startComputerVision\(/);
+  assert.match(app, /function stopComputerVision\(\)/);
+  assert.match(app, /Streaming video — computer vision is off/);
+  const visionToggleSource = app.slice(
+    app.indexOf("async function toggleComputerVision"),
+    app.indexOf("async function startMonitor"),
+  );
+  assert.match(visionToggleSource, /startComputerVision\(/);
+  assert.doesNotMatch(visionToggleSource, /startMonitor\(/);
+});
+
 test("gallery control accepts multiple images", () => {
   const galleryInput = tagWithId("input", "gallery-input");
 
@@ -702,6 +731,7 @@ test("auto capture loads its own scripts, ahead of the app that wires them", () 
   );
 
   [
+    "computer-vision.js",
     "src/vision/pose-detector.js",
     "capture-scheduler.js",
     "photo-store.js",
@@ -1003,7 +1033,7 @@ test("the live camera is released when the watch stops", () => {
 
   // A hidden tab has no camera to look through, so tracking pauses.
   assert.match(app, /addEventListener\("visibilitychange"/);
-  assert.match(app, /controller\.setPaused\(true\)/);
+  assert.match(app, /controller\?\.setPaused\(true\)/);
 });
 
 test("one tracking error cannot permanently stop the sampling loop", () => {
