@@ -497,17 +497,18 @@ URL: [https://stampnote-omega.vercel.app/](https://stampnote-omega.vercel.app/)
 Live camera watch. Do not start it unless the user asked to record, take attendance, or debug capture.
 
 1. `#cloud-auth` — sign in with Google/Gmail so attendance and cloud sync belong to the workspace.
-2. `#monitor-toggle` — Start camera (`aria-pressed` becomes true when running).
-3. `#camera-loader` may show while the camera connects.
-4. `#face-enrollment` — **Attendance taking**. Follow `#face-enrollment-message`. `#face-enrollment-skip` continues without a worker ID.
-5. To add attendance without a face match, click `#manual-attendance-open` (**Add attendance manually**), select an enrolled profile in `#manual-attendance-worker`, then submit **Add**. `#manual-attendance-cancel` returns to scanning. The Recording screen shows a normal check-in confirmation and no review/flag wording.
-6. A manual add is stored with `source: "manual"`, `reviewStatus: "flagged"`, and `reviewReason: "manual-entry"`. Do not announce that on the Recording screen; review it later in Photos & attendance.
-7. On a face match or manual add: `#face-enrollment-worker-id`, then `#face-enrollment-another` or `#face-enrollment-record` (**Record work**). Adding attendance does not start recording work automatically.
-8. Watch runs. `#pose-badge` states who is in frame, cadence, and time to next photo. `#address-field` is the stamp address (usually readonly from GPS).
+2. `#computer-vision-toggle` — leave **Vision** (default) for MediaPipe tracking, or switch to **Stream** (`data-vision="off"`) for a plain live camera without models, overlay, or attendance taking.
+3. `#monitor-toggle` — Start camera (`aria-pressed` becomes true when running). Stream mode skips the next attendance steps and publishes the live picture only.
+4. `#camera-loader` may show while the camera connects.
+5. `#face-enrollment` — **Attendance taking** (Vision mode only). Follow `#face-enrollment-message`. `#face-enrollment-skip` continues without a worker ID.
+6. To add attendance without a face match, click `#manual-attendance-open` (**Add attendance manually**), select an enrolled profile in `#manual-attendance-worker`, then submit **Add**. `#manual-attendance-cancel` returns to scanning. The Recording screen shows a normal check-in confirmation and no review/flag wording.
+7. A manual add is stored with `source: "manual"`, `reviewStatus: "flagged"`, and `reviewReason: "manual-entry"`. Do not announce that on the Recording screen; review it later in Photos & attendance.
+8. On a face match or manual add: `#face-enrollment-worker-id`, then `#face-enrollment-another` or `#face-enrollment-record` (**Record work**). Adding attendance does not start recording work automatically.
+9. Watch runs. `#pose-badge` states who is in frame, cadence, and time to next photo. `#address-field` is the stamp address (usually readonly from GPS).
 
 Cadence: person in frame every **30 s**; empty frame every **120 s**; interval counts from the last photo. Both hands above the head, held ~1 s, takes one extra photo (`#capture-flash`). Vehicles are boxed and ignored for cadence.
 
-Toolbar: `#gallery-input` (stamp existing files); `#camera-facing-toggle` (`data-facing` `environment` back or `user` front); `#captures-save`; filmstrip `#filmstrip` / `#previews` / `#captures`; `#ai-review` leftover Gemini batch; `#ai-review-bin` recoverable flags; `#ai-review-purge` delete flagged; `#ai-review-loader` while Gemini reviews a batch of eight. Viewer `#viewer`: `#viewer-restore`, `#viewer-share`, `#viewer-delete`, `#viewer-close`.
+Toolbar: `#gallery-input` (stamp existing files); `#camera-facing-toggle` (`data-facing` `environment` back or `user` front); `#computer-vision-toggle` (`data-vision` `on` MediaPipe tracking or `off` plain video streaming); `#captures-save`; filmstrip `#filmstrip` / `#previews` / `#captures`; `#ai-review` leftover Gemini batch; `#ai-review-bin` recoverable flags; `#ai-review-purge` delete flagged; `#ai-review-loader` while Gemini reviews a batch of eight. Viewer `#viewer`: `#viewer-restore`, `#viewer-share`, `#viewer-delete`, `#viewer-close`.
 
 Keep the tab visible. A backgrounded tab suspends the camera.
 

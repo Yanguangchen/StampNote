@@ -22,6 +22,10 @@
     "capture.monitor.failed",
     "capture.camera.facing",
     "capture.camera.facing.failed",
+    "capture.vision.changed",
+    "capture.vision.started",
+    "capture.vision.stopped",
+    "capture.vision.failed",
     "capture.saved",
     "capture.work.started",
     "face.match.completed",
@@ -117,7 +121,7 @@
     "factCount",
     "score",
   ]);
-  const BOOLEAN_FIELDS = new Set(["automatic", "online", "persistent", "flagged"]);
+  const BOOLEAN_FIELDS = new Set(["automatic", "online", "persistent", "flagged", "vision"]);
   const ENUM_FIELDS = Object.freeze({
     status: new Set(["ok", "degraded", "success", "failed", "signed_in", "signed_out"]),
     trigger: new Set(["schedule", "gesture", "worker"]),

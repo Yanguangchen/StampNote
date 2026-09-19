@@ -1950,8 +1950,8 @@ body[data-stage="idle"] .record {
   }
 }
 
-/* Camera and Gallery are the two capture choices, so their one-word names stay
-   visible without requiring a hover gesture. */
+/* Gallery, camera and vision are the capture choices, so their one-word names
+   stay visible without requiring a hover gesture. */
 .toolbar > .toolbar-group:first-child > .tool > .hint,
 
 .toolbar > .record {

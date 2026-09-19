@@ -313,6 +313,10 @@ test("browser telemetry supports all application surfaces and domain events", as
   const { api } = harness;
   const newEvents = [
     ["capture.work.started", { attendanceCount: 5 }],
+    ["capture.vision.changed", { vision: false, status: "success" }],
+    ["capture.vision.started", { status: "success" }],
+    ["capture.vision.stopped", { status: "success" }],
+    ["capture.vision.failed", { errorCode: "detector_start_failed" }],
     ["attendance.another.requested", { attendanceCount: 2 }],
     ["dashboard.weather.failed", { errorCode: "weather_down" }],
     ["dashboard.weather.save_failed", { errorCode: "save_down" }],

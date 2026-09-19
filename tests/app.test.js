@@ -5,8 +5,9 @@ const { test } = require("node:test");
 const vm = require("node:vm");
 
 const appPath = resolve(__dirname, "..", "app.js");
-const cameraFacing = require("../camera-facing.js");
-const captureAttendance = require("../src/services/capture-attendance.js");
+  const cameraFacing = require("../camera-facing.js");
+  const computerVision = require("../computer-vision.js");
+  const captureAttendance = require("../src/services/capture-attendance.js");
 const captureCamera = require("../src/capture/camera-controller.js");
 const cloudData = require("../photo-cloud.js");
 const liveTunnel = require("../src/services/live-tunnel.js");
@@ -177,6 +178,8 @@ function createAppHarness(options = {}) {
     "monitor-status",
     "camera-facing-toggle",
     "camera-facing-name",
+    "computer-vision-toggle",
+    "computer-vision-name",
     "capture-flash",
     "pose-overlay",
     "pose-badge",
@@ -465,7 +468,10 @@ function createAppHarness(options = {}) {
   // The page reads its camera choice out of `localStorage`, which the harness
   // stands in for so a test can seed a device that was already set up and read
   // back what a press remembered.
-  const cameraStorage = new Map(Object.entries(options.storedFacing || {}));
+  const cameraStorage = new Map([
+    ...Object.entries(options.storedFacing || {}),
+    ...Object.entries(options.storedVision || {}),
+  ]);
   const facingStorage = {
     getItem(key) {
       return cameraStorage.has(key) ? cameraStorage.get(key) : null;
@@ -475,6 +481,7 @@ function createAppHarness(options = {}) {
     },
   };
   let detectorClosed = false;
+  let modelLoadCount = 0;
   let nextCameraError = null;
   let trackStopped = false;
   let releaseCameraLoad = null;
@@ -695,6 +702,11 @@ function createAppHarness(options = {}) {
       createPreference: (preferenceOptions) =>
         cameraFacing.createPreference({ storage: facingStorage, ...preferenceOptions }),
     },
+    StampNoteComputerVision: {
+      ...computerVision,
+      createPreference: (preferenceOptions) =>
+        computerVision.createPreference({ storage: facingStorage, ...preferenceOptions }),
+    },
     StampNoteCaptureAttendance: captureAttendance,
     StampNoteCaptureCamera: captureCamera,
     StampNoteFirebase: cloud,
@@ -726,6 +738,7 @@ function createAppHarness(options = {}) {
         ? null
         : {
             async load() {
+              modelLoadCount += 1;
               if (options.modelError) throw options.modelError;
               return detector;
             },
@@ -928,8 +941,14 @@ function createAppHarness(options = {}) {
     get storedFacing() {
       return cameraStorage.get("stampnote-camera-facing") || null;
     },
+    get storedVision() {
+      return cameraStorage.get("stampnote-computer-vision") || null;
+    },
     get detectorClosed() {
       return detectorClosed;
+    },
+    get modelLoadCount() {
+      return modelLoadCount;
     },
     failNextCamera(error) {
       nextCameraError = error;
@@ -1418,6 +1437,136 @@ test("a camera that refuses to open leaves the one already working in place", as
     harness.events.some((event) => event.name === "capture.camera.facing.failed"),
     true,
   );
+});
+
+test("computer vision is on by default and can be switched to video streaming", async () => {
+  const harness = createAppHarness({ camera: true });
+  await settle();
+
+  assert.equal(harness.elements["computer-vision-name"].textContent, "Vision");
+  assert.equal(harness.elements["computer-vision-toggle"].dataset.vision, "on");
+  assert.equal(harness.elements["computer-vision-toggle"].attributes.get("aria-pressed"), "true");
+  assert.equal(
+    harness.elements["computer-vision-toggle"].attributes.get("aria-label"),
+    "Computer vision is on. Switch to video streaming.",
+  );
+
+  await harness.elements["computer-vision-toggle"].dispatch("click");
+
+  assert.equal(harness.elements["computer-vision-name"].textContent, "Stream");
+  assert.equal(harness.elements["computer-vision-toggle"].dataset.vision, "off");
+  assert.equal(harness.elements["computer-vision-toggle"].attributes.get("aria-pressed"), "false");
+  assert.equal(
+    harness.elements["computer-vision-toggle"].attributes.get("aria-label"),
+    "Video streaming is on. Switch to computer vision.",
+  );
+  assert.equal(harness.storedVision, "off");
+  assert.ok(harness.events.some((event) => event.name === "capture.vision.changed"));
+});
+
+test("video streaming starts without MediaPipe or enrolled worker faces", async () => {
+  const harness = createAppHarness({
+    camera: true,
+    cloud: true,
+    faceEnrollment: true,
+    workerFaces: [],
+    storedVision: { "stampnote-computer-vision": "off" },
+  });
+  await settle();
+  harness.auth({ email: "owner@example.com", uid: "owner-1" });
+  await settle();
+
+  await harness.elements["monitor-toggle"].dispatch("click");
+  await settle(8);
+
+  assert.equal(harness.elements["monitor-toggle"].dataset.running, "true");
+  assert.equal(harness.elements["monitor-frame"].hidden, false);
+  assert.equal(harness.elements["pose-overlay"].hidden, true);
+  assert.equal(harness.controllerState.running, false);
+  assert.equal(harness.captureConfiguration, undefined);
+  assert.equal(harness.modelLoadCount, 0);
+  assert.equal(harness.faceIdentityOptions, undefined);
+  assert.match(harness.elements["monitor-status"].textContent, /streaming video/i);
+  assert.ok(harness.cloudCalls.liveTunnels.some((entry) => entry.type === "publish"));
+  assert.ok(
+    harness.events.some(
+      (event) => event.name === "capture.monitor.started" && event.fields.vision === false,
+    ),
+  );
+
+  await harness.elements["monitor-toggle"].dispatch("click");
+  assert.equal(harness.elements["monitor-toggle"].dataset.running, "false");
+  assert.equal(harness.trackStopped, true);
+  assert.equal(harness.modelLoadCount, 0);
+  assert.match(harness.elements["monitor-status"].textContent, /video streaming stopped/i);
+});
+
+test("a running watch can drop MediaPipe and keep the live camera stream", async () => {
+  const harness = createAppHarness({ camera: true, cloud: true });
+  await settle();
+  harness.auth({ email: "owner@example.com", uid: "owner-1" });
+  await settle();
+
+  await harness.elements["monitor-toggle"].dispatch("click");
+  await settle(8);
+
+  assert.equal(harness.controllerState.running, true);
+  assert.equal(harness.modelLoadCount, 1);
+  assert.ok(harness.cloudCalls.liveTunnels.some((entry) => entry.type === "publish"));
+
+  await harness.elements["computer-vision-toggle"].dispatch("click");
+  await settle(4);
+
+  assert.equal(harness.elements["computer-vision-name"].textContent, "Stream");
+  assert.equal(harness.storedVision, "off");
+  assert.equal(harness.controllerState.running, false);
+  assert.equal(harness.detectorClosed, true);
+  assert.equal(harness.elements["monitor-toggle"].dataset.running, "true");
+  assert.equal(harness.elements["monitor-frame"].hidden, false);
+  assert.equal(harness.elements["pose-overlay"].hidden, true);
+  assert.match(harness.elements["monitor-status"].textContent, /streaming video/i);
+  assert.equal(
+    harness.cloudCalls.liveTunnels.some((entry) => entry.type === "end"),
+    false,
+    "turning computer vision off must not end the live tunnel",
+  );
+  assert.ok(harness.events.some((event) => event.name === "capture.vision.stopped"));
+});
+
+test("video streaming can turn computer vision back on without restarting the camera", async () => {
+  const embedding = Array.from({ length: 128 }, (unused, index) => index / 1000);
+  const harness = createAppHarness({
+    camera: true,
+    cloud: true,
+    faceEnrollment: true,
+    workerFaces: [{ workerId: "WORKER-7", displayName: "Ari Tan", embedding }],
+    storedVision: { "stampnote-computer-vision": "off" },
+  });
+  await settle();
+  harness.auth({ email: "owner@example.com", uid: "owner-1" });
+  await settle();
+
+  await harness.elements["monitor-toggle"].dispatch("click");
+  await settle(8);
+
+  assert.equal(harness.modelLoadCount, 0);
+  assert.equal(harness.controllerState.running, false);
+
+  await harness.elements["computer-vision-toggle"].dispatch("click");
+  await settle(8);
+
+  assert.equal(harness.elements["computer-vision-name"].textContent, "Vision");
+  assert.equal(harness.storedVision, "on");
+  assert.equal(harness.modelLoadCount, 1);
+  assert.equal(harness.controllerState.running, true);
+  assert.equal(harness.captureConfiguration.detector.kind, "model");
+  assert.match(harness.elements["monitor-status"].textContent, /attendance taking/i);
+  assert.equal(
+    harness.cloudCalls.liveTunnels.some((entry) => entry.type === "end"),
+    false,
+    "turning computer vision on must not end the live tunnel",
+  );
+  assert.ok(harness.events.some((event) => event.name === "capture.vision.started"));
 });
 
 test("the live camera prompts for attendance taking before the activity starts", async () => {

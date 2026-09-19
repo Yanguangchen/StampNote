@@ -25,7 +25,7 @@
     />
     <link rel="stylesheet" href="vendor/fonts/outfit.css" />
     <link rel="stylesheet" href="sidebar.css" />
-    <link rel="stylesheet" href="styles.css?v=20260818-4" />
+    <link rel="stylesheet" href="styles.css?v=20260918-1" />
     <!-- Applied before the first paint so a saved dark theme never flashes the
          idle paper, and a saved light theme never flashes the camera shell. -->
     <script>
@@ -48,6 +48,7 @@
     <script src="photo-triage.js" defer></script>
     <script src="worker-face.js" defer></script>
     <script src="camera-facing.js" defer></script>
+    <script src="computer-vision.js" defer></script>
     <script src="frame-scaler.js" defer></script>
     <script src="face-identity.js" defer></script>
     <script src="person-tracker.js" defer></script>
@@ -62,7 +63,7 @@
     <script src="src/services/capture-attendance.js?v=20260818-1" defer></script>
     <script src="src/capture/camera-controller.js" defer></script>
     <script src="src/services/live-tunnel.js" defer></script>
-    <script src="app.js?v=20260819-1" defer></script>
+    <script src="app.js?v=20260918-1" defer></script>
     <script src="orbit.js?v=20260818-1" defer></script>
   </head>
   <body>
@@ -390,6 +391,23 @@
             <path d="M14.3 15.7h1.5v1.5" />
           </svg>
           <span class="hint" id="camera-facing-name">Back</span>
+        </button>
+
+        <!-- MediaPipe pose, face, hand and vehicle models. Off leaves a plain
+             camera stream for live video, without on-device computer vision. -->
+        <button
+          class="tool"
+          id="computer-vision-toggle"
+          type="button"
+          aria-label="Computer vision is on. Switch to video streaming."
+          aria-pressed="true"
+          data-vision="on"
+        >
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M3.6 12s3.3-5.4 8.4-5.4S20.4 12 20.4 12s-3.3 5.4-8.4 5.4S3.6 12 3.6 12z" />
+            <circle cx="12" cy="12" r="2.3" />
+          </svg>
+          <span class="hint" id="computer-vision-name">Vision</span>
         </button>
       </div>
 

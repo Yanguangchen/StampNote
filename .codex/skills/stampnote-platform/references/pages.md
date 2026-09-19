@@ -99,11 +99,12 @@ Live camera watch. Do not start it unless the user asked to record, take attenda
 ### Start
 
 1. `#cloud-auth` — sign in so attendance and cloud sync belong to the workspace.
-2. `#monitor-toggle` — Start camera (`aria-pressed` becomes true when running).
-3. `#camera-loader` may show while the camera connects.
-4. `#face-enrollment` — **Attendance taking**. Follow `#face-enrollment-message`. `#face-enrollment-skip` continues without a worker ID.
-5. On match: `#face-enrollment-worker-id`, then `#face-enrollment-another` or `#face-enrollment-record` (**Record work**). Success confirmation stays on screen about 1.8 s.
-6. Watch runs. `#pose-badge` states who is in frame, cadence, and time to next photo. `#address-field` is the stamp address (usually readonly from GPS).
+2. `#computer-vision-toggle` — **Vision** (default) runs MediaPipe; **Stream** (`data-vision="off"`) is a plain live camera without models or attendance taking.
+3. `#monitor-toggle` — Start camera (`aria-pressed` becomes true when running).
+4. `#camera-loader` may show while the camera connects.
+5. `#face-enrollment` — **Attendance taking** (Vision mode only). Follow `#face-enrollment-message`. `#face-enrollment-skip` continues without a worker ID.
+6. On match: `#face-enrollment-worker-id`, then `#face-enrollment-another` or `#face-enrollment-record` (**Record work**). Success confirmation stays on screen about 1.8 s.
+7. Watch runs. `#pose-badge` states who is in frame, cadence, and time to next photo. `#address-field` is the stamp address (usually readonly from GPS).
 
 ### Cadence and gesture
 
@@ -117,6 +118,7 @@ Live camera watch. Do not start it unless the user asked to record, take attenda
 
 - `#gallery-input` / Gallery — stamp existing files
 - `#camera-facing-toggle` — `data-facing` `environment` (back) or `user` (front); `#camera-facing-name` is the lens in use
+- `#computer-vision-toggle` — `data-vision` `on` (MediaPipe tracking, default) or `off` (plain video streaming); `#computer-vision-name` is `Vision` or `Stream`
 - `#captures-save` — write kept photos out as files
 - Filmstrip `#filmstrip` / `#previews` / `#captures`
 - `#ai-review` — leftover Gemini batch; `#ai-review-bin` — recoverable flags; `#ai-review-purge` — delete flagged
