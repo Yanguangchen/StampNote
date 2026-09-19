@@ -126,6 +126,7 @@ function createHarness(options = {}) {
     "theme-toggle-label",
     "robot-ip-form",
     "robot-ip",
+    "robot-ip-open",
     "robot-control",
     "robot-control-host",
     "robot-control-frame",
@@ -136,6 +137,7 @@ function createHarness(options = {}) {
   elements["camera-loader"].hidden = true;
   elements["live-voice-notice"].hidden = true;
   elements["robot-control"].hidden = true;
+  elements["robot-ip-open"].hidden = false;
   elements["robot-control-close"].hidden = true;
   elements["robotic-auth"].hint = new FakeElement("span");
   elements["robotic-auth"].signInIcon = new FakeElement("svg");
@@ -486,6 +488,7 @@ test("entering a robot IP opens a sandboxed iframe and remembers the address", a
   await settle();
 
   assert.equal(harness.elements["robot-control"].hidden, false);
+  assert.equal(harness.elements["robot-ip-open"].hidden, true);
   assert.equal(harness.elements["robot-control-close"].hidden, false);
   assert.equal(harness.elements["robot-control-frame"].src, "http://192.168.1.50:8080/");
   assert.equal(harness.elements["robot-control-host"].textContent, "192.168.1.50:8080");
@@ -501,6 +504,7 @@ test("entering a robot IP opens a sandboxed iframe and remembers the address", a
   await harness.elements["robot-control-close"].dispatch("click");
   await settle();
   assert.equal(harness.elements["robot-control"].hidden, true);
+  assert.equal(harness.elements["robot-ip-open"].hidden, false);
   assert.equal(harness.elements["robot-control-close"].hidden, true);
   assert.equal(harness.elements["robot-control-frame"].src, "");
   assert.equal(harness.body.dataset.robot, undefined);

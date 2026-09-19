@@ -76,6 +76,7 @@
   const themeToggleLabel = document.querySelector("#theme-toggle-label");
   const robotIpForm = document.querySelector("#robot-ip-form");
   const robotIp = document.querySelector("#robot-ip");
+  const robotIpOpen = document.querySelector("#robot-ip-open");
   const robotControl = document.querySelector("#robot-control");
   const robotControlHost = document.querySelector("#robot-control-host");
   const robotControlFrame = document.querySelector("#robot-control-frame");
@@ -172,6 +173,7 @@
       if (open) document.body.dataset.robot = "open";
       else delete document.body.dataset.robot;
     }
+    if (robotIpOpen) robotIpOpen.hidden = Boolean(open);
     if (robotControlClose) robotControlClose.hidden = !open;
   }
 

@@ -143,7 +143,7 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
-  width: min(calc(100% - 72px), 280px);
+  width: min(calc(100% - 72px), 248px);
   padding: 4px 4px 4px 10px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 12px;
@@ -165,7 +165,8 @@ button {
 }
 
 .robot-ip input::placeholder {
-  color: var(--muted);
+  color: rgba(232, 239, 233, 0.72);
+  opacity: 1;
 }
 
 .robot-ip input:focus {
@@ -219,7 +220,7 @@ button {
   align-items: center;
   gap: 10px;
   min-height: 36px;
-  padding: 6px calc(12px + min(280px, 42vw)) 6px 56px;
+  padding: 6px calc(12px + min(248px, 42vw)) 6px 56px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(8, 14, 12, 0.92);
 }
