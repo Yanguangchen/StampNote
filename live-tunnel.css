@@ -1,6 +1,6 @@
-/* Live tunnel: a list of cameras that are recording now, and one picture that
-   an administrator can open without a call prompt. The tokens match the rest
-   of the admin workspace so dark/light is a palette swap. */
+/* Live tunnel is landscape-first: the session list hides behind an icon, and
+   the workspace splits half robot control / half live stream. The tokens match
+   the rest of the admin workspace so dark/light is a palette swap. */
 :root {
   color-scheme: light;
   --ink: #14201c;
@@ -62,9 +62,18 @@
   display: none !important;
 }
 
+html,
 body {
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
   min-height: 100dvh;
+  height: 100dvh;
   margin: 0;
+  overflow: hidden;
   background: var(--paper);
   color: var(--ink);
   font-family: "Outfit", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -87,16 +96,62 @@ button {
 }
 
 .live-tunnel-header {
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  position: relative;
+  z-index: 30;
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 16px;
-  min-height: 64px;
-  padding: 12px clamp(18px, 4vw, 48px);
+  gap: 10px;
+  min-height: 52px;
+  padding: 8px 12px 8px 12px;
   border-bottom: 1px solid var(--line);
   background: var(--surface);
+}
+
+.live-tunnel-menu {
+  display: grid;
+  place-items: center;
+  position: relative;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.live-tunnel-menu-icon {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.live-tunnel-menu[aria-expanded="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.live-tunnel-menu-count {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-ink);
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 16px;
+  text-align: center;
 }
 
 .account-controls {
@@ -164,16 +219,26 @@ button {
 }
 
 .live-tunnel-main {
-  width: min(1280px, 100%);
-  margin: 0 auto;
-  padding: clamp(20px, 3vw, 36px) clamp(18px, 4vw, 48px) 64px;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 .live-tunnel-status {
-  min-height: 20px;
-  margin: 0 0 16px;
+  flex: 0 0 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 4px 12px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
+}
+
+.live-tunnel-status:empty {
+  display: none;
 }
 
 .live-tunnel-status[data-state="error"] {
@@ -184,6 +249,7 @@ button {
   display: grid;
   justify-items: center;
   gap: 10px;
+  margin: 24px;
   padding: 48px 24px;
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -192,18 +258,61 @@ button {
 }
 
 .live-tunnel-workspace {
-  display: grid;
-  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
-  gap: 22px;
-  align-items: start;
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
 }
 
-.live-tunnel-rail,
-.live-tunnel-stage {
-  min-width: 0;
+.live-tunnel-rail-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 28;
+  border: 0;
+  background: rgba(8, 14, 12, 0.28);
+  color: transparent;
+  cursor: pointer;
+}
+
+.live-tunnel-rail {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 29;
+  display: none;
+  width: min(360px, calc(100vw - 20px));
+  max-height: calc(100% - 20px);
+  overflow: auto;
   border: 1px solid var(--line);
   border-radius: 18px;
   background: var(--surface);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+}
+
+.live-tunnel-rail[data-open="true"] {
+  display: block;
+}
+
+.live-tunnel-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+
+.live-tunnel-robot,
+.live-tunnel-stage {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+}
+
+.live-tunnel-robot {
+  border-right: 1px solid var(--line);
 }
 
 .live-tunnel-rail-header,
@@ -352,12 +461,28 @@ button {
   margin-left: auto;
 }
 
+.live-tunnel-robot-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--chip);
+}
+
+.live-tunnel-robot-bar .live-tunnel-robot-ip {
+  flex: 1 1 180px;
+}
+
 .live-tunnel-frame {
   position: relative;
+  flex: 1 1 auto;
   overflow: hidden;
-  aspect-ratio: 16 / 10;
-  margin: 14px 18px 10px;
-  border-radius: 14px;
+  min-height: 0;
+  margin: 0;
+  border-radius: 0;
   background: var(--stage);
 }
 
@@ -403,33 +528,16 @@ button {
 }
 
 .live-tunnel-caption {
-  min-height: 1.4em;
-  margin: 0 18px 12px;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.live-tunnel-robot {
-  display: flex;
-  flex-direction: column;
-  min-height: 280px;
-  margin: 0 18px 14px;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--surface);
-}
-
-.live-tunnel-robot-bar {
-  display: flex;
-  align-items: center;
-  min-height: 34px;
+  flex: 0 0 auto;
+  min-height: 1.2em;
+  margin: 0;
   padding: 6px 12px;
-  border-bottom: 1px solid var(--line);
-  background: var(--chip);
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .live-tunnel-robot-host {
+  flex: 1 1 8rem;
   min-width: 0;
   margin: 0;
   color: var(--ink);
@@ -440,20 +548,31 @@ button {
   white-space: nowrap;
 }
 
+.live-tunnel-robot-host:empty {
+  display: none;
+}
+
 .live-tunnel-robot iframe {
   flex: 1 1 auto;
   width: 100%;
-  min-height: 240px;
+  min-height: 0;
   border: 0;
-  background: #fff;
+  background: #111;
+}
+
+.live-tunnel-robot:not([data-open="true"]) iframe {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 40%),
+    var(--stage);
 }
 
 .live-tunnel-voice {
   display: flex;
+  flex: 0 0 auto;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  padding: 0 18px 16px;
+  padding: 8px 12px 10px;
 }
 
 .live-tunnel-voice-status {
@@ -469,8 +588,14 @@ button {
   color: var(--on-ink);
 }
 
-@media (max-width: 840px) {
-  .live-tunnel-workspace {
+@media (orientation: portrait) {
+  .live-tunnel-split {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .live-tunnel-robot {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
   }
 }
