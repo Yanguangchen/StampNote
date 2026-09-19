@@ -32,6 +32,7 @@
     <script src="photo-cloud.js" defer></script>
     <script src="firebase.js?v=20260903-1" defer></script>
     <script src="src/services/live-tunnel.js" defer></script>
+    <script src="src/services/robot-control-url.js" defer></script>
     <script src="live-tunnel.js" defer></script>
     <script src="sidebar.js" defer></script>
   </head>
@@ -104,6 +105,17 @@
             </p>
           </div>
           <p class="live-tunnel-caption" id="live-tunnel-caption"></p>
+          <section class="live-tunnel-robot" id="live-tunnel-robot" hidden>
+            <header class="live-tunnel-robot-bar">
+              <p class="live-tunnel-robot-host" id="live-tunnel-robot-host"></p>
+            </header>
+            <iframe
+              id="live-tunnel-robot-frame"
+              title="Robot control"
+              sandbox="allow-scripts allow-forms allow-same-origin"
+              referrerpolicy="no-referrer"
+            ></iframe>
+          </section>
           <div class="live-tunnel-voice" id="live-tunnel-voice" hidden>
             <button class="button button-primary live-tunnel-voice-record" id="live-tunnel-voice-record" type="button" aria-pressed="false">
               Voice message
