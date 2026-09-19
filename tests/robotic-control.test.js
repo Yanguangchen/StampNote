@@ -28,6 +28,11 @@ test("robotic control is a dedicated full-page camera without MediaPipe", () => 
   assert.match(html, /id="robotic-auth"/);
   assert.match(html, /id="camera-facing-toggle"/);
   assert.match(html, /id="camera-loader"/);
+  assert.match(html, /id="robot-ip-form"/);
+  assert.match(html, /id="robot-ip"/);
+  assert.match(html, /placeholder="Robot IP address"/);
+  assert.match(html, /id="robot-control-frame"/);
+  assert.match(html, /sandbox="allow-scripts allow-forms allow-same-origin"/);
   assert.match(html, /<link rel="stylesheet" href="sidebar\.css" \/>/);
   assert.match(html, /<script src="sidebar\.js" defer><\/script>/);
   assert.match(html, /<header[^>]*data-sidebar-mount/);
@@ -38,6 +43,7 @@ test("robotic control is a dedicated full-page camera without MediaPipe", () => 
   assert.doesNotMatch(html, /id="monitor-toggle"|id="gallery-input"|id="captures-save"/);
   assert.match(css, /\.monitor video\s*\{[^}]*object-fit:\s*cover/);
   assert.match(css, /\.stage\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*0/);
+  assert.match(css, /\.robot-ip\s*\{/);
   assert.match(server, /"robotic-control\.html",\s*\n\s*"robotic-control\.css",\s*\n\s*"robotic-control\.js",/);
 });
 
@@ -51,6 +57,8 @@ class FakeElement {
     this.hidden = false;
     this.disabled = false;
     this.textContent = "";
+    this.value = "";
+    this.src = "";
     this.srcObject = null;
     this.listeners = new Map();
     this.hint = null;
@@ -71,10 +79,17 @@ class FakeElement {
 
   setAttribute(name, value) {
     this.attributes.set(name, String(value));
+    if (name === "src") this.src = String(value);
   }
 
   getAttribute(name) {
+    if (name === "src") return this.src || this.attributes.get("src") || null;
     return this.attributes.get(name) ?? null;
+  }
+
+  removeAttribute(name) {
+    this.attributes.delete(name);
+    if (name === "src") this.src = "";
   }
 
   toggleAttribute(name, force) {
@@ -108,11 +123,18 @@ function createHarness(options = {}) {
     "theme-toggle",
     "theme-toggle-icon",
     "theme-toggle-label",
+    "robot-ip-form",
+    "robot-ip",
+    "robot-control",
+    "robot-control-host",
+    "robot-control-frame",
+    "robot-control-close",
   ];
   const elements = Object.fromEntries(ids.map((id) => [id, new FakeElement()]));
   elements["robotic-frame"].hidden = true;
   elements["camera-loader"].hidden = true;
   elements["live-voice-notice"].hidden = true;
+  elements["robot-control"].hidden = true;
   elements["robotic-auth"].hint = new FakeElement("span");
   elements["robotic-auth"].signInIcon = new FakeElement("svg");
   elements["robotic-auth"].signOutIcon = new FakeElement("svg");
@@ -126,7 +148,10 @@ function createHarness(options = {}) {
   const windowListeners = new Map();
   const events = [];
   const cameraStorage = new Map(Object.entries(options.storedFacing || {}));
-  const themeStorage = new Map(options.theme ? [["stampnote-theme", options.theme]] : []);
+  const themeStorage = new Map([
+    ...(options.theme ? [["stampnote-theme", options.theme]] : []),
+    ...(options.storedIp ? [["stampnote-robotic-control-ip", options.storedIp]] : []),
+  ]);
   let authCallback;
   const cloudCalls = { liveTunnels: [], signIn: 0, signOut: 0 };
   const publishers = [];
@@ -226,12 +251,17 @@ function createHarness(options = {}) {
 
   const context = {
     Audio: options.Audio,
-    URL: {
-      createObjectURL() {
-        return "blob:robotic-1";
+    URL: Object.assign(
+      function HarnessURL(value, base) {
+        return new globalThis.URL(value, base);
       },
-      revokeObjectURL() {},
-    },
+      {
+        createObjectURL() {
+          return "blob:robotic-1";
+        },
+        revokeObjectURL() {},
+      },
+    ),
     StampNoteCameraFacing: {
       ...cameraFacing,
       createPreference: (preferenceOptions) =>
@@ -298,6 +328,7 @@ function createHarness(options = {}) {
     auth(user, error = null) {
       authCallback?.(user, error);
     },
+    body,
     cameraConstraints: () => cameraConstraints,
     cloudCalls,
     documentListeners,
@@ -309,6 +340,10 @@ function createHarness(options = {}) {
     storedFacing() {
       return cameraStorage.get("stampnote-robotic-control-camera-facing") || null;
     },
+    storedIp() {
+      return themeStorage.get("stampnote-robotic-control-ip") || null;
+    },
+    parseRobotControlUrl: context.StampNoteRoboticControl.parseRobotControlUrl,
     telemetry: context.StampNoteObservability,
     trackStopped: () => trackStopped,
     windowListeners,
@@ -413,4 +448,74 @@ test("signing in after the stream is already running starts the live tunnel", as
   harness.auth({ email: "owner@example.com", uid: "owner-1" });
   await settle();
   assert.ok(harness.cloudCalls.liveTunnels.some((entry) => entry.type === "publish"));
+});
+
+test("parseRobotControlUrl only accepts http(s) robot IP addresses", () => {
+  const parse = createHarness().parseRobotControlUrl;
+  const ipv4 = parse("192.168.1.50");
+  assert.equal(ipv4.ok, true);
+  assert.equal(String(ipv4.href), "http://192.168.1.50/");
+  assert.equal(String(ipv4.host), "192.168.1.50");
+
+  const withPort = parse("10.0.0.8:8080/control");
+  assert.equal(withPort.ok, true);
+  assert.equal(String(withPort.href), "http://10.0.0.8:8080/control");
+  assert.equal(String(withPort.host), "10.0.0.8:8080");
+
+  const httpsIp = parse("https://192.168.0.12/");
+  assert.equal(httpsIp.ok, true);
+  assert.equal(String(httpsIp.href), "https://192.168.0.12/");
+  assert.equal(String(httpsIp.host), "192.168.0.12");
+
+  assert.equal(parse("[::1]").ok, true);
+  assert.equal(parse("").ok, false);
+  assert.equal(parse("robot.local").ok, false);
+  assert.equal(parse("javascript:alert(1)").ok, false);
+  assert.equal(parse("data:text/html,hi").ok, false);
+  assert.equal(parse("file:///etc/passwd").ok, false);
+  assert.equal(parse("http://user:pass@192.168.1.50/").ok, false);
+  assert.equal(parse("https://example.com").ok, false);
+});
+
+test("entering a robot IP opens a sandboxed iframe and remembers the address", async () => {
+  const harness = createHarness();
+  harness.elements["robot-ip"].value = "192.168.1.50:8080";
+  await harness.elements["robot-ip-form"].dispatch("submit");
+  await settle();
+
+  assert.equal(harness.elements["robot-control"].hidden, false);
+  assert.equal(harness.elements["robot-control-frame"].src, "http://192.168.1.50:8080/");
+  assert.equal(harness.elements["robot-control-host"].textContent, "192.168.1.50:8080");
+  assert.equal(harness.body.dataset.robot, "open");
+  assert.equal(harness.elements["robot-ip"].value, "192.168.1.50:8080");
+  assert.equal(harness.storedIp(), "192.168.1.50:8080");
+  assert.match(harness.elements["robotic-status"].textContent, /Opened robot control/);
+  assert.ok(
+    !JSON.stringify(harness.events).includes("192.168.1.50"),
+    "robot IP must not be written to telemetry",
+  );
+
+  await harness.elements["robot-control-close"].dispatch("click");
+  await settle();
+  assert.equal(harness.elements["robot-control"].hidden, true);
+  assert.equal(harness.elements["robot-control-frame"].src, "");
+  assert.equal(harness.body.dataset.robot, undefined);
+  assert.match(harness.elements["robotic-status"].textContent, /Robot control closed/);
+});
+
+test("a stored robot IP fills the field but does not open the iframe", () => {
+  const harness = createHarness({ storedIp: "10.0.0.9" });
+  assert.equal(harness.elements["robot-ip"].value, "10.0.0.9");
+  assert.equal(harness.elements["robot-control"].hidden, true);
+  assert.equal(harness.elements["robot-control-frame"].src, "");
+});
+
+test("an invalid robot IP stays on the page without opening the iframe", async () => {
+  const harness = createHarness();
+  harness.elements["robot-ip"].value = "javascript:alert(1)";
+  await harness.elements["robot-ip-form"].dispatch("submit");
+  await settle();
+  assert.equal(harness.elements["robot-control"].hidden, true);
+  assert.equal(harness.elements["robot-control-frame"].src, "");
+  assert.match(harness.elements["robotic-status"].textContent, /http or https/i);
 });
