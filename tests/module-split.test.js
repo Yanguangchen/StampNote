@@ -225,6 +225,7 @@ test("pages load the split modules from src/ and the local server exposes that f
   const admin = readFileSync(resolve(root, "admin.html"), "utf8");
   const coordinatesPage = readFileSync(resolve(root, "coordinates.html"), "utf8");
   const operationsAi = readFileSync(resolve(root, "ai-dashboard.html"), "utf8");
+  const liveTunnelPage = readFileSync(resolve(root, "live-tunnel.html"), "utf8");
   const server = readFileSync(resolve(root, "server.js"), "utf8");
 
   assert.match(capture, /src\/vision\/pose-detector\.js/);
@@ -241,5 +242,7 @@ test("pages load the split modules from src/ and the local server exposes that f
   assert.match(coordinatesPage, /src\/components\/coordinates-workspace\.js/);
   assert.match(operationsAi, /src\/services\/ai-assistant\.js/);
   assert.match(operationsAi, /src\/components\/ai-dashboard-workspace\.js/);
+  assert.match(liveTunnelPage, /src\/services\/live-tunnel\.js/);
+  assert.match(liveTunnelPage, /src\/services\/robot-control-url\.js/);
   assert.match(server, /relativePath\.startsWith\("src\/"\)/);
 });

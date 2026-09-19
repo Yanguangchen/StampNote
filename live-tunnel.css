@@ -253,12 +253,77 @@ button {
   background: var(--paper);
   color: inherit;
   text-align: left;
+}
+
+.live-tunnel-item[data-selected="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.live-tunnel-join {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
   cursor: pointer;
 }
 
-.live-tunnel-item[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--accent-soft);
+.live-tunnel-robot-ip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 3px 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.live-tunnel-robot-ip input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+}
+
+.live-tunnel-robot-ip input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+
+.live-tunnel-robot-ip input:focus {
+  outline: none;
+}
+
+.live-tunnel-robot-ip-open,
+.live-tunnel-robot-ip-close {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.live-tunnel-robot-ip-open {
+  background: var(--accent);
+  color: var(--on-ink);
+}
+
+.live-tunnel-robot-ip-close {
+  background: var(--chip);
+  color: var(--ink);
 }
 
 .live-tunnel-item-location {
@@ -342,6 +407,45 @@ button {
   margin: 0 18px 12px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.live-tunnel-robot {
+  display: flex;
+  flex-direction: column;
+  min-height: 280px;
+  margin: 0 18px 14px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.live-tunnel-robot-bar {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--chip);
+}
+
+.live-tunnel-robot-host {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.live-tunnel-robot iframe {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 240px;
+  border: 0;
+  background: #fff;
 }
 
 .live-tunnel-voice {

@@ -77,9 +77,10 @@ Allowed hashes: `attendance-panel`, `photos-panel`, `session-facts`, `session-tr
 Watch a camera that is recording right now. The recording device does not accept or reject the tunnel.
 
 1. `#live-tunnel-sign-in` if the gate is shown.
-2. Click a `.live-tunnel-item` in `#live-tunnel-list`.
-3. `#live-tunnel-video` is the live picture when the camera call opens. `#live-tunnel-picture` is the updating still path when this network cannot complete that call. `#live-tunnel-leave` disconnects.
-4. `#live-tunnel-voice-record` sends a voice message that plays on the recording device. There is no accept/reject step. Voice still sends when the camera call cannot open.
+2. Click `.live-tunnel-join` on a `.live-tunnel-item` in `#live-tunnel-list`.
+3. Every session has a **Robot IP address** field. Submit `.live-tunnel-robot-ip` to open `#live-tunnel-robot-frame`. Close hides it. A stored IP may fill that session's field; do not auto-open it. Do not log the IP in telemetry.
+4. `#live-tunnel-video` is the live picture when the camera call opens. `#live-tunnel-picture` is the updating still path when this network cannot complete that call. `#live-tunnel-leave` disconnects.
+5. `#live-tunnel-voice-record` sends a voice message that plays on the recording device. There is no accept/reject step. Voice still sends when the camera call cannot open.
 
 Deep link: `live-tunnel.html?tunnel={tunnelId}`.
 
@@ -131,16 +132,15 @@ Keep the tab visible. A backgrounded tab suspends the camera.
 
 ## Robotic control (`robotic-control.html`)
 
-Pure live camera for robot controls, plus a small IP field that opens the robot's own web UI. Do not start the camera unless the user asked to stream this page.
+Pure live camera for robot controls. Do not start it unless the user asked to stream this page.
 
-1. `#robot-ip` — type the robot IP (optional port or path). Submit `#robot-ip-form` or press Enter. `#robot-control-frame` opens that address in an iframe. `#robot-control-close` hides it. A stored IP may fill the field; do not open it unless the user entered or confirmed an address.
-2. `#robotic-auth` — sign in so Live tunnel can share the camera. The stream still starts unsigned-in.
-3. `#robotic-toggle` — Start camera (`aria-pressed` becomes true when running). No MediaPipe, attendance, or auto capture.
-4. `#camera-loader` may show while the camera connects.
-5. `#camera-facing-toggle` — `data-facing` `environment` (back) or `user` (front); `#camera-facing-name` is the lens in use.
-6. `#robotic-video` fills the page when the camera is live.
+1. `#robotic-auth` — sign in so Live tunnel can share the camera. The stream still starts unsigned-in.
+2. `#robotic-toggle` — Start camera (`aria-pressed` becomes true when running). No MediaPipe, attendance, or auto capture.
+3. `#camera-loader` may show while the camera connects.
+4. `#camera-facing-toggle` — `data-facing` `environment` (back) or `user` (front); `#camera-facing-name` is the lens in use.
+5. `#robotic-video` fills the page.
 
-Keep the tab visible. A backgrounded tab suspends the camera. Do not log the robot IP in telemetry.
+Keep the tab visible. A backgrounded tab suspends the camera.
 
 ## Worker photos (`worker-photos.html`)
 

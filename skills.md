@@ -84,12 +84,12 @@ Shared chrome: `#sidebar-toggle` opens `#app-sidebar`. Groups are **Worker works
 | --- | --- | --- | --- |
 | Operations AI | [/ai-dashboard](https://stampnote-omega.vercel.app/ai-dashboard) | Read-only Q&A over loaded records | No |
 | Photos & attendance | [/admin](https://stampnote-omega.vercel.app/admin) | Session rail, attendance, photos, weather, truck tile | Rename/delete session; truck X/Y |
-| Live tunnel | [/live-tunnel](https://stampnote-omega.vercel.app/live-tunnel) | Live camera of any recording, no call accept/reject | No |
+| Live tunnel | [/live-tunnel](https://stampnote-omega.vercel.app/live-tunnel) | Live camera of any recording, no call accept/reject; each session has a robot IP field | No |
 | Geographic Surveillence | [/coordinates](https://stampnote-omega.vercel.app/coordinates) | GPS vs truck list, map compare, RPA JSON | Truck X/Y |
 | Coordinate entry | [/agent-coordinates](https://stampnote-omega.vercel.app/agent-coordinates) | Agent search, filters, batch JSON, truck X/Y | Truck X/Y |
 | Metrics | [/metrics](https://stampnote-omega.vercel.app/metrics) | 7/30/90-day attendance, flags, sessions | No |
 | Recording | [/](https://stampnote-omega.vercel.app/) | Camera watch, attendance scan, auto capture | Photos, attendance |
-| Robotic control | [/robotic-control](https://stampnote-omega.vercel.app/robotic-control) | Pure live camera plus a robot IP field that opens the robot control iframe; no MediaPipe | Live tunnel share |
+| Robotic control | [/robotic-control](https://stampnote-omega.vercel.app/robotic-control) | Pure live camera for robot teleoperation; no MediaPipe | Live tunnel share |
 | Worker photos | [/worker-photos](https://stampnote-omega.vercel.app/worker-photos) | Take/pick stamped photos without the watch | Photos |
 | Worker onboarding | [/onboarding](https://stampnote-omega.vercel.app/onboarding) | Enroll/replace/delete face templates | Worker roster |
 
@@ -188,7 +188,7 @@ Leave chat only for the matching job:
 | Confirm map against OSM | Geographic Surveillence "Compare on map" | Inline AI map is schematic, not Leaflet/OSM |
 | Enroll or delete a worker | Worker onboarding | Roster writes |
 | Start the camera / take attendance | Recording | Live capture |
-| Stream a camera for robot controls | Robotic control | Pure video plus robot IP iframe; no attendance or MediaPipe |
+| Stream a camera for robot controls | Robotic control | Pure video; no attendance or MediaPipe |
 | Watch a live recording | Live tunnel | Real-time camera; no call accept/reject |
 | Stamp photos without the watch | Worker photos | Capture path |
 | Delete a location/day/session | Photos & attendance rail (user must confirm) | Destructive; never do this unless explicitly asked |
@@ -473,10 +473,11 @@ URL: [https://stampnote-omega.vercel.app/live-tunnel](https://stampnote-omega.ve
 Use when the user asked to watch a recording that is happening now. Do not start Recording or Robotic control just to look around.
 
 1. If `#live-tunnel-auth-gate` is visible, click `#live-tunnel-sign-in`.
-2. `#live-tunnel-list` shows cameras that are live. Each `.live-tunnel-item` is a site; click it to tunnel in. There is no accept/reject step on the recording device.
-3. `#live-tunnel-video` shows the live picture when the two devices can open a camera call. `#live-tunnel-picture` shows updating stills when this network cannot complete that call. `#live-tunnel-leave` disconnects.
-4. `#live-tunnel-voice-record` records a voice message and sends it to the recording device. The recording plays it without an accept/reject step. `#live-tunnel-voice-cancel` discards a take. Voice still sends when the camera call cannot open.
-5. `#live-tunnel-empty` means nobody is recording right now.
+2. `#live-tunnel-list` shows cameras that are live. Each `.live-tunnel-item` is a site. Click `.live-tunnel-join` to tunnel in. There is no accept/reject step on the recording device.
+3. Every session card has a **Robot IP address** field (`.live-tunnel-robot-ip-input`). Submit the form or press Enter to load that robot's web UI in `#live-tunnel-robot-frame`. Close hides it. A stored IP may fill that session's field; do not open it unless the user entered or confirmed an address. Do not log the robot IP in telemetry.
+4. `#live-tunnel-video` shows the live picture when the two devices can open a camera call. `#live-tunnel-picture` shows updating stills when this network cannot complete that call. `#live-tunnel-leave` disconnects.
+5. `#live-tunnel-voice-record` records a voice message and sends it to the recording device. The recording plays it without an accept/reject step. `#live-tunnel-voice-cancel` discards a take. Voice still sends when the camera call cannot open.
+6. `#live-tunnel-empty` means nobody is recording right now.
 
 Deep link: `live-tunnel.html?tunnel={tunnelId}`.
 
@@ -519,16 +520,15 @@ Keep the tab visible. A backgrounded tab suspends the camera.
 
 URL: [https://stampnote-omega.vercel.app/robotic-control](https://stampnote-omega.vercel.app/robotic-control)
 
-Pure live camera for robot controls, plus a small IP field that opens the robot's own web UI. Do not start the camera unless the user asked to stream this page.
+Pure live camera for robot controls. Do not start it unless the user asked to stream this page.
 
-1. `#robot-ip` — type the robot IP (optional port or path). Submit `#robot-ip-form` or press Enter. `#robot-control-frame` opens that address in an iframe. `#robot-control-close` hides it. A stored IP may fill the field; do not open it unless the user entered or confirmed an address.
-2. `#robotic-auth` — sign in with Google/Gmail so Live tunnel can share the camera. The stream still starts unsigned-in.
-3. `#robotic-toggle` — Start camera (`aria-pressed` becomes true when running). There is no MediaPipe overlay, attendance taking, or auto capture.
-4. `#camera-loader` may show while the camera connects.
-5. `#camera-facing-toggle` — `data-facing` `environment` (back) or `user` (front); `#camera-facing-name` is the lens in use.
-6. `#robotic-video` fills the page when the camera is live. `#robotic-status` reports stream/sign-in/robot-control state. `#live-voice-notice` appears when an administrator voice message plays.
+1. `#robotic-auth` — sign in with Google/Gmail so Live tunnel can share the camera. The stream still starts unsigned-in.
+2. `#robotic-toggle` — Start camera (`aria-pressed` becomes true when running). There is no MediaPipe overlay, attendance taking, or auto capture.
+3. `#camera-loader` may show while the camera connects.
+4. `#camera-facing-toggle` — `data-facing` `environment` (back) or `user` (front); `#camera-facing-name` is the lens in use.
+5. `#robotic-video` fills the page. `#robotic-status` reports stream/sign-in state. `#live-voice-notice` appears when an administrator voice message plays.
 
-Keep the tab visible. A backgrounded tab suspends the camera. Do not log the robot IP in telemetry.
+Keep the tab visible. A backgrounded tab suspends the camera.
 
 ### Worker photos
 

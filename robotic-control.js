@@ -1,54 +1,8 @@
 /* Robotic control is the dedicated live camera for robot teleoperation: the
-   picture, a lens switch, a Live tunnel share, and an IP field that opens the
-   robot's own control page. Attendance, MediaPipe, and auto-capture stay on
-   Recording. */
+   picture, a lens switch, and a Live tunnel share. Attendance, MediaPipe, and
+   auto-capture stay on Recording. */
 (function initializeRoboticControl(globalScope) {
   "use strict";
-
-  const THEME_KEY = "stampnote-theme";
-  const FACING_KEY = "stampnote-robotic-control-camera-facing";
-  const ROBOT_IP_KEY = "stampnote-robotic-control-ip";
-  const IPV4 =
-    /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
-
-  function parseRobotControlUrl(raw) {
-    const trimmed = String(raw ?? "").trim();
-    if (!trimmed) {
-      return { ok: false, error: "Enter a robot IP address." };
-    }
-    if (trimmed.length > 128 || /[\s<>"'`]/.test(trimmed)) {
-      return { ok: false, error: "Enter a robot IP address, like 192.168.1.50." };
-    }
-    if (/^(javascript|data|file|blob|vbscript):/i.test(trimmed)) {
-      return { ok: false, error: "Use an http or https robot address." };
-    }
-
-    const candidate = /^[a-zA-Z][a-zA-Z+\-.]*:/.test(trimmed) ? trimmed : `http://${trimmed}`;
-    const Url = globalScope.URL;
-    let parsed;
-    try {
-      parsed = new Url(candidate);
-    } catch {
-      return { ok: false, error: "Enter a robot IP address, like 192.168.1.50." };
-    }
-
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      return { ok: false, error: "Use an http or https robot address." };
-    }
-    if (parsed.username || parsed.password) {
-      return { ok: false, error: "Leave the username and password off the robot address." };
-    }
-
-    const isIpv4 = IPV4.test(parsed.hostname);
-    const isIpv6 = parsed.hostname.includes(":");
-    if (!isIpv4 && !isIpv6) {
-      return { ok: false, error: "Enter a robot IP address, like 192.168.1.50." };
-    }
-
-    return { ok: true, href: String(parsed.href), host: String(parsed.host) };
-  }
-
-  globalScope.StampNoteRoboticControl = { parseRobotControlUrl };
 
   const document = globalScope.document;
   if (!document?.querySelector("#robotic-video")) return;
@@ -58,6 +12,8 @@
   const cloud = globalScope.StampNoteFirebase;
   const liveTunnelApi = globalScope.StampNoteLiveTunnel;
   const telemetry = globalScope.StampNoteObservability;
+  const THEME_KEY = "stampnote-theme";
+  const FACING_KEY = "stampnote-robotic-control-camera-facing";
 
   const video = document.querySelector("#robotic-video");
   const frame = document.querySelector("#robotic-frame");
@@ -74,13 +30,6 @@
   const themeToggle = document.querySelector("#theme-toggle");
   const themeToggleIcon = document.querySelector("#theme-toggle-icon");
   const themeToggleLabel = document.querySelector("#theme-toggle-label");
-  const robotIpForm = document.querySelector("#robot-ip-form");
-  const robotIp = document.querySelector("#robot-ip");
-  const robotIpOpen = document.querySelector("#robot-ip-open");
-  const robotControl = document.querySelector("#robot-control");
-  const robotControlHost = document.querySelector("#robot-control-host");
-  const robotControlFrame = document.querySelector("#robot-control-frame");
-  const robotControlClose = document.querySelector("#robot-control-close");
 
   telemetry?.configure({ surface: "robotic-control" });
 
@@ -166,66 +115,6 @@
     if (document.body?.dataset) {
       document.body.dataset.stage = live ? "live" : "idle";
     }
-  }
-
-  function setRobotOpen(open) {
-    if (document.body?.dataset) {
-      if (open) document.body.dataset.robot = "open";
-      else delete document.body.dataset.robot;
-    }
-    if (robotIpOpen) robotIpOpen.hidden = Boolean(open);
-    if (robotControlClose) robotControlClose.hidden = !open;
-  }
-
-  function readStoredRobotIp() {
-    try {
-      return String(globalScope.localStorage?.getItem(ROBOT_IP_KEY) || "");
-    } catch {
-      return "";
-    }
-  }
-
-  function rememberRobotIp(value) {
-    try {
-      globalScope.localStorage?.setItem(ROBOT_IP_KEY, value);
-    } catch {
-      /* The address still works for this visit even when storage is blocked. */
-    }
-  }
-
-  function closeRobotControl() {
-    if (robotControlFrame) {
-      robotControlFrame.removeAttribute("src");
-      robotControlFrame.src = "";
-    }
-    if (robotControlHost) robotControlHost.textContent = "";
-    if (robotControl) robotControl.hidden = true;
-    setRobotOpen(false);
-  }
-
-  function openRobotControl() {
-    const typed = String(robotIp?.value || "");
-    const parsed = parseRobotControlUrl(typed);
-    if (!parsed.ok) {
-      setStatus(parsed.error, "error");
-      return false;
-    }
-
-    rememberRobotIp(typed.trim());
-    if (robotIp) robotIp.value = typed.trim();
-    if (robotControlHost) robotControlHost.textContent = parsed.host;
-    if (robotControlFrame) robotControlFrame.src = parsed.href;
-    if (robotControl) robotControl.hidden = false;
-    setRobotOpen(true);
-
-    const mixedContent =
-      globalScope.isSecureContext !== false && parsed.href.startsWith("http:");
-    setStatus(
-      mixedContent
-        ? `Opened robot control at ${parsed.host}. This page is HTTPS, so an http robot page may be blocked.`
-        : `Opened robot control at ${parsed.host}.`,
-    );
-    return true;
   }
 
   function setToggleLabel(running) {
@@ -613,16 +502,6 @@
 
   themeToggle?.addEventListener("click", toggleTheme);
 
-  robotIpForm?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    openRobotControl();
-  });
-
-  robotControlClose?.addEventListener("click", () => {
-    closeRobotControl();
-    setStatus("Robot control closed.");
-  });
-
   document.addEventListener("visibilitychange", () => {
     if (!streamActive) return;
     if (document.hidden) return;
@@ -637,7 +516,5 @@
   setToggleLabel(false);
   setCameraFacingLabel();
   applyTheme(readStoredTheme());
-  const storedRobotIp = readStoredRobotIp();
-  if (robotIp && storedRobotIp) robotIp.value = storedRobotIp;
   initializeCloud();
 })(typeof globalThis !== "undefined" ? globalThis : this);
