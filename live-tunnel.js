@@ -45,12 +45,14 @@
   const menuCount = document.querySelector("#live-tunnel-menu-count");
   const rail = document.querySelector("#live-tunnel-rail");
   const railScrim = document.querySelector("#live-tunnel-rail-scrim");
+  const chooser = document.querySelector("#live-tunnel-chooser");
 
   telemetry?.configure({ surface: "live-tunnel" });
 
   let signedInUser = null;
   let tunnels = [];
   let selectedId = "";
+  let autoSelect = true;
   let pendingId = readRequestedTunnelId();
   let unsubscribeTunnels = null;
   let viewer = null;
@@ -166,6 +168,7 @@
   function setMenuOpen(open) {
     if (rail) rail.dataset.open = String(Boolean(open));
     if (railScrim) railScrim.hidden = !open;
+    if (workspace) workspace.dataset.menuOpen = String(Boolean(open));
     if (menuButton) menuButton.setAttribute("aria-expanded", String(Boolean(open)));
   }
 
@@ -221,14 +224,14 @@
     if (robotControlFrame) robotControlFrame.src = parsed.href;
     setRobotOpen(true);
     setMenuOpen(false);
-
     const mixedContent =
       globalScope.isSecureContext !== false && String(parsed.href).startsWith("http:");
-    setStatus(
-      mixedContent
-        ? `Opened robot control at ${parsed.host}. This page is HTTPS, so an http robot page may be blocked.`
-        : `Opened robot control at ${parsed.host}.`,
-    );
+    const robotStatus = mixedContent
+      ? `Opened robot control at ${parsed.host}. This page is HTTPS, so an http robot page may be blocked.`
+      : `Opened robot control at ${parsed.host}.`;
+    void Promise.resolve(tunnelInto(record)).finally(() => {
+      if (robotOpenId === record.id) setStatus(robotStatus);
+    });
     renderList();
     return true;
   }
@@ -351,6 +354,7 @@
     attachStream(null);
     clearPicture();
     if (placeholder) {
+      placeholder.hidden = false;
       placeholder.textContent =
         "Choose a live recording. The camera opens here without anyone accepting a call.";
     }
@@ -365,6 +369,7 @@
     if (!record?.id || !liveTunnel?.createViewer || !cloud) return;
     if (selectedId === record.id && viewer) return;
 
+    autoSelect = true;
     await leaveTunnel();
     selectedId = record.id;
     viewerState = "connecting";
@@ -467,6 +472,16 @@
           tunnelInto(record);
         });
 
+        const watch = document.createElement("button");
+        watch.type = "button";
+        watch.className = "live-tunnel-watch";
+        watch.textContent = record.id === selectedId ? "Watching" : "Watch";
+        watch.disabled = record.id === selectedId;
+        watch.addEventListener("click", () => {
+          setMenuOpen(false);
+          tunnelInto(record);
+        });
+
         const form = document.createElement("form");
         form.className = "live-tunnel-robot-ip";
         form.setAttribute("autocomplete", "off");
@@ -511,11 +526,37 @@
         });
         close.addEventListener("click", () => closeRobotControl());
 
-        item.append(join, form);
+        item.append(join, form, watch);
         return item;
       }),
     );
+    renderChooser(live);
     syncStageRobotForm(draftIps);
+  }
+
+  function renderChooser(live) {
+    if (!chooser) return;
+    const idle = !selectedId;
+    chooser.hidden = !idle || live.length === 0;
+    if (placeholder && idle) {
+      placeholder.hidden = live.length > 0;
+    }
+    if (!idle || live.length === 0) {
+      chooser.replaceChildren();
+      return;
+    }
+    chooser.replaceChildren(
+      ...live.map((record) => {
+        const item = document.createElement("li");
+        const watch = document.createElement("button");
+        watch.type = "button";
+        watch.className = "live-tunnel-watch";
+        watch.textContent = `Watch ${record.location || "live recording"}`;
+        watch.addEventListener("click", () => tunnelInto(record));
+        item.append(watch);
+        return item;
+      }),
+    );
   }
 
   function handleTunnels(records) {
@@ -527,6 +568,7 @@
       const requested = live.find((record) => record.id === pendingId);
       if (requested) {
         pendingId = "";
+        autoSelect = true;
         tunnelInto(requested);
         return;
       }
@@ -534,9 +576,16 @@
 
     if (selectedId && !live.some((record) => record.id === selectedId)) {
       const ended = selectedId;
-      leaveTunnel();
+      const next = autoSelect
+        ? live.find((record) => record.id !== ended) || live[0] || null
+        : null;
       setStatus("That recording stopped.");
       telemetry?.event("live_tunnel.ended", { tunnelId: ended, status: "ended" });
+      if (next) tunnelInto(next);
+      else leaveTunnel();
+    } else if (autoSelect && !selectedId) {
+      const next = live[0] || null;
+      if (next) tunnelInto(next);
     }
 
     if (robotOpenId && !live.some((record) => record.id === robotOpenId)) {
@@ -649,7 +698,10 @@
   });
   voiceCancel?.addEventListener("click", () => cancelVoiceRecord());
   signOutButton?.addEventListener("click", () => cloud.signOut());
-  leaveButton?.addEventListener("click", () => leaveTunnel());
+  leaveButton?.addEventListener("click", () => {
+    autoSelect = false;
+    leaveTunnel();
+  });
 
   if (!cloud || !liveTunnel) {
     setStatus("The live tunnel dependencies are unavailable. Reload the page.", "error");
@@ -672,6 +724,7 @@
     telemetry?.event("cloud.auth.state", { status: user ? "signed_in" : "signed_out" });
     if (!user) {
       stopListening();
+      autoSelect = true;
       await leaveTunnel();
       clearRobotControl();
       tunnels = [];

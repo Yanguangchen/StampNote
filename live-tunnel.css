@@ -265,10 +265,14 @@ button {
   min-height: 0;
 }
 
+.live-tunnel-workspace[data-menu-open="true"] #live-tunnel-robot-frame {
+  pointer-events: none;
+}
+
 .live-tunnel-rail-scrim {
   position: fixed;
   inset: 0;
-  z-index: 28;
+  z-index: 70;
   border: 0;
   background: rgba(8, 14, 12, 0.28);
   color: transparent;
@@ -279,7 +283,7 @@ button {
   position: absolute;
   top: 10px;
   left: 10px;
-  z-index: 29;
+  z-index: 80;
   display: none;
   width: min(360px, calc(100vw - 20px));
   max-height: calc(100% - 20px);
@@ -523,8 +527,40 @@ button {
   text-align: center;
 }
 
-.live-tunnel-frame[data-live="true"] .live-tunnel-placeholder {
+.live-tunnel-frame[data-live="true"] .live-tunnel-placeholder,
+.live-tunnel-frame[data-live="true"] .live-tunnel-chooser {
   display: none;
+}
+
+.live-tunnel-chooser {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  margin: 0;
+  padding: 24px;
+  list-style: none;
+}
+
+.live-tunnel-watch {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--accent);
+  color: var(--on-ink);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.live-tunnel-watch:disabled {
+  cursor: default;
+  opacity: 0.7;
 }
 
 .live-tunnel-caption {
