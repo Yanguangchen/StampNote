@@ -221,6 +221,7 @@ test("coordinate session comparison stays a pure function of GPS and truck input
 test("pages load the split modules from src/ and the local server exposes that folder", () => {
   const root = resolve(__dirname, "..");
   const capture = readFileSync(resolve(root, "index.html"), "utf8");
+  const roboticControl = readFileSync(resolve(root, "robotic-control.html"), "utf8");
   const admin = readFileSync(resolve(root, "admin.html"), "utf8");
   const coordinatesPage = readFileSync(resolve(root, "coordinates.html"), "utf8");
   const operationsAi = readFileSync(resolve(root, "ai-dashboard.html"), "utf8");
@@ -231,6 +232,9 @@ test("pages load the split modules from src/ and the local server exposes that f
   assert.match(capture, /src\/services\/capture-attendance\.js/);
   assert.match(capture, /src\/capture\/camera-controller\.js/);
   assert.match(capture, /src\/services\/live-tunnel\.js/);
+  assert.match(roboticControl, /src\/capture\/camera-controller\.js/);
+  assert.match(roboticControl, /src\/services\/live-tunnel\.js/);
+  assert.doesNotMatch(roboticControl, /src\/vision\/pose-detector\.js/);
   assert.match(admin, /src\/services\/admin-scope\.js/);
   assert.match(admin, /src\/services\/operations-data\.js/);
   assert.match(coordinatesPage, /src\/services\/coordinate-sessions\.js/);

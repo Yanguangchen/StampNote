@@ -1,7 +1,7 @@
 /* Which camera a device points at the work is the operator's decision, not the
    page's. A phone propped on a shelf watches the room through the lens on its
    back; the same phone held up to check a face wants the one on its front; a
-   laptop only has the front one and calls it the webcam. Both camera pages ask
+   laptop only has the front one and calls it the webcam. The camera pages ask
    the same question, so they ask it the same way and in the same words. */
 (function initializeCameraFacing(globalScope) {
   "use strict";

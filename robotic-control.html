@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en" data-surface="robotic-control">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0d1512" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d1512" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#0d1512" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="StampNote" />
+    <title>Robotic control · StampNote</title>
+    <link rel="manifest" href="manifest.json" />
+    <link rel="icon" href="icons/stampnote.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="icons/stampnote-180.png" sizes="180x180" />
+    <link
+      rel="preload"
+      href="vendor/fonts/outfit-latin.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link rel="stylesheet" href="vendor/fonts/outfit.css" />
+    <link rel="stylesheet" href="sidebar.css" />
+    <link rel="stylesheet" href="robotic-control.css" />
+    <script>
+      try {
+        const saved = localStorage.getItem("stampnote-theme");
+        if (saved === "dark" || saved === "light") {
+          document.documentElement.dataset.theme = saved;
+        }
+      } catch (error) {
+        /* A blocked storage jar just leaves the system theme in charge. */
+      }
+    </script>
+    <script src="observability.js" defer></script>
+    <script src="camera-facing.js" defer></script>
+    <script src="photo-cloud.js" defer></script>
+    <script src="firebase.js?v=20260903-1" defer></script>
+    <script src="src/capture/camera-controller.js" defer></script>
+    <script src="src/services/live-tunnel.js" defer></script>
+    <script src="robotic-control.js" defer></script>
+    <script src="sidebar.js" defer></script>
+  </head>
+  <body data-stage="idle">
+    <header class="robotic-header" data-sidebar-mount aria-label="Page navigation">
+      <button
+        class="theme-toggle"
+        id="theme-toggle"
+        type="button"
+        aria-pressed="false"
+        title="Switch to dark theme"
+      >
+        <span class="theme-toggle-icon" id="theme-toggle-icon" aria-hidden="true">☾</span>
+        <span class="theme-toggle-label" id="theme-toggle-label">Dark</span>
+      </button>
+    </header>
+
+    <main class="stage" aria-labelledby="robotic-title">
+      <h1 id="robotic-title" class="visually-hidden">Robotic control</h1>
+
+      <div class="monitor" id="robotic-frame" hidden>
+        <video id="robotic-video" playsinline muted autoplay></video>
+      </div>
+
+      <section
+        class="camera-loader"
+        id="camera-loader"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        aria-labelledby="camera-loader-title"
+        aria-describedby="camera-loader-detail"
+        aria-busy="false"
+        hidden
+      >
+        <div class="camera-loader-card">
+          <div class="camera-throbber" aria-hidden="true">
+            <span class="camera-throbber-ring camera-throbber-ring-outer"></span>
+            <span class="camera-throbber-ring camera-throbber-ring-inner"></span>
+            <span class="camera-throbber-core">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <rect x="3.2" y="5.2" width="17.6" height="12.4" rx="2.2" />
+                <circle cx="12" cy="11.2" r="3.1" />
+                <path d="M8 21h8" />
+              </svg>
+            </span>
+          </div>
+          <p class="camera-loader-kicker">Robotic control</p>
+          <h2 id="camera-loader-title">Getting camera ready</h2>
+          <p id="camera-loader-detail">Preparing the secure camera connection…</p>
+        </div>
+      </section>
+
+      <p class="live-voice-notice" id="live-voice-notice" hidden>Playing a voice message</p>
+      <p class="status stage-status" id="robotic-status" role="status" aria-live="polite"></p>
+    </main>
+
+    <nav class="toolbar" aria-label="Robotic control">
+      <div class="toolbar-group">
+        <button
+          class="tool"
+          id="camera-facing-toggle"
+          type="button"
+          aria-label="Back camera in use. Switch to the front camera."
+          data-facing="environment"
+        >
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M4.2 8.6h3l1.5-2.2h6.6l1.5 2.2h3a1.7 1.7 0 0 1 1.7 1.7v7.6a1.7 1.7 0 0 1-1.7 1.7H4.2a1.7 1.7 0 0 1-1.7-1.7v-7.6a1.7 1.7 0 0 1 1.7-1.7z" />
+            <path d="M9.4 14.2a2.8 2.8 0 0 0 4.9 1.5" />
+            <path d="M14.6 13.6a2.8 2.8 0 0 0-4.9-1.5" />
+            <path d="M9.7 12.1H8.2v-1.5" />
+            <path d="M14.3 15.7h1.5v1.5" />
+          </svg>
+          <span class="hint" id="camera-facing-name">Back</span>
+        </button>
+      </div>
+
+      <button
+        class="stream"
+        id="robotic-toggle"
+        type="button"
+        aria-label="Start camera"
+        aria-pressed="false"
+      >
+        <svg
+          class="icon stream-icon stream-icon-start"
+          id="robotic-icon-start"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <rect x="3.4" y="5.4" width="17.2" height="12.2" rx="2.2" />
+          <circle cx="12" cy="11.4" r="3.2" />
+          <path d="M8 20.6h8" />
+        </svg>
+        <svg
+          class="icon stream-icon stream-icon-stop"
+          id="robotic-icon-stop"
+          viewBox="0 0 24 24"
+          aria-hidden="true"
+          focusable="false"
+          hidden
+        >
+          <rect x="7" y="7" width="10" height="10" rx="2.5" />
+        </svg>
+      </button>
+
+      <div class="toolbar-group toolbar-group-end">
+        <button class="tool" id="robotic-auth" type="button" aria-label="Sign in to account">
+          <svg class="sign-in-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M7.2 18.5h9.7a3.9 3.9 0 0 0 .6-7.8 5.8 5.8 0 0 0-11-1.6 4.8 4.8 0 0 0 .7 9.4z" />
+            <path d="M12 12.3v7.8" />
+            <path d="m8.9 15.4 3.1-3.1 3.1 3.1" />
+          </svg>
+          <svg
+            class="sign-out-icon"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            focusable="false"
+            hidden
+          >
+            <path d="M9.5 4.6H6.4A1.9 1.9 0 0 0 4.5 6.5v11a1.9 1.9 0 0 0 1.9 1.9h3.1" />
+            <path d="M10.2 12h9.3" />
+            <path d="m16.2 8.4 3.3 3.6-3.3 3.6" />
+          </svg>
+          <span class="hint">Account</span>
+        </button>
+      </div>
+    </nav>
+  </body>
+</html>

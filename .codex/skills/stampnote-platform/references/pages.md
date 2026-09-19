@@ -11,6 +11,7 @@ Every page mounts `#sidebar-toggle` into `[data-sidebar-mount]`. Click it to ope
 Sidebar labels and files:
 
 - Recording → `index.html`
+- Robotic control → `robotic-control.html`
 - Worker photos → `worker-photos.html`
 - Worker onboarding → `onboarding.html`
 - Geographic Surveillence → `coordinates.html` (spelling is intentional in the UI)
@@ -31,6 +32,7 @@ Sign-in/out control IDs differ per page (table below). Do not click Sign out unl
 | Live tunnel | `live-tunnel` | `#live-tunnel-sign-in` | `#live-tunnel-sign-out` | `#live-tunnel-workspace` |
 | Metrics | `metrics` | `#metrics-sign-in` | `#metrics-sign-out` | `#metrics-workspace` |
 | Recording | `capture` | `#cloud-auth` | same button, door icon when signed in | camera stage |
+| Robotic control | `robotic-control` | `#robotic-auth` | same button, door icon when signed in | camera stage |
 | Worker photos | `worker-photos` | `#worker-photo-auth` | same | send enabled after files |
 | Worker onboarding | `onboarding` | `#onboarding-auth` | same | `#worker-form` |
 
@@ -124,6 +126,18 @@ Live camera watch. Do not start it unless the user asked to record, take attenda
 - `#ai-review` — leftover Gemini batch; `#ai-review-bin` — recoverable flags; `#ai-review-purge` — delete flagged
 - `#ai-review-loader` covers the screen while Gemini reviews a batch of eight; camera keeps running
 - Viewer `#viewer`: `#viewer-restore`, `#viewer-share`, `#viewer-delete`, `#viewer-close`
+
+Keep the tab visible. A backgrounded tab suspends the camera.
+
+## Robotic control (`robotic-control.html`)
+
+Pure live camera for robot controls. Do not start it unless the user asked to stream this page.
+
+1. `#robotic-auth` — sign in so Live tunnel can share the camera. The stream still starts unsigned-in.
+2. `#robotic-toggle` — Start camera (`aria-pressed` becomes true when running). No MediaPipe, attendance, or auto capture.
+3. `#camera-loader` may show while the camera connects.
+4. `#camera-facing-toggle` — `data-facing` `environment` (back) or `user` (front); `#camera-facing-name` is the lens in use.
+5. `#robotic-video` fills the page.
 
 Keep the tab visible. A backgrounded tab suspends the camera.
 

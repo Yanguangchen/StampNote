@@ -93,6 +93,14 @@ test("the local server exposes public assets and every API boundary without expo
     assert.equal((await fetch(`${origin}/worker-photos.css`)).status, 200);
     assert.equal((await fetch(`${origin}/worker-photos.js`)).status, 200);
 
+    const roboticControl = await fetch(`${origin}/robotic-control.html`);
+    assert.equal(roboticControl.status, 200);
+    const roboticBody = await roboticControl.text();
+    assert.match(roboticBody, /Robotic control/);
+    assert.doesNotMatch(roboticBody, /pose-model|computer-vision|auto-capture/);
+    assert.equal((await fetch(`${origin}/robotic-control.css`)).status, 200);
+    assert.equal((await fetch(`${origin}/robotic-control.js`)).status, 200);
+
     const operationsAiGuide = await fetch(`${origin}/OPERATIONS_AI_GUIDE.md`);
     assert.equal(operationsAiGuide.status, 200);
     assert.match(operationsAiGuide.headers.get("content-type"), /^text\/markdown/);

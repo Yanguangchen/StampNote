@@ -382,6 +382,7 @@ test("telemetry accepts payloads from all application surfaces and validates new
     "metrics",
     "onboarding",
     "worker-photos",
+    "robotic-control",
   ];
 
   for (const surface of surfaces) {

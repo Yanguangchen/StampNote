@@ -297,6 +297,7 @@ test("browser telemetry supports all application surfaces and domain events", as
     "metrics",
     "onboarding",
     "worker-photos",
+    "robotic-control",
   ];
 
   for (const surface of surfaces) {

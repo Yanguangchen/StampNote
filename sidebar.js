@@ -14,6 +14,10 @@
           icon: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z"/></svg>',
         },
         {
+          file: "robotic-control.html", label: "Robotic control",
+          icon: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="12" rx="2"/><circle cx="12" cy="11" r="2.6"/><path d="M9 21h6M12 2v3"/></svg>',
+        },
+        {
           file: "worker-photos.html", label: "Worker photos",
           icon: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H4zm16 12H4l4.5-6 3.5 4.5 2.5-3 5.5 6.5zM8.5 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"/></svg>',
         },
@@ -222,16 +226,20 @@
     title.id = "access-gate-title";
     title.textContent = "This page is for administrators";
     const copy = document.createElement("p");
-    copy.textContent = "Your account can open Recording and Worker photos.";
+    copy.textContent = "Your account can open Recording, Robotic control, and Worker photos.";
     const recording = document.createElement("a");
     recording.className = "access-gate-link";
     recording.href = "index.html";
     recording.textContent = "Go to Recording";
+    const robotic = document.createElement("a");
+    robotic.className = "access-gate-link";
+    robotic.href = "robotic-control.html";
+    robotic.textContent = "Go to Robotic control";
     const photos = document.createElement("a");
     photos.className = "access-gate-link";
     photos.href = "worker-photos.html";
     photos.textContent = "Go to Worker photos";
-    accessGate.append(title, copy, recording, photos);
+    accessGate.append(title, copy, recording, robotic, photos);
     document.body.append(accessGate);
     return accessGate;
   }

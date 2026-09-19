@@ -161,6 +161,7 @@ export const telemetryRequestSchema = z
       "metrics",
       "onboarding",
       "worker-photos",
+      "robotic-control",
     ]),
     events: z
       .array(
