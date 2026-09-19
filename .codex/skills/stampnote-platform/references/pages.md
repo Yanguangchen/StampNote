@@ -77,7 +77,7 @@ Allowed hashes: `attendance-panel`, `photos-panel`, `session-facts`, `session-tr
 Watch a camera that is recording right now. The recording device does not accept or reject the tunnel.
 
 1. `#live-tunnel-sign-in` if the gate is shown.
-2. `#live-tunnel-menu` opens the recordings rail. Click `.live-tunnel-join` on a `.live-tunnel-item`.
+2. After sign-in the page auto-joins the first live recording. `#live-tunnel-menu` opens the recordings rail. Each `.live-tunnel-item` has **Watch** (`.live-tunnel-watch`) and a robot IP field. Opening a robot IP also joins that camera.
 3. Landscape is 50/50: `#live-tunnel-robot` and `#live-tunnel-stage`. Submit `#live-tunnel-robot-ip-form` or a session card IP to open `#live-tunnel-robot-frame`. Do not auto-open a stored IP. Do not log the IP in telemetry.
 4. `#live-tunnel-video` is the live picture when the camera call opens. `#live-tunnel-picture` is the updating still path when this network cannot complete that call. `#live-tunnel-leave` disconnects.
 5. `#live-tunnel-voice-record` sends a voice message that plays on the recording device. There is no accept/reject step. Voice still sends when the camera call cannot open.

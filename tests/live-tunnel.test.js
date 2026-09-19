@@ -634,6 +634,7 @@ test("the page is a dedicated admin surface with no accept or reject controls", 
   assert.match(html, /id="live-tunnel-robot"/);
   assert.match(html, /id="live-tunnel-robot-frame"/);
   assert.match(html, /id="live-tunnel-menu"/);
+  assert.match(html, /id="live-tunnel-chooser"/);
   assert.match(html, /id="live-tunnel-split"/);
   assert.match(html, /id="live-tunnel-robot-ip-form"/);
   assert.match(html, /sandbox="allow-scripts allow-forms allow-same-origin"/);
@@ -757,6 +758,7 @@ function createPageHarness(options = {}) {
     "live-tunnel-picture",
     "live-tunnel-frame",
     "live-tunnel-placeholder",
+    "live-tunnel-chooser",
     "live-tunnel-caption",
     "live-tunnel-robot",
     "live-tunnel-robot-host",
@@ -787,6 +789,7 @@ function createPageHarness(options = {}) {
   elements["live-tunnel-robot"].dataset.open = "false";
   elements["live-tunnel-robot-close"].hidden = true;
   elements["live-tunnel-robot-ip"].placeholder = "Robot IP address";
+  elements["live-tunnel-chooser"].hidden = true;
 
   const storage = new Map(
     options.storedRobotIps
@@ -983,6 +986,13 @@ test("signing in lists live recordings and tunnels in without an accept step", a
 
   assert.equal(sessionRobotInput(harness).placeholder, "Robot IP address");
   assert.equal(harness.elements["live-tunnel-robot-ip"].placeholder, "Robot IP address");
+  assert.equal(harness.cloudCalls.joined.length, 1);
+  assert.equal(harness.elements["live-tunnel-chooser"].hidden, true);
+  assert.equal(
+    harness.elements["live-tunnel-list"].children[0].querySelector(".live-tunnel-watch").textContent,
+    "Watching",
+  );
+
   await sessionJoin(harness).dispatch("click");
   await settle();
 
@@ -1101,6 +1111,7 @@ test("every live tunnel session has a robot IP field that opens an iframe", asyn
     tunnels: [
       {
         id: "live-1",
+        ownerId: "owner-1",
         ownerEmail: "field@example.com",
         location: "10 Marina Bay",
         sessionLabel: "Morning",
@@ -1110,6 +1121,7 @@ test("every live tunnel session has a robot IP field that opens an iframe", asyn
       },
       {
         id: "live-2",
+        ownerId: "owner-1",
         ownerEmail: "field@example.com",
         location: "Airport",
         sessionLabel: "Afternoon",
@@ -1139,6 +1151,8 @@ test("every live tunnel session has a robot IP field that opens an iframe", asyn
   assert.equal(sessionRobotForm(harness, 1).querySelector(".live-tunnel-robot-ip-close").hidden, false);
   assert.equal(sessionRobotForm(harness, 0).querySelector(".live-tunnel-robot-ip-open").hidden, false);
   assert.match(harness.elements["live-tunnel-status"].textContent, /Opened robot control/);
+  assert.equal(harness.cloudCalls.joined.at(-1).tunnelId, "live-2");
+  assert.match(harness.elements["live-tunnel-caption"].textContent, /Airport/);
 
   await sessionRobotForm(harness, 1).querySelector(".live-tunnel-robot-ip-close").dispatch("click");
   await settle();

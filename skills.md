@@ -473,7 +473,7 @@ URL: [https://stampnote-omega.vercel.app/live-tunnel](https://stampnote-omega.ve
 Use when the user asked to watch a recording that is happening now. Do not start Recording or Robotic control just to look around.
 
 1. If `#live-tunnel-auth-gate` is visible, click `#live-tunnel-sign-in`.
-2. The live recordings list hides behind `#live-tunnel-menu`. Click that icon to open `#live-tunnel-rail`. Each `.live-tunnel-item` is a site; click `.live-tunnel-join` to tunnel in. There is no accept/reject step on the recording device.
+2. After sign-in the page auto-joins the first live recording. `#live-tunnel-menu` opens `#live-tunnel-rail`. Each `.live-tunnel-item` has **Watch** and a robot IP field. Opening a robot IP also starts that session's camera on the right. There is no accept/reject step on the recording device.
 3. In landscape the workspace is a 50/50 split: `#live-tunnel-robot` (robot control) and `#live-tunnel-stage` (live stream). Type a **Robot IP address** in `#live-tunnel-robot-ip` or in a session card field, then Open. `#live-tunnel-robot-frame` loads that robot's web UI. Close hides the page but keeps the split. Do not auto-open a stored IP. Do not log the robot IP in telemetry.
 4. `#live-tunnel-video` shows the live picture when the two devices can open a camera call. `#live-tunnel-picture` shows updating stills when this network cannot complete that call. `#live-tunnel-leave` disconnects.
 5. `#live-tunnel-voice-record` records a voice message and sends it to the recording device. The recording plays it without an accept/reject step. `#live-tunnel-voice-cancel` discards a take. Voice still sends when the camera call cannot open.
