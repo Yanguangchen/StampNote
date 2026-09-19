@@ -1,6 +1,6 @@
 ---
 name: stampnote-platform
-description: "Navigate the StampNote field-operations web platform in a browser. Prefer the Operations AI chatbot for attendance, sessions, flags, weather, GPS/truck discrepancies, photos, and metrics so lookups stay cheap. Sign in with Google/Gmail first if the private-workspace gate is shown. Live site: https://stampnote-omega.vercel.app/ — Operations AI shortcut: https://stampnote-omega.vercel.app/ai-dashboard. Use when operating StampNote, answering operational questions, inspecting Photos & attendance, Geographic Surveillence, Coordinate entry, Metrics, Recording, Worker photos, or Worker onboarding, entering truck X/Y, or following verified in-app links."
+description: "Navigate the StampNote field-operations web platform in a browser. Prefer the Operations AI chatbot for attendance, sessions, flags, weather, GPS/truck discrepancies, photos, and metrics so lookups stay cheap. Sign in with Google/Gmail first if the private-workspace gate is shown. Live site: https://stampnote-omega.vercel.app/ — Operations AI shortcut: https://stampnote-omega.vercel.app/ai-dashboard. Use when operating StampNote, answering operational questions, inspecting Photos & attendance, Geographic Surveillence, Coordinate entry, Metrics, Recording, Robotic control, Worker photos, or Worker onboarding, entering truck X/Y, or following verified in-app links."
 ---
 
 # StampNote platform

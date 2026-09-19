@@ -16,6 +16,7 @@ const onboardingHtml = readFileSync(resolve(root, "onboarding.html"), "utf8");
 const workerPhotosHtml = readFileSync(resolve(root, "worker-photos.html"), "utf8");
 const metricsHtml = readFileSync(resolve(root, "metrics.html"), "utf8");
 const liveTunnelHtml = readFileSync(resolve(root, "live-tunnel.html"), "utf8");
+const roboticControlHtml = readFileSync(resolve(root, "robotic-control.html"), "utf8");
 const server = readFileSync(resolve(root, "server.js"), "utf8");
 
 class FakeElement {
@@ -149,7 +150,7 @@ function createSidebarHarness(pathname, options = {}) {
 }
 
 test("every switchable page loads the drawer and marks where its toggle goes", () => {
-  [captureHtml, adminHtml, coordinatesHtml, agentCoordinatesHtml, aiDashboardHtml, onboardingHtml, workerPhotosHtml, liveTunnelHtml].forEach((html) => {
+  [captureHtml, adminHtml, coordinatesHtml, agentCoordinatesHtml, aiDashboardHtml, onboardingHtml, workerPhotosHtml, liveTunnelHtml, roboticControlHtml].forEach((html) => {
     assert.match(html, /<link rel="stylesheet" href="sidebar\.css" \/>/);
     assert.match(html, /<script src="sidebar\.js" defer><\/script>/);
     assert.match(html, /<header[^>]*data-sidebar-mount/);
@@ -160,6 +161,7 @@ test("every switchable page loads the drawer and marks where its toggle goes", (
   assert.match(server, /"coordinates\.html",\s*\n\s*"coordinates\.css",\s*\n\s*"coordinates\.js",/);
   assert.match(server, /"sidebar\.css",\s*\n\s*"sidebar\.js",/);
   assert.match(server, /"worker-photos\.html",\s*\n\s*"worker-photos\.css",\s*\n\s*"worker-photos\.js",/);
+  assert.match(server, /"robotic-control\.html",\s*\n\s*"robotic-control\.css",\s*\n\s*"robotic-control\.js",/);
 });
 
 test("sign-out is a door icon on every account control", () => {
@@ -176,6 +178,7 @@ test("sign-out is a door icon on every account control", () => {
     ["ai-dashboard.html", aiDashboardHtml],
     ["live-tunnel.html", liveTunnelHtml],
     ["metrics.html", metricsHtml],
+    ["robotic-control.html", roboticControlHtml],
   ].forEach(([name, html]) => {
     assert.match(html, /class="sign-out-icon"/, `${name} should use the door sign-out icon`);
   });
@@ -228,6 +231,7 @@ test("the drawer lists every page and marks the one being viewed", () => {
     links.map((link) => link.href),
     [
       "index.html",
+      "robotic-control.html",
       "worker-photos.html",
       "onboarding.html",
       "coordinates.html",
@@ -250,9 +254,13 @@ test("the drawer lists every page and marks the one being viewed", () => {
     links.find((link) => link.href === "live-tunnel.html")?.textContent,
     "Live tunnel",
   );
+  assert.equal(
+    links.find((link) => link.href === "robotic-control.html")?.textContent,
+    "Robotic control",
+  );
   assert.deepEqual(
     links.map((link) => link.getAttribute("aria-current")),
-    [null, null, "page", null, null, null, null, null, null],
+    [null, null, null, "page", null, null, null, null, null, null],
   );
 
   // Each link carries an icon and its label, with no extra hint descriptions.
@@ -271,23 +279,24 @@ test("the drawer lists every page and marks the one being viewed", () => {
   assert.match(sidebarCss, /\.sidebar-heading:not\(:first-child\)/);
 
   // cleanUrls serves /admin without an extension, and a bare path is capture.
-  assert.equal(createSidebarHarness("/admin").links[6].getAttribute("aria-current"), "page");
-  assert.equal(createSidebarHarness("/coordinates").links[3].getAttribute("aria-current"), "page");
-  assert.equal(createSidebarHarness("/agent-coordinates").links[4].getAttribute("aria-current"), "page");
-  assert.equal(createSidebarHarness("/ai-dashboard").links[5].getAttribute("aria-current"), "page");
-  assert.equal(createSidebarHarness("/worker-photos").links[1].getAttribute("aria-current"), "page");
-  assert.equal(createSidebarHarness("/live-tunnel").links[7].getAttribute("aria-current"), "page");
-  assert.equal(createSidebarHarness("/metrics").links[8].getAttribute("aria-current"), "page");
+  assert.equal(createSidebarHarness("/admin").links[7].getAttribute("aria-current"), "page");
+  assert.equal(createSidebarHarness("/coordinates").links[4].getAttribute("aria-current"), "page");
+  assert.equal(createSidebarHarness("/agent-coordinates").links[5].getAttribute("aria-current"), "page");
+  assert.equal(createSidebarHarness("/ai-dashboard").links[6].getAttribute("aria-current"), "page");
+  assert.equal(createSidebarHarness("/worker-photos").links[2].getAttribute("aria-current"), "page");
+  assert.equal(createSidebarHarness("/robotic-control").links[1].getAttribute("aria-current"), "page");
+  assert.equal(createSidebarHarness("/live-tunnel").links[8].getAttribute("aria-current"), "page");
+  assert.equal(createSidebarHarness("/metrics").links[9].getAttribute("aria-current"), "page");
   assert.equal(createSidebarHarness("/").links[0].getAttribute("aria-current"), "page");
 });
 
-test("field staff only see Recording and Worker photos, and cannot stay on admin pages", () => {
+test("field staff only see Recording, Robotic control, and Worker photos, and cannot stay on admin pages", () => {
   const { links, gate, documentElement, sidebarApi } = createSidebarHarness("/admin.html");
   sidebarApi.setRole("worker");
 
   assert.deepEqual(
     links.filter((link) => !link.hidden).map((link) => link.href),
-    ["index.html", "worker-photos.html"],
+    ["index.html", "robotic-control.html", "worker-photos.html"],
   );
   assert.equal(gate.hidden, false);
   assert.equal(documentElement.dataset.pageAccess, "denied");
@@ -302,8 +311,13 @@ test("field staff only see Recording and Worker photos, and cannot stay on admin
   assert.equal(recording.documentElement.dataset.pageAccess, "allowed");
   assert.equal(
     recording.links.filter((link) => !link.hidden).length,
-    2,
+    3,
   );
+
+  const robotic = createSidebarHarness("/robotic-control.html");
+  robotic.sidebarApi.setRole("worker");
+  assert.equal(robotic.gate.hidden, true);
+  assert.equal(robotic.documentElement.dataset.pageAccess, "allowed");
 
   const admin = createSidebarHarness("/onboarding.html");
   admin.sidebarApi.setRole("admin");

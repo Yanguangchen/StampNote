@@ -10,6 +10,7 @@
     "metrics",
     "onboarding",
     "worker-photos",
+    "robotic-control",
   ]);
   const SURFACES = new Set(SURFACE_LIST);
   const EVENT_NAME_LIST = Object.freeze([

@@ -4,7 +4,7 @@ StampNote is a browser-based image annotation toolkit for field photos, site vis
 
 A left-hand page menu is shared by every surface and is grouped as:
 
-- **Worker workspace:** Recording and Worker photos.
+- **Worker workspace:** Recording, Robotic control, and Worker photos.
 - **Admin workspace:** Worker onboarding, Geographic Surveillence, Coordinate entry, Operations AI, Photos & attendance, Live tunnel, and Metrics.
 
 Sign-out is a door-and-arrow icon on every signed-in header. The account name already sits beside it. Where one control both signs in and out, the sign-in wording stays visible until an account is connected; Recording keeps the one-word **Account** label and swaps the cloud glyph for the door.
@@ -124,7 +124,7 @@ Captures first go to IndexedDB on the device. After Gemini reviews a batch, each
 
 Photo documents remain under `users/{uid}/photos/{photoId}`, worker templates live under `users/{uid}/workers/{workerId}`, and matched check-ins live under `attendanceDays/{date}/entries/{eventId}`. A recording session writes one attendance event per recognized worker: the opening worker is recorded after the three-view check, and additional enrolled workers are recorded after three unambiguous live face matches while capture continues. The same worker is never duplicated within one camera session. Firestore restricts photos and face templates to their signed-in owner; operational sessions and attendance remain available to authenticated team members. Owned templates in the legacy top-level `workers` collection remain readable during the transition, while another account's templates never enter matching. Anonymous visitors remain blocked. No public image URL exists: the authenticated dashboard turns Firestore bytes into a temporary in-browser image URL.
 
-Open **Photos & attendance** (`admin.html`) to browse photos alongside recent attendance grouped by street, recorded address, date, and time session. Open **Live tunnel** (`live-tunnel.html`) to watch any camera that is recording right now — the picture opens like a video call, without anyone accepting or rejecting it, and an administrator can send a voice message that plays on that device. Open **Worker onboarding** (`onboarding.html`) to enroll, replace, or delete worker templates; the worker ID is issued from the typed name rather than entered by hand. **Worker photos** (`worker-photos.html`) is the field path that does not start the watch: take one photo or pick several, stamp a fresh GPS fix and the day's weather, run Gemini sanitization, then save locally and sync when signed in. **Metrics** (`metrics.html`) plots three independent daily series — attendance taken, flags raised, and sessions created — over the last 7 or 30 days. **Operations AI** (`ai-dashboard.html`) answers questions about those loaded records.
+Open **Photos & attendance** (`admin.html`) to browse photos alongside recent attendance grouped by street, recorded address, date, and time session. Open **Live tunnel** (`live-tunnel.html`) to watch any camera that is recording right now — the picture opens like a video call, without anyone accepting or rejecting it, and an administrator can send a voice message that plays on that device. Open **Worker onboarding** (`onboarding.html`) to enroll, replace, or delete worker templates; the worker ID is issued from the typed name rather than entered by hand. **Worker photos** (`worker-photos.html`) is the field path that does not start the watch: take one photo or pick several, stamp a fresh GPS fix and the day's weather, run Gemini sanitization, then save locally and sync when signed in. **Robotic control** (`robotic-control.html`) is a dedicated full-page live camera for robot teleoperation: no MediaPipe, attendance, or auto capture, with Live tunnel sharing when signed in. **Metrics** (`metrics.html`) plots three independent daily series — attendance taken, flags raised, and sessions created — over the last 7 or 30 days. **Operations AI** (`ai-dashboard.html`) answers questions about those loaded records.
 
 The intended RPA truck-coordinate workflow matches the active session to the nearest truck by GPS
 proximity; it does not infer the session address from the truck coordinate. The conservative match,
@@ -222,7 +222,7 @@ The Firebase browser configuration is public by design and already points at `st
 
 The Firestore rules distinguish two signed-in classes. **Current users are all superadmins:** a signed-in account can open every page unless Firebase explicitly marks it `stampnoteRole: "worker"`. Field staff with that worker claim can record attendance, write their own photos, and read the shared face roster. Anonymous requests are denied. The checked-in Firestore index enables the dashboard's cross-date attendance query and the administrator photo collection-group query. Realtime Database is configured but the current application still stores photos, attendance, and worker templates in Firestore. The Google sign-in allowlist is the security boundary; a worker claim is the only way to narrow a signed-in account. Analytics initialization is best-effort: a blocker may disable it without breaking Authentication or Firestore.
 
-Field staff use Recording and Worker photos. Superadmins also use Worker onboarding, Geographic Surveillence, Operations AI, Photos & attendance, Live tunnel, and Metrics. Photos uploaded by field staff appear on the administrator dashboard. See the [Firebase CLI reference](https://firebase.google.com/docs/cli) and [Google provider configuration guide](https://firebase.google.com/docs/auth/configure-providers-cli) for the upstream command contract.
+Field staff use Recording, Robotic control, and Worker photos. Superadmins also use Worker onboarding, Geographic Surveillence, Operations AI, Photos & attendance, Live tunnel, and Metrics. Photos uploaded by field staff appear on the administrator dashboard. See the [Firebase CLI reference](https://firebase.google.com/docs/cli) and [Google provider configuration guide](https://firebase.google.com/docs/auth/configure-providers-cli) for the upstream command contract.
 
 Before exposing the app publicly, configure Google API quotas or billing alerts and add Vercel Firewall rate-limit rules for `POST /api/triage`, `POST /api/assistant`, and `POST /api/speech`. Photo review still relies on same-site checks and request validation rather than Firebase identity, so the firewall remains the cost boundary for direct scripted triage traffic. Operations questions and Gemini voice requests require a verified administrator Firebase ID token in addition to those checks.
 
@@ -280,7 +280,7 @@ See [OBSERVABILITY.md](OBSERVABILITY.md) for the event catalog, production log c
 - `styles.css` — responsive visual design
 - `address-service.js` — geolocation and reverse-geocoding functions
 - `stamp.js` — canvas stamping of the address and date/time
-- `camera-facing.js` — back/front camera preference shared by Recording and onboarding
+- `camera-facing.js` — back/front camera preference shared by Recording, Robotic control, and onboarding
 - `computer-vision.js` — MediaPipe on/off preference for Recording video streaming
 - `pose-model.js` — loads the vendored MediaPipe models
 - `frame-scaler.js` — downscales live frames before they reach the detectors
@@ -316,6 +316,7 @@ See [OBSERVABILITY.md](OBSERVABILITY.md) for the event catalog, production log c
 - `metrics.html`, `metrics.css`, `metrics.js` — 7- and 30-day attendance, flag and session counts
 - `onboarding.html`, `onboarding.css`, `onboarding.js` — signed-in worker face enrollment and roster management
 - `worker-photos.html`, `worker-photos.css`, `worker-photos.js` — stamped field photos with Gemini sanitization and optional cloud sync
+- `robotic-control.html`, `robotic-control.css`, `robotic-control.js` — dedicated full-page live camera for robot controls, without MediaPipe
 - `firebase.json`, `.firebaserc` — Firebase provider/rules deployment configuration and project alias
 - `firestore.rules` — owner-scoped photo/face-template access with authenticated team operations
 - `database.rules.json` — authenticated-team-wide Realtime Database access policy and attendance indexes
