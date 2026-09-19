@@ -724,7 +724,16 @@
         publisherUid: tunnel.ownerId,
         offer: descriptionPayload(offer),
       });
-      if (closed) return viewer;
+      if (closed) {
+        if (viewer?.id && tunnel?.id && cloud?.leaveTunnelViewer) {
+          try {
+            await cloud.leaveTunnelViewer(tunnel.id, viewer.id);
+          } catch {
+            /* Leaving is best-effort; the publisher treats a stale viewer as gone. */
+          }
+        }
+        return viewer;
+      }
 
       unsubscribePicture = cloud.subscribeTunnelPicture?.(
         tunnel.id,
