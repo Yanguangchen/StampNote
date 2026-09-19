@@ -793,7 +793,7 @@ function createPageHarness(options = {}) {
       ? [["stampnote-live-tunnel-robot-ip", JSON.stringify(options.storedRobotIps)]]
       : [],
   );
-  const cloudCalls = { signIn: 0, joined: [] };
+  const cloudCalls = { signIn: 0, joined: [], left: [] };
   let authCallback;
   let tunnelsCallback;
   const liveRecords = options.tunnels || [
@@ -843,7 +843,12 @@ function createPageHarness(options = {}) {
       return () => {};
     },
     addTunnelIce() {},
-    leaveTunnelViewer() {},
+    async leaveTunnelViewer(tunnelId, viewerId) {
+      cloudCalls.left.push({ tunnelId, viewerId });
+      if (options.delayLeaveMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.delayLeaveMs));
+      }
+    },
     subscribeTunnelPicture(tunnelId, onChange) {
       queueMicrotask(() => onChange(options.picture || null));
       return () => {};
@@ -1312,6 +1317,77 @@ test("switching sessions waits for the in-flight join instead of racing it", asy
   assert.equal(harness.cloudCalls.joined.at(-1).tunnelId, "field-1");
   assert.match(harness.elements["live-tunnel-caption"].textContent, /10 Marina Bay/);
   assert.equal(sessionJoin(harness, 0).getAttribute("aria-pressed"), "true");
+});
+
+test("a replacement session stays up after the old viewer finishes leaving", async () => {
+  const field = {
+    id: "field-1",
+    ownerId: "owner-1",
+    ownerEmail: "field@example.com",
+    location: "10 Marina Bay",
+    sessionLabel: "Morning",
+    status: "live",
+    lastSeenAtMs: Date.now(),
+    startedAtMs: Date.now() - 60_000,
+  };
+  const robot = {
+    id: "robot-1",
+    ownerId: "owner-2",
+    ownerEmail: "robot@example.com",
+    location: "Robotic control",
+    sessionLabel: "Robotic control",
+    status: "live",
+    lastSeenAtMs: Date.now(),
+    startedAtMs: Date.now() - 10_000,
+  };
+  const harness = createPageHarness({
+    delayLeaveMs: 40,
+    tunnels: [field, robot],
+  });
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  assert.equal(harness.cloudCalls.joined[0].tunnelId, "robot-1");
+
+  harness.emitTunnels([field]);
+  await new Promise((resolve) => setTimeout(resolve, 90));
+  await settle();
+
+  assert.equal(harness.cloudCalls.joined.at(-1).tunnelId, "field-1");
+  assert.match(harness.elements["live-tunnel-caption"].textContent, /10 Marina Bay/);
+  assert.doesNotMatch(
+    harness.elements["live-tunnel-placeholder"].textContent,
+    /Choose a live recording/i,
+  );
+});
+
+test("Leave deletes a viewer that finishes creating after disconnect", async () => {
+  const harness = createPageHarness({
+    delayJoinMs: 40,
+    tunnels: [
+      {
+        id: "robot-1",
+        ownerId: "owner-2",
+        ownerEmail: "robot@example.com",
+        location: "Robotic control",
+        sessionLabel: "Robotic control",
+        status: "live",
+        lastSeenAtMs: Date.now(),
+        startedAtMs: Date.now() - 10_000,
+      },
+    ],
+  });
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  await harness.elements["live-tunnel-leave"].dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await settle();
+
+  assert.equal(harness.cloudCalls.left.length, 1);
+  assert.equal(harness.cloudCalls.left[0].tunnelId, "robot-1");
+  assert.match(
+    harness.elements["live-tunnel-placeholder"].textContent,
+    /Choose a live recording/i,
+  );
 });
 
 test("a stage robot IP draft survives a live-list refresh", async () => {

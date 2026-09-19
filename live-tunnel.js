@@ -379,6 +379,18 @@
     renderList();
   }
 
+  function queueLeave({ stopAutoSelect = false } = {}) {
+    if (stopAutoSelect) autoSelect = false;
+    const generation = ++joinGeneration;
+    joiningId = "";
+    const run = async () => {
+      if (generation !== joinGeneration) return;
+      await leaveTunnel();
+    };
+    joinChain = joinChain.then(run, run);
+    return joinChain;
+  }
+
   async function tunnelInto(record) {
     if (!record?.id || !liveTunnel?.createViewer || !cloud) return;
     if (selectedId === record.id && viewer) return;
@@ -576,19 +588,21 @@
 
     if (selectedId && !live.some((record) => record.id === selectedId)) {
       const ended = selectedId;
-      leaveTunnel();
+      const next = autoSelect
+        ? preferredLiveTunnel(live.filter((record) => record.id !== ended))
+        : null;
       setStatus("That recording stopped.");
       telemetry?.event("live_tunnel.ended", { tunnelId: ended, status: "ended" });
+      if (next) tunnelInto(next);
+      else queueLeave();
+    } else if (autoSelect && !selectedId && !joiningId) {
+      const next = preferredLiveTunnel(live);
+      if (next) tunnelInto(next);
     }
 
     if (robotOpenId && !live.some((record) => record.id === robotOpenId)) {
       clearRobotControl();
       renderList();
-    }
-
-    if (autoSelect && !selectedId && !joiningId) {
-      const next = preferredLiveTunnel(live);
-      if (next) tunnelInto(next);
     }
   }
 
@@ -697,10 +711,7 @@
   voiceCancel?.addEventListener("click", () => cancelVoiceRecord());
   signOutButton?.addEventListener("click", () => cloud.signOut());
   leaveButton?.addEventListener("click", () => {
-    autoSelect = false;
-    joinGeneration += 1;
-    joiningId = "";
-    leaveTunnel();
+    queueLeave({ stopAutoSelect: true });
   });
 
   if (!cloud || !liveTunnel) {
@@ -724,10 +735,8 @@
     telemetry?.event("cloud.auth.state", { status: user ? "signed_in" : "signed_out" });
     if (!user) {
       stopListening();
+      await queueLeave();
       autoSelect = true;
-      joinGeneration += 1;
-      joiningId = "";
-      await leaveTunnel();
       clearRobotControl();
       tunnels = [];
       renderList();
