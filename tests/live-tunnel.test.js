@@ -633,9 +633,14 @@ test("the page is a dedicated admin surface with no accept or reject controls", 
   assert.match(html, /Voice message/);
   assert.match(html, /id="live-tunnel-robot"/);
   assert.match(html, /id="live-tunnel-robot-frame"/);
+  assert.match(html, /id="live-tunnel-menu"/);
+  assert.match(html, /id="live-tunnel-split"/);
+  assert.match(html, /id="live-tunnel-robot-ip-form"/);
   assert.match(html, /sandbox="allow-scripts allow-forms allow-same-origin"/);
   assert.match(html, /src\/services\/robot-control-url\.js/);
   assert.match(css, /\.live-tunnel-robot-ip\s*\{/);
+  assert.match(css, /\.live-tunnel-split\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*minmax\(0,\s*1fr\)/);
+  assert.match(css, /\.live-tunnel-menu\s*\{/);
   assert.doesNotMatch(html, /accept call|reject call|incoming call/i);
   assert.match(html, /<header[^>]*data-sidebar-mount/);
   assert.match(html, /<script src="sidebar\.js" defer><\/script>/);
@@ -736,9 +741,18 @@ function createPageHarness(options = {}) {
     "live-tunnel-account",
     "live-tunnel-workspace",
     "live-tunnel-status",
+    "live-tunnel-menu",
+    "live-tunnel-menu-count",
+    "live-tunnel-rail",
+    "live-tunnel-rail-scrim",
     "live-tunnel-list",
     "live-tunnel-empty",
     "live-tunnel-count",
+    "live-tunnel-split",
+    "live-tunnel-robot-ip-form",
+    "live-tunnel-robot-ip",
+    "live-tunnel-robot-ip-open",
+    "live-tunnel-robot-close",
     "live-tunnel-video",
     "live-tunnel-picture",
     "live-tunnel-frame",
@@ -766,7 +780,13 @@ function createPageHarness(options = {}) {
   elements["live-tunnel-voice-cancel"].hidden = true;
   elements["live-tunnel-voice-record"].textContent = "Voice message";
   elements["live-tunnel-empty"].hidden = false;
-  elements["live-tunnel-robot"].hidden = true;
+  elements["live-tunnel-menu"].hidden = true;
+  elements["live-tunnel-menu-count"].hidden = true;
+  elements["live-tunnel-rail"].dataset.open = "false";
+  elements["live-tunnel-rail-scrim"].hidden = true;
+  elements["live-tunnel-robot"].dataset.open = "false";
+  elements["live-tunnel-robot-close"].hidden = true;
+  elements["live-tunnel-robot-ip"].placeholder = "Robot IP address";
 
   const storage = new Map(
     options.storedRobotIps
@@ -838,6 +858,7 @@ function createPageHarness(options = {}) {
     querySelector(selector) {
       return elements[selector.replace(/^#/, "")] || null;
     },
+    addEventListener() {},
   };
 
   const mediaRecorders = [];
@@ -952,11 +973,16 @@ test("signing in lists live recordings and tunnels in without an accept step", a
 
   assert.equal(harness.elements["live-tunnel-auth-gate"].hidden, true);
   assert.equal(harness.elements["live-tunnel-workspace"].hidden, false);
+  assert.equal(harness.elements["live-tunnel-menu"].hidden, false);
   assert.equal(harness.elements["live-tunnel-list"].children.length, 1);
   assert.equal(harness.elements["live-tunnel-empty"].hidden, true);
   assert.match(harness.elements["live-tunnel-count"].textContent, /1 live/);
+  assert.equal(harness.elements["live-tunnel-menu-count"].hidden, false);
+  assert.equal(harness.elements["live-tunnel-menu-count"].textContent, "1");
+  assert.equal(harness.elements["live-tunnel-rail"].dataset.open, "false");
 
   assert.equal(sessionRobotInput(harness).placeholder, "Robot IP address");
+  assert.equal(harness.elements["live-tunnel-robot-ip"].placeholder, "Robot IP address");
   await sessionJoin(harness).dispatch("click");
   await settle();
 
@@ -1099,13 +1125,13 @@ test("every live tunnel session has a robot IP field that opens an iframe", asyn
   assert.equal(harness.elements["live-tunnel-list"].children.length, 2);
   assert.equal(sessionRobotInput(harness, 0).placeholder, "Robot IP address");
   assert.equal(sessionRobotInput(harness, 1).placeholder, "Robot IP address");
-  assert.equal(harness.elements["live-tunnel-robot"].hidden, true);
+  assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "false");
 
   sessionRobotInput(harness, 1).value = "192.168.1.50:8080";
   await sessionRobotForm(harness, 1).dispatch("submit");
   await settle();
 
-  assert.equal(harness.elements["live-tunnel-robot"].hidden, false);
+  assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "true");
   assert.equal(harness.elements["live-tunnel-robot-frame"].src, "http://192.168.1.50:8080/");
   assert.equal(harness.elements["live-tunnel-robot-host"].textContent, "192.168.1.50:8080");
   assert.equal(harness.storedRobotIps()["live-2"], "192.168.1.50:8080");
@@ -1116,7 +1142,7 @@ test("every live tunnel session has a robot IP field that opens an iframe", asyn
 
   await sessionRobotForm(harness, 1).querySelector(".live-tunnel-robot-ip-close").dispatch("click");
   await settle();
-  assert.equal(harness.elements["live-tunnel-robot"].hidden, true);
+  assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "false");
   assert.equal(harness.elements["live-tunnel-robot-frame"].src, "");
   assert.match(harness.elements["live-tunnel-status"].textContent, /Robot control closed/);
 });
@@ -1128,7 +1154,7 @@ test("a stored robot IP fills that session field but does not open the iframe", 
   await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
   await settle();
   assert.equal(sessionRobotInput(harness).value, "10.0.0.9");
-  assert.equal(harness.elements["live-tunnel-robot"].hidden, true);
+  assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "false");
   assert.equal(harness.elements["live-tunnel-robot-frame"].src, "");
 });
 
@@ -1139,7 +1165,27 @@ test("an invalid robot IP stays on the live tunnel without opening the iframe", 
   sessionRobotInput(harness).value = "javascript:alert(1)";
   await sessionRobotForm(harness).dispatch("submit");
   await settle();
-  assert.equal(harness.elements["live-tunnel-robot"].hidden, true);
+  assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "false");
   assert.equal(harness.elements["live-tunnel-robot-frame"].src, "");
   assert.match(harness.elements["live-tunnel-status"].textContent, /http or https/i);
+});
+
+test("the live recordings menu hides as an icon and opens over the split", async () => {
+  const harness = createPageHarness();
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+
+  assert.equal(harness.elements["live-tunnel-menu"].hidden, false);
+  assert.equal(harness.elements["live-tunnel-rail"].dataset.open, "false");
+  assert.equal(harness.elements["live-tunnel-rail-scrim"].hidden, true);
+
+  await harness.elements["live-tunnel-menu"].dispatch("click");
+  assert.equal(harness.elements["live-tunnel-rail"].dataset.open, "true");
+  assert.equal(harness.elements["live-tunnel-menu"].getAttribute("aria-expanded"), "true");
+  assert.equal(harness.elements["live-tunnel-rail-scrim"].hidden, false);
+
+  await sessionJoin(harness).dispatch("click");
+  await settle();
+  assert.equal(harness.elements["live-tunnel-rail"].dataset.open, "false");
+  assert.equal(harness.cloudCalls.joined.length, 1);
 });

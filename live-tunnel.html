@@ -38,6 +38,20 @@
   </head>
   <body>
     <header class="live-tunnel-header" data-sidebar-mount>
+      <button
+        class="live-tunnel-menu"
+        id="live-tunnel-menu"
+        type="button"
+        aria-controls="live-tunnel-rail"
+        aria-expanded="false"
+        aria-label="Live recordings"
+        hidden
+      >
+        <svg class="live-tunnel-menu-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z" />
+        </svg>
+        <span class="live-tunnel-menu-count" id="live-tunnel-menu-count" hidden></span>
+      </button>
       <div class="account-controls">
         <span class="account-name" id="live-tunnel-account"></span>
         <button
@@ -78,7 +92,10 @@
       </section>
 
       <div class="live-tunnel-workspace" id="live-tunnel-workspace" hidden>
-        <section class="live-tunnel-rail" aria-labelledby="live-tunnel-list-title">
+        <button class="live-tunnel-rail-scrim" id="live-tunnel-rail-scrim" type="button" hidden>
+          Close live recordings
+        </button>
+        <section class="live-tunnel-rail" id="live-tunnel-rail" aria-labelledby="live-tunnel-list-title" data-open="false">
           <div class="live-tunnel-rail-header">
             <h2 id="live-tunnel-list-title">Live recordings</h2>
             <p class="live-tunnel-count" id="live-tunnel-count"></p>
@@ -89,24 +106,31 @@
           <ul class="live-tunnel-list" id="live-tunnel-list"></ul>
         </section>
 
-        <section class="live-tunnel-stage" id="live-tunnel-stage" aria-labelledby="live-tunnel-stage-title">
-          <div class="live-tunnel-stage-header">
-            <h2 id="live-tunnel-stage-title">Tunnel</h2>
-            <p class="live-tunnel-badge" id="live-tunnel-badge" hidden>Live</p>
-            <button class="button button-quiet" id="live-tunnel-leave" type="button" hidden>
-              Leave
-            </button>
-          </div>
-          <div class="live-tunnel-frame" id="live-tunnel-frame">
-            <video id="live-tunnel-video" playsinline autoplay muted></video>
-            <img id="live-tunnel-picture" alt="" hidden />
-            <p class="live-tunnel-placeholder" id="live-tunnel-placeholder">
-              Choose a live recording. The camera opens here without anyone accepting a call.
-            </p>
-          </div>
-          <p class="live-tunnel-caption" id="live-tunnel-caption"></p>
-          <section class="live-tunnel-robot" id="live-tunnel-robot" hidden>
+        <div class="live-tunnel-split" id="live-tunnel-split">
+          <section class="live-tunnel-robot" id="live-tunnel-robot" data-open="false" aria-label="Robot control">
             <header class="live-tunnel-robot-bar">
+              <form class="live-tunnel-robot-ip" id="live-tunnel-robot-ip-form" autocomplete="off">
+                <label class="visually-hidden" for="live-tunnel-robot-ip">Robot IP address</label>
+                <input
+                  id="live-tunnel-robot-ip"
+                  class="live-tunnel-robot-ip-input"
+                  name="robot-ip"
+                  type="text"
+                  inputmode="decimal"
+                  enterkeyhint="go"
+                  autocomplete="off"
+                  autocapitalize="off"
+                  spellcheck="false"
+                  maxlength="128"
+                  placeholder="Robot IP address"
+                />
+                <button class="live-tunnel-robot-ip-open" id="live-tunnel-robot-ip-open" type="submit">
+                  Open
+                </button>
+                <button class="live-tunnel-robot-ip-close" id="live-tunnel-robot-close" type="button" hidden>
+                  Close
+                </button>
+              </form>
               <p class="live-tunnel-robot-host" id="live-tunnel-robot-host"></p>
             </header>
             <iframe
@@ -116,16 +140,34 @@
               referrerpolicy="no-referrer"
             ></iframe>
           </section>
-          <div class="live-tunnel-voice" id="live-tunnel-voice" hidden>
-            <button class="button button-primary live-tunnel-voice-record" id="live-tunnel-voice-record" type="button" aria-pressed="false">
-              Voice message
-            </button>
-            <button class="button button-quiet" id="live-tunnel-voice-cancel" type="button" hidden>
-              Cancel
-            </button>
-            <p class="live-tunnel-voice-status" id="live-tunnel-voice-status" role="status"></p>
-          </div>
-        </section>
+
+          <section class="live-tunnel-stage" id="live-tunnel-stage" aria-labelledby="live-tunnel-stage-title">
+            <div class="live-tunnel-stage-header">
+              <h2 id="live-tunnel-stage-title">Tunnel</h2>
+              <p class="live-tunnel-badge" id="live-tunnel-badge" hidden>Live</p>
+              <button class="button button-quiet" id="live-tunnel-leave" type="button" hidden>
+                Leave
+              </button>
+            </div>
+            <div class="live-tunnel-frame" id="live-tunnel-frame">
+              <video id="live-tunnel-video" playsinline autoplay muted></video>
+              <img id="live-tunnel-picture" alt="" hidden />
+              <p class="live-tunnel-placeholder" id="live-tunnel-placeholder">
+                Choose a live recording. The camera opens here without anyone accepting a call.
+              </p>
+            </div>
+            <p class="live-tunnel-caption" id="live-tunnel-caption"></p>
+            <div class="live-tunnel-voice" id="live-tunnel-voice" hidden>
+              <button class="button button-primary live-tunnel-voice-record" id="live-tunnel-voice-record" type="button" aria-pressed="false">
+                Voice message
+              </button>
+              <button class="button button-quiet" id="live-tunnel-voice-cancel" type="button" hidden>
+                Cancel
+              </button>
+              <p class="live-tunnel-voice-status" id="live-tunnel-voice-status" role="status"></p>
+            </div>
+          </section>
+        </div>
       </div>
     </main>
   </body>

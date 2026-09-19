@@ -37,6 +37,14 @@
   const robotControl = document.querySelector("#live-tunnel-robot");
   const robotControlHost = document.querySelector("#live-tunnel-robot-host");
   const robotControlFrame = document.querySelector("#live-tunnel-robot-frame");
+  const robotIpForm = document.querySelector("#live-tunnel-robot-ip-form");
+  const robotIp = document.querySelector("#live-tunnel-robot-ip");
+  const robotIpOpen = document.querySelector("#live-tunnel-robot-ip-open");
+  const robotIpClose = document.querySelector("#live-tunnel-robot-close");
+  const menuButton = document.querySelector("#live-tunnel-menu");
+  const menuCount = document.querySelector("#live-tunnel-menu-count");
+  const rail = document.querySelector("#live-tunnel-rail");
+  const railScrim = document.querySelector("#live-tunnel-rail-scrim");
 
   telemetry?.configure({ surface: "live-tunnel" });
 
@@ -141,7 +149,42 @@
       const input = item.querySelector?.(".live-tunnel-robot-ip-input");
       if (id && input) drafts.set(id, String(input.value || ""));
     }
+    if (robotIp) drafts.set("__stage", String(robotIp.value || ""));
     return drafts;
+  }
+
+  function currentRobotRecord() {
+    const live = liveTunnel?.liveTunnels?.(tunnels) || [];
+    return (
+      live.find((record) => record.id === selectedId) ||
+      live.find((record) => record.id === robotOpenId) ||
+      live[0] ||
+      { id: "stage" }
+    );
+  }
+
+  function setMenuOpen(open) {
+    if (rail) rail.dataset.open = String(Boolean(open));
+    if (railScrim) railScrim.hidden = !open;
+    if (menuButton) menuButton.setAttribute("aria-expanded", String(Boolean(open)));
+  }
+
+  function syncStageRobotForm(drafts = readDraftRobotIps()) {
+    if (!robotIp) return;
+    const record = currentRobotRecord();
+    const typed = drafts.get(record.id);
+    const stageDraft = drafts.get("__stage");
+    robotIp.value =
+      typed ??
+      (stageDraft ? stageDraft : readStoredRobotIp(record.id));
+    if (robotIpOpen) robotIpOpen.hidden = Boolean(robotOpenId);
+    if (robotIpClose) robotIpClose.hidden = !robotOpenId;
+  }
+
+  function setRobotOpen(open) {
+    if (robotControl) robotControl.dataset.open = open ? "true" : "false";
+    if (robotIpOpen) robotIpOpen.hidden = Boolean(open);
+    if (robotIpClose) robotIpClose.hidden = !open;
   }
 
   function clearRobotControl() {
@@ -150,12 +193,12 @@
       robotControlFrame.src = "";
     }
     if (robotControlHost) robotControlHost.textContent = "";
-    if (robotControl) robotControl.hidden = true;
     robotOpenId = "";
+    setRobotOpen(false);
   }
 
   function closeRobotControl() {
-    if (!robotOpenId && robotControl?.hidden !== false) return;
+    if (!robotOpenId && robotControl?.dataset.open !== "true") return;
     clearRobotControl();
     setStatus("Robot control closed.");
     renderList();
@@ -173,9 +216,11 @@
 
     rememberRobotIp(record.id, String(raw || "").trim());
     robotOpenId = record.id;
+    if (robotIp) robotIp.value = String(raw || "").trim();
     if (robotControlHost) robotControlHost.textContent = parsed.host;
     if (robotControlFrame) robotControlFrame.src = parsed.href;
-    if (robotControl) robotControl.hidden = false;
+    setRobotOpen(true);
+    setMenuOpen(false);
 
     const mixedContent =
       globalScope.isSecureContext !== false && String(parsed.href).startsWith("http:");
@@ -312,6 +357,7 @@
     if (caption) caption.textContent = "";
     setStageLive(false);
     if (leaveButton) leaveButton.hidden = true;
+    syncStageRobotForm();
     renderList();
   }
 
@@ -388,6 +434,10 @@
     if (countLabel) {
       countLabel.textContent = live.length === 1 ? "1 live" : `${live.length} live`;
     }
+    if (menuCount) {
+      menuCount.hidden = live.length === 0;
+      menuCount.textContent = live.length ? String(live.length) : "";
+    }
     if (empty) empty.hidden = live.length > 0;
     if (!list) return;
     const draftIps = readDraftRobotIps();
@@ -412,7 +462,10 @@
         meta.textContent = `${formatStarted(record)}${record.ownerEmail ? ` · ${record.ownerEmail}` : ""}`;
 
         join.append(location, meta);
-        join.addEventListener("click", () => tunnelInto(record));
+        join.addEventListener("click", () => {
+          setMenuOpen(false);
+          tunnelInto(record);
+        });
 
         const form = document.createElement("form");
         form.className = "live-tunnel-robot-ip";
@@ -462,6 +515,7 @@
         return item;
       }),
     );
+    syncStageRobotForm(draftIps);
   }
 
   function handleTunnels(records) {
@@ -511,6 +565,19 @@
 
   themeToggle?.addEventListener("click", toggleTheme);
   applyTheme(readStoredTheme());
+
+  menuButton?.addEventListener("click", () => {
+    setMenuOpen(rail?.dataset.open !== "true");
+  });
+  railScrim?.addEventListener("click", () => setMenuOpen(false));
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") setMenuOpen(false);
+  });
+  robotIpForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    openRobotControl(currentRobotRecord(), robotIp?.value);
+  });
+  robotIpClose?.addEventListener("click", () => closeRobotControl());
 
   signInButton?.addEventListener("click", async () => {
     signInButton.disabled = true;
@@ -595,6 +662,8 @@
     authGate.hidden = Boolean(user);
     workspace.hidden = !user;
     signOutButton.hidden = !user;
+    if (menuButton) menuButton.hidden = !user;
+    if (!user) setMenuOpen(false);
     accountName.textContent = user?.email || "";
     if (error) {
       setStatus(describeError(error), "error");

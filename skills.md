@@ -84,7 +84,7 @@ Shared chrome: `#sidebar-toggle` opens `#app-sidebar`. Groups are **Worker works
 | --- | --- | --- | --- |
 | Operations AI | [/ai-dashboard](https://stampnote-omega.vercel.app/ai-dashboard) | Read-only Q&A over loaded records | No |
 | Photos & attendance | [/admin](https://stampnote-omega.vercel.app/admin) | Session rail, attendance, photos, weather, truck tile | Rename/delete session; truck X/Y |
-| Live tunnel | [/live-tunnel](https://stampnote-omega.vercel.app/live-tunnel) | Live camera of any recording, no call accept/reject; each session has a robot IP field | No |
+| Live tunnel | [/live-tunnel](https://stampnote-omega.vercel.app/live-tunnel) | Landscape 50/50 robot control + live stream; recordings list hides as an icon | No |
 | Geographic Surveillence | [/coordinates](https://stampnote-omega.vercel.app/coordinates) | GPS vs truck list, map compare, RPA JSON | Truck X/Y |
 | Coordinate entry | [/agent-coordinates](https://stampnote-omega.vercel.app/agent-coordinates) | Agent search, filters, batch JSON, truck X/Y | Truck X/Y |
 | Metrics | [/metrics](https://stampnote-omega.vercel.app/metrics) | 7/30/90-day attendance, flags, sessions | No |
@@ -473,8 +473,8 @@ URL: [https://stampnote-omega.vercel.app/live-tunnel](https://stampnote-omega.ve
 Use when the user asked to watch a recording that is happening now. Do not start Recording or Robotic control just to look around.
 
 1. If `#live-tunnel-auth-gate` is visible, click `#live-tunnel-sign-in`.
-2. `#live-tunnel-list` shows cameras that are live. Each `.live-tunnel-item` is a site. Click `.live-tunnel-join` to tunnel in. There is no accept/reject step on the recording device.
-3. Every session card has a **Robot IP address** field (`.live-tunnel-robot-ip-input`). Submit the form or press Enter to load that robot's web UI in `#live-tunnel-robot-frame`. Close hides it. A stored IP may fill that session's field; do not open it unless the user entered or confirmed an address. Do not log the robot IP in telemetry.
+2. The live recordings list hides behind `#live-tunnel-menu`. Click that icon to open `#live-tunnel-rail`. Each `.live-tunnel-item` is a site; click `.live-tunnel-join` to tunnel in. There is no accept/reject step on the recording device.
+3. In landscape the workspace is a 50/50 split: `#live-tunnel-robot` (robot control) and `#live-tunnel-stage` (live stream). Type a **Robot IP address** in `#live-tunnel-robot-ip` or in a session card field, then Open. `#live-tunnel-robot-frame` loads that robot's web UI. Close hides the page but keeps the split. Do not auto-open a stored IP. Do not log the robot IP in telemetry.
 4. `#live-tunnel-video` shows the live picture when the two devices can open a camera call. `#live-tunnel-picture` shows updating stills when this network cannot complete that call. `#live-tunnel-leave` disconnects.
 5. `#live-tunnel-voice-record` records a voice message and sends it to the recording device. The recording plays it without an accept/reject step. `#live-tunnel-voice-cancel` discards a take. Voice still sends when the camera call cannot open.
 6. `#live-tunnel-empty` means nobody is recording right now.
