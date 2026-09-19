@@ -52,6 +52,8 @@
   let tunnels = [];
   let selectedId = "";
   let joiningId = "";
+  let joinGeneration = 0;
+  let joinChain = Promise.resolve();
   let autoSelect = true;
   let stageRobotSessionId = "";
   let pendingId = readRequestedTunnelId();
@@ -382,9 +384,19 @@
     if (selectedId === record.id && viewer) return;
     if (joiningId === record.id) return;
 
+    const generation = ++joinGeneration;
     autoSelect = true;
     joiningId = record.id;
+    const run = () => connectGeneration(record, generation);
+    joinChain = joinChain.then(run, run);
+    return joinChain;
+  }
+
+  async function connectGeneration(record, generation) {
+    if (generation !== joinGeneration) return;
     await leaveTunnel();
+    if (generation !== joinGeneration) return;
+
     selectedId = record.id;
     joiningId = record.id;
     viewerState = "connecting";
@@ -394,12 +406,13 @@
     setStatus("Opening the live camera…");
     renderList();
 
-    viewer = liveTunnel.createViewer({
+    const nextViewer = liveTunnel.createViewer({
       cloud,
       RTCPeerConnection: globalScope.RTCPeerConnection,
       onStream: attachStream,
       onPicture: attachPicture,
       onState(state, detail) {
+        if (generation !== joinGeneration) return;
         viewerState = state;
         if (state === "live") {
           setStatus("");
@@ -429,11 +442,17 @@
         if (leaveButton) leaveButton.hidden = state === "idle";
       },
     });
+    viewer = nextViewer;
 
     try {
-      await viewer.connect(record);
+      await nextViewer.connect(record);
+      if (generation !== joinGeneration) {
+        await nextViewer.disconnect?.();
+        return;
+      }
       telemetry?.event("live_tunnel.joined", { status: "success" });
     } catch (error) {
+      if (generation !== joinGeneration) return;
       viewerState = "failed";
       setStatus(describeError(error), "error");
       if (placeholder) placeholder.textContent = describeError(error);
@@ -446,9 +465,9 @@
         { immediate: true, dedupeMs: 60000 },
       );
     } finally {
-      if (joiningId === record.id) joiningId = "";
+      if (generation === joinGeneration && joiningId === record.id) joiningId = "";
     }
-    renderList();
+    if (generation === joinGeneration) renderList();
   }
 
   function renderList() {
@@ -679,6 +698,8 @@
   signOutButton?.addEventListener("click", () => cloud.signOut());
   leaveButton?.addEventListener("click", () => {
     autoSelect = false;
+    joinGeneration += 1;
+    joiningId = "";
     leaveTunnel();
   });
 
@@ -704,6 +725,7 @@
     if (!user) {
       stopListening();
       autoSelect = true;
+      joinGeneration += 1;
       joiningId = "";
       await leaveTunnel();
       clearRobotControl();

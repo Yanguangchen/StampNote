@@ -825,7 +825,10 @@ function createPageHarness(options = {}) {
     },
     async createTunnelViewer(tunnelId, input) {
       cloudCalls.joined.push({ tunnelId, input });
-      return { id: "view-1", tunnelId, ...input };
+      if (options.delayJoinMs) {
+        await new Promise((resolve) => setTimeout(resolve, options.delayJoinMs));
+      }
+      return { id: `view-${cloudCalls.joined.length}`, tunnelId, ...input };
     },
     subscribeTunnelViewer(tunnelId, viewerId, onChange) {
       queueMicrotask(() =>
@@ -1272,6 +1275,43 @@ test("Leave keeps the live tunnel idle until the operator picks a session", asyn
     harness.elements["live-tunnel-placeholder"].textContent,
     /Choose a live recording/i,
   );
+});
+
+test("switching sessions waits for the in-flight join instead of racing it", async () => {
+  const harness = createPageHarness({
+    delayJoinMs: 25,
+    tunnels: [
+      {
+        id: "field-1",
+        ownerId: "owner-1",
+        ownerEmail: "field@example.com",
+        location: "10 Marina Bay",
+        sessionLabel: "Morning",
+        status: "live",
+        lastSeenAtMs: Date.now(),
+        startedAtMs: Date.now() - 60_000,
+      },
+      {
+        id: "robot-1",
+        ownerId: "owner-2",
+        ownerEmail: "robot@example.com",
+        location: "Robotic control",
+        sessionLabel: "Robotic control",
+        status: "live",
+        lastSeenAtMs: Date.now(),
+        startedAtMs: Date.now() - 10_000,
+      },
+    ],
+  });
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  await sessionJoin(harness, 0).dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  await settle();
+
+  assert.equal(harness.cloudCalls.joined.at(-1).tunnelId, "field-1");
+  assert.match(harness.elements["live-tunnel-caption"].textContent, /10 Marina Bay/);
+  assert.equal(sessionJoin(harness, 0).getAttribute("aria-pressed"), "true");
 });
 
 test("a stage robot IP draft survives a live-list refresh", async () => {
