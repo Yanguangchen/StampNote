@@ -6,8 +6,10 @@
 
   const cloud = globalScope.StampNoteFirebase;
   const liveTunnel = globalScope.StampNoteLiveTunnel;
+  const robotControlUrl = globalScope.StampNoteRobotControlUrl;
   const telemetry = globalScope.StampNoteObservability;
   const THEME_KEY = "stampnote-theme";
+  const ROBOT_IP_KEY = "stampnote-live-tunnel-robot-ip";
 
   const signInButton = document.querySelector("#live-tunnel-sign-in");
   const signOutButton = document.querySelector("#live-tunnel-sign-out");
@@ -32,6 +34,9 @@
   const themeToggle = document.querySelector("#theme-toggle");
   const themeToggleIcon = document.querySelector("#theme-toggle-icon");
   const themeToggleLabel = document.querySelector("#theme-toggle-label");
+  const robotControl = document.querySelector("#live-tunnel-robot");
+  const robotControlHost = document.querySelector("#live-tunnel-robot-host");
+  const robotControlFrame = document.querySelector("#live-tunnel-robot-frame");
 
   telemetry?.configure({ surface: "live-tunnel" });
 
@@ -43,6 +48,7 @@
   let viewer = null;
   let viewerState = "idle";
   let voiceBusy = false;
+  let robotOpenId = "";
   const voiceRecorder = liveTunnel?.createVoiceRecorder?.({
     MediaRecorder: globalScope.MediaRecorder,
     getUserMedia: globalScope.navigator?.mediaDevices?.getUserMedia?.bind(
@@ -101,6 +107,85 @@
   function setStatus(message, state = "idle") {
     status.textContent = message;
     status.dataset.state = state;
+  }
+
+  function readStoredRobotIps() {
+    try {
+      const raw = globalScope.localStorage?.getItem(ROBOT_IP_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function readStoredRobotIp(tunnelId) {
+    const value = readStoredRobotIps()[tunnelId];
+    return typeof value === "string" ? value : "";
+  }
+
+  function rememberRobotIp(tunnelId, value) {
+    try {
+      const stored = readStoredRobotIps();
+      stored[tunnelId] = value;
+      globalScope.localStorage?.setItem(ROBOT_IP_KEY, JSON.stringify(stored));
+    } catch {
+      /* The address still works for this visit even when storage is blocked. */
+    }
+  }
+
+  function readDraftRobotIps() {
+    const drafts = new Map();
+    for (const item of list?.children || []) {
+      const id = item.dataset?.tunnelId;
+      const input = item.querySelector?.(".live-tunnel-robot-ip-input");
+      if (id && input) drafts.set(id, String(input.value || ""));
+    }
+    return drafts;
+  }
+
+  function clearRobotControl() {
+    if (robotControlFrame) {
+      robotControlFrame.removeAttribute("src");
+      robotControlFrame.src = "";
+    }
+    if (robotControlHost) robotControlHost.textContent = "";
+    if (robotControl) robotControl.hidden = true;
+    robotOpenId = "";
+  }
+
+  function closeRobotControl() {
+    if (!robotOpenId && robotControl?.hidden !== false) return;
+    clearRobotControl();
+    setStatus("Robot control closed.");
+    renderList();
+  }
+
+  function openRobotControl(record, raw) {
+    const parsed = robotControlUrl?.parseRobotControlUrl?.(raw) || {
+      ok: false,
+      error: "Enter a robot IP address.",
+    };
+    if (!parsed.ok) {
+      setStatus(parsed.error, "error");
+      return false;
+    }
+
+    rememberRobotIp(record.id, String(raw || "").trim());
+    robotOpenId = record.id;
+    if (robotControlHost) robotControlHost.textContent = parsed.host;
+    if (robotControlFrame) robotControlFrame.src = parsed.href;
+    if (robotControl) robotControl.hidden = false;
+
+    const mixedContent =
+      globalScope.isSecureContext !== false && String(parsed.href).startsWith("http:");
+    setStatus(
+      mixedContent
+        ? `Opened robot control at ${parsed.host}. This page is HTTPS, so an http robot page may be blocked.`
+        : `Opened robot control at ${parsed.host}.`,
+    );
+    renderList();
+    return true;
   }
 
   function describeError(error) {
@@ -305,13 +390,18 @@
     }
     if (empty) empty.hidden = live.length > 0;
     if (!list) return;
+    const draftIps = readDraftRobotIps();
     list.replaceChildren(
       ...live.map((record) => {
-        const item = document.createElement("button");
-        item.type = "button";
+        const item = document.createElement("li");
         item.className = "live-tunnel-item";
-        item.setAttribute("aria-pressed", String(record.id === selectedId));
         item.dataset.tunnelId = record.id;
+        item.dataset.selected = String(record.id === selectedId);
+
+        const join = document.createElement("button");
+        join.type = "button";
+        join.className = "live-tunnel-join";
+        join.setAttribute("aria-pressed", String(record.id === selectedId));
 
         const location = document.createElement("span");
         location.className = "live-tunnel-item-location";
@@ -321,8 +411,54 @@
         meta.className = "live-tunnel-item-meta";
         meta.textContent = `${formatStarted(record)}${record.ownerEmail ? ` · ${record.ownerEmail}` : ""}`;
 
-        item.append(location, meta);
-        item.addEventListener("click", () => tunnelInto(record));
+        join.append(location, meta);
+        join.addEventListener("click", () => tunnelInto(record));
+
+        const form = document.createElement("form");
+        form.className = "live-tunnel-robot-ip";
+        form.setAttribute("autocomplete", "off");
+
+        const label = document.createElement("label");
+        label.className = "visually-hidden";
+        label.setAttribute("for", `live-tunnel-robot-ip-${record.id}`);
+        label.textContent = "Robot IP address";
+
+        const input = document.createElement("input");
+        input.id = `live-tunnel-robot-ip-${record.id}`;
+        input.className = "live-tunnel-robot-ip-input";
+        input.name = "robot-ip";
+        input.type = "text";
+        input.setAttribute("inputmode", "decimal");
+        input.setAttribute("enterkeyhint", "go");
+        input.setAttribute("autocomplete", "off");
+        input.setAttribute("autocapitalize", "off");
+        input.setAttribute("spellcheck", "false");
+        input.setAttribute("maxlength", "128");
+        input.placeholder = "Robot IP address";
+        input.value = draftIps.has(record.id)
+          ? draftIps.get(record.id)
+          : readStoredRobotIp(record.id);
+
+        const open = document.createElement("button");
+        open.type = "submit";
+        open.className = "live-tunnel-robot-ip-open";
+        open.textContent = "Open";
+        open.hidden = robotOpenId === record.id;
+
+        const close = document.createElement("button");
+        close.type = "button";
+        close.className = "live-tunnel-robot-ip-close";
+        close.textContent = "Close";
+        close.hidden = robotOpenId !== record.id;
+
+        form.append(label, input, open, close);
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          openRobotControl(record, input.value);
+        });
+        close.addEventListener("click", () => closeRobotControl());
+
+        item.append(join, form);
         return item;
       }),
     );
@@ -347,6 +483,11 @@
       leaveTunnel();
       setStatus("That recording stopped.");
       telemetry?.event("live_tunnel.ended", { tunnelId: ended, status: "ended" });
+    }
+
+    if (robotOpenId && !live.some((record) => record.id === robotOpenId)) {
+      clearRobotControl();
+      renderList();
     }
   }
 
@@ -463,6 +604,7 @@
     if (!user) {
       stopListening();
       await leaveTunnel();
+      clearRobotControl();
       tunnels = [];
       renderList();
       setStatus("");
