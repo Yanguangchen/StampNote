@@ -315,9 +315,19 @@ function createHarness(options = {}) {
   };
 }
 
+test("opening robotic control starts the camera without a tap", async () => {
+  const harness = createHarness({ camera: true });
+  await settle();
+
+  assert.equal(harness.elements["robotic-toggle"].dataset.running, "true");
+  assert.equal(harness.elements["robotic-toggle"].getAttribute("aria-pressed"), "true");
+  assert.equal(harness.elements["robotic-frame"].hidden, false);
+  assert.ok(harness.elements["robotic-video"].srcObject);
+  assert.match(harness.elements["robotic-status"].textContent, /Streaming video/);
+});
+
 test("starting the camera fills the page and does not load computer vision", async () => {
   const harness = createHarness({ camera: true });
-  await harness.elements["robotic-toggle"].dispatch("click");
   await settle();
 
   assert.equal(harness.telemetry.configuration.surface, "robotic-control");
@@ -343,7 +353,6 @@ test("starting the camera fills the page and does not load computer vision", asy
 
 test("an unsupported or denied camera fails observably", async () => {
   const missing = createHarness({ camera: false });
-  await missing.elements["robotic-toggle"].dispatch("click");
   await settle();
   assert.match(missing.elements["robotic-status"].textContent, /cannot open a live camera/i);
   assert.ok(
@@ -356,7 +365,6 @@ test("an unsupported or denied camera fails observably", async () => {
     camera: true,
     cameraError: Object.assign(new Error("denied"), { name: "NotAllowedError" }),
   });
-  await denied.elements["robotic-toggle"].dispatch("click");
   await settle();
   assert.match(denied.elements["robotic-status"].textContent, /permission was denied/i);
   assert.equal(denied.elements["robotic-frame"].hidden, true);
@@ -364,6 +372,7 @@ test("an unsupported or denied camera fails observably", async () => {
 
 test("the lens switch remembers the robotic-control camera and swaps a live stream", async () => {
   const harness = createHarness({ camera: true, cloud: true });
+  await settle();
   assert.equal(harness.elements["camera-facing-name"].textContent, "Back");
   assert.equal(harness.elements["camera-facing-toggle"].dataset.facing, "environment");
 
@@ -373,7 +382,6 @@ test("the lens switch remembers the robotic-control camera and swaps a live stre
   assert.equal(harness.storedFacing(), "user");
   assert.ok(harness.events.some((event) => event.name === "capture.camera.facing"));
 
-  await harness.elements["robotic-toggle"].dispatch("click");
   await settle();
   harness.auth({ email: "owner@example.com", uid: "owner-1" });
   await settle();
@@ -390,9 +398,6 @@ test("a signed-in stream publishes Live tunnel as Robotic control", async () => 
   harness.auth({ email: "owner@example.com", uid: "owner-1" });
   await settle();
 
-  await harness.elements["robotic-toggle"].dispatch("click");
-  await settle();
-
   const published = harness.cloudCalls.liveTunnels.find((entry) => entry.type === "publish");
   assert.ok(published);
   assert.equal(published.session.location, "Robotic control");
@@ -406,7 +411,6 @@ test("a signed-in stream publishes Live tunnel as Robotic control", async () => 
 
 test("signing in after the stream is already running starts the live tunnel", async () => {
   const harness = createHarness({ camera: true, cloud: true });
-  await harness.elements["robotic-toggle"].dispatch("click");
   await settle();
   assert.equal(harness.cloudCalls.liveTunnels.length, 0);
 
