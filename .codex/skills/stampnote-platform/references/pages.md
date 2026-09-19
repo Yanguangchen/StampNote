@@ -131,15 +131,16 @@ Keep the tab visible. A backgrounded tab suspends the camera.
 
 ## Robotic control (`robotic-control.html`)
 
-Pure live camera for robot controls. Do not start it unless the user asked to stream this page.
+Pure live camera for robot controls, plus a small IP field that opens the robot's own web UI. Do not start the camera unless the user asked to stream this page.
 
-1. `#robotic-auth` — sign in so Live tunnel can share the camera. The stream still starts unsigned-in.
-2. `#robotic-toggle` — Start camera (`aria-pressed` becomes true when running). No MediaPipe, attendance, or auto capture.
-3. `#camera-loader` may show while the camera connects.
-4. `#camera-facing-toggle` — `data-facing` `environment` (back) or `user` (front); `#camera-facing-name` is the lens in use.
-5. `#robotic-video` fills the page.
+1. `#robot-ip` — type the robot IP (optional port or path). Submit `#robot-ip-form` or press Enter. `#robot-control-frame` opens that address in an iframe. `#robot-control-close` hides it. A stored IP may fill the field; do not open it unless the user entered or confirmed an address.
+2. `#robotic-auth` — sign in so Live tunnel can share the camera. The stream still starts unsigned-in.
+3. `#robotic-toggle` — Start camera (`aria-pressed` becomes true when running). No MediaPipe, attendance, or auto capture.
+4. `#camera-loader` may show while the camera connects.
+5. `#camera-facing-toggle` — `data-facing` `environment` (back) or `user` (front); `#camera-facing-name` is the lens in use.
+6. `#robotic-video` fills the page when the camera is live.
 
-Keep the tab visible. A backgrounded tab suspends the camera.
+Keep the tab visible. A backgrounded tab suspends the camera. Do not log the robot IP in telemetry.
 
 ## Worker photos (`worker-photos.html`)
 
