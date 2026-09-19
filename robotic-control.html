@@ -60,9 +60,42 @@
     <main class="stage" aria-labelledby="robotic-title">
       <h1 id="robotic-title" class="visually-hidden">Robotic control</h1>
 
+      <form class="robot-ip" id="robot-ip-form" autocomplete="off">
+        <label class="visually-hidden" for="robot-ip">Robot IP address</label>
+        <input
+          id="robot-ip"
+          name="robot-ip"
+          type="text"
+          inputmode="decimal"
+          enterkeyhint="go"
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          maxlength="128"
+          placeholder="Robot IP address"
+        />
+        <button class="robot-ip-open" id="robot-ip-open" type="submit">Open</button>
+      </form>
+
       <div class="monitor" id="robotic-frame" hidden>
         <video id="robotic-video" playsinline muted autoplay></video>
       </div>
+
+      <section class="robot-control" id="robot-control" hidden>
+        <header class="robot-control-bar">
+          <p class="robot-control-host" id="robot-control-host"></p>
+          <button class="robot-control-close" id="robot-control-close" type="button">
+            Close
+          </button>
+        </header>
+        <iframe
+          id="robot-control-frame"
+          title="Robot control"
+          sandbox="allow-scripts allow-forms allow-same-origin"
+          referrerpolicy="no-referrer"
+        ></iframe>
+      </section>
 
       <section
         class="camera-loader"

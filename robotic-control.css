@@ -1,6 +1,6 @@
-/* Robotic control is a camera page and nothing else: the live picture is the
-   screen. There is no MediaPipe overlay, attendance card, or filmstrip, so the
-   chrome stays a thin overlay on top of the stream. */
+/* Robotic control is a camera page plus a small robot-IP chip. The live
+   picture still fills the screen until a robot address opens an iframe.
+   There is no MediaPipe overlay, attendance card, or filmstrip. */
 :root {
   color-scheme: dark;
   --ink: #e8efe9;
@@ -133,6 +133,141 @@ button {
   height: 100%;
   object-fit: cover;
   background: #000;
+}
+
+.robot-ip {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 12px);
+  right: calc(env(safe-area-inset-right, 0px) + 12px);
+  z-index: 39;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: min(calc(100% - 72px), 248px);
+  padding: 4px 4px 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  background: rgba(21, 29, 26, 0.92);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
+}
+
+.robot-ip input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.01em;
+}
+
+.robot-ip input::placeholder {
+  color: var(--muted);
+}
+
+.robot-ip input:focus {
+  outline: none;
+}
+
+.robot-ip-open {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #072016;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.robot-ip-open:hover {
+  filter: brightness(1.06);
+}
+
+.robot-control {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #050807;
+}
+
+.robot-control-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(8, 14, 12, 0.92);
+}
+
+.robot-control-host {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.robot-control-close {
+  flex: 0 0 auto;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.robot-control iframe {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+  background: #fff;
+}
+
+body[data-robot="open"][data-stage="live"] .monitor {
+  right: auto;
+  width: 42%;
+}
+
+body[data-robot="open"][data-stage="live"] .robot-control {
+  left: 42%;
+}
+
+body[data-robot="open"] .stream {
+  translate: 0 0;
+}
+
+@media (orientation: portrait) {
+  body[data-robot="open"][data-stage="live"] .monitor {
+    right: 0;
+    bottom: 52%;
+    width: auto;
+  }
+
+  body[data-robot="open"][data-stage="live"] .robot-control {
+    top: 48%;
+    left: 0;
+  }
 }
 
 .camera-loader {
@@ -517,6 +652,19 @@ button {
 
   .stage-status {
     bottom: calc(var(--bar) + 8px);
+  }
+
+  .robot-ip {
+    width: min(calc(100% - 64px), 228px);
+    padding: 3px 3px 3px 8px;
+  }
+
+  body[data-robot="open"][data-stage="live"] .monitor {
+    width: 36%;
+  }
+
+  body[data-robot="open"][data-stage="live"] .robot-control {
+    left: 36%;
   }
 }
 

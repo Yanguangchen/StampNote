@@ -89,7 +89,7 @@ Shared chrome: `#sidebar-toggle` opens `#app-sidebar`. Groups are **Worker works
 | Coordinate entry | [/agent-coordinates](https://stampnote-omega.vercel.app/agent-coordinates) | Agent search, filters, batch JSON, truck X/Y | Truck X/Y |
 | Metrics | [/metrics](https://stampnote-omega.vercel.app/metrics) | 7/30/90-day attendance, flags, sessions | No |
 | Recording | [/](https://stampnote-omega.vercel.app/) | Camera watch, attendance scan, auto capture | Photos, attendance |
-| Robotic control | [/robotic-control](https://stampnote-omega.vercel.app/robotic-control) | Pure live camera for robot teleoperation; no MediaPipe | Live tunnel share |
+| Robotic control | [/robotic-control](https://stampnote-omega.vercel.app/robotic-control) | Pure live camera plus a robot IP field that opens the robot control iframe; no MediaPipe | Live tunnel share |
 | Worker photos | [/worker-photos](https://stampnote-omega.vercel.app/worker-photos) | Take/pick stamped photos without the watch | Photos |
 | Worker onboarding | [/onboarding](https://stampnote-omega.vercel.app/onboarding) | Enroll/replace/delete face templates | Worker roster |
 
@@ -188,7 +188,7 @@ Leave chat only for the matching job:
 | Confirm map against OSM | Geographic Surveillence "Compare on map" | Inline AI map is schematic, not Leaflet/OSM |
 | Enroll or delete a worker | Worker onboarding | Roster writes |
 | Start the camera / take attendance | Recording | Live capture |
-| Stream a camera for robot controls | Robotic control | Pure video; no attendance or MediaPipe |
+| Stream a camera for robot controls | Robotic control | Pure video plus robot IP iframe; no attendance or MediaPipe |
 | Watch a live recording | Live tunnel | Real-time camera; no call accept/reject |
 | Stamp photos without the watch | Worker photos | Capture path |
 | Delete a location/day/session | Photos & attendance rail (user must confirm) | Destructive; never do this unless explicitly asked |
@@ -519,15 +519,16 @@ Keep the tab visible. A backgrounded tab suspends the camera.
 
 URL: [https://stampnote-omega.vercel.app/robotic-control](https://stampnote-omega.vercel.app/robotic-control)
 
-Pure live camera for robot controls. Do not start it unless the user asked to stream this page.
+Pure live camera for robot controls, plus a small IP field that opens the robot's own web UI. Do not start the camera unless the user asked to stream this page.
 
-1. `#robotic-auth` — sign in with Google/Gmail so Live tunnel can share the camera. The stream still starts unsigned-in.
-2. `#robotic-toggle` — Start camera (`aria-pressed` becomes true when running). There is no MediaPipe overlay, attendance taking, or auto capture.
-3. `#camera-loader` may show while the camera connects.
-4. `#camera-facing-toggle` — `data-facing` `environment` (back) or `user` (front); `#camera-facing-name` is the lens in use.
-5. `#robotic-video` fills the page. `#robotic-status` reports stream/sign-in state. `#live-voice-notice` appears when an administrator voice message plays.
+1. `#robot-ip` — type the robot IP (optional port or path). Submit `#robot-ip-form` or press Enter. `#robot-control-frame` opens that address in an iframe. `#robot-control-close` hides it. A stored IP may fill the field; do not open it unless the user entered or confirmed an address.
+2. `#robotic-auth` — sign in with Google/Gmail so Live tunnel can share the camera. The stream still starts unsigned-in.
+3. `#robotic-toggle` — Start camera (`aria-pressed` becomes true when running). There is no MediaPipe overlay, attendance taking, or auto capture.
+4. `#camera-loader` may show while the camera connects.
+5. `#camera-facing-toggle` — `data-facing` `environment` (back) or `user` (front); `#camera-facing-name` is the lens in use.
+6. `#robotic-video` fills the page when the camera is live. `#robotic-status` reports stream/sign-in/robot-control state. `#live-voice-notice` appears when an administrator voice message plays.
 
-Keep the tab visible. A backgrounded tab suspends the camera.
+Keep the tab visible. A backgrounded tab suspends the camera. Do not log the robot IP in telemetry.
 
 ### Worker photos
 
