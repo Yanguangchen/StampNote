@@ -168,9 +168,11 @@
   }
 
   function setRobotOpen(open) {
-    if (!document.body?.dataset) return;
-    if (open) document.body.dataset.robot = "open";
-    else delete document.body.dataset.robot;
+    if (document.body?.dataset) {
+      if (open) document.body.dataset.robot = "open";
+      else delete document.body.dataset.robot;
+    }
+    if (robotControlClose) robotControlClose.hidden = !open;
   }
 
   function readStoredRobotIp() {

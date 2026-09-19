@@ -76,6 +76,9 @@
           placeholder="Robot IP address"
         />
         <button class="robot-ip-open" id="robot-ip-open" type="submit">Open</button>
+        <button class="robot-ip-close" id="robot-control-close" type="button" hidden>
+          Close
+        </button>
       </form>
 
       <div class="monitor" id="robotic-frame" hidden>
@@ -85,9 +88,6 @@
       <section class="robot-control" id="robot-control" hidden>
         <header class="robot-control-bar">
           <p class="robot-control-host" id="robot-control-host"></p>
-          <button class="robot-control-close" id="robot-control-close" type="button">
-            Close
-          </button>
         </header>
         <iframe
           id="robot-control-frame"

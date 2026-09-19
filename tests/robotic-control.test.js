@@ -32,6 +32,7 @@ test("robotic control is a dedicated full-page camera without MediaPipe", () => 
   assert.match(html, /id="robot-ip"/);
   assert.match(html, /placeholder="Robot IP address"/);
   assert.match(html, /id="robot-control-frame"/);
+  assert.match(html, /id="robot-control-close"/);
   assert.match(html, /sandbox="allow-scripts allow-forms allow-same-origin"/);
   assert.match(html, /<link rel="stylesheet" href="sidebar\.css" \/>/);
   assert.match(html, /<script src="sidebar\.js" defer><\/script>/);
@@ -135,6 +136,7 @@ function createHarness(options = {}) {
   elements["camera-loader"].hidden = true;
   elements["live-voice-notice"].hidden = true;
   elements["robot-control"].hidden = true;
+  elements["robot-control-close"].hidden = true;
   elements["robotic-auth"].hint = new FakeElement("span");
   elements["robotic-auth"].signInIcon = new FakeElement("svg");
   elements["robotic-auth"].signOutIcon = new FakeElement("svg");
@@ -484,6 +486,7 @@ test("entering a robot IP opens a sandboxed iframe and remembers the address", a
   await settle();
 
   assert.equal(harness.elements["robot-control"].hidden, false);
+  assert.equal(harness.elements["robot-control-close"].hidden, false);
   assert.equal(harness.elements["robot-control-frame"].src, "http://192.168.1.50:8080/");
   assert.equal(harness.elements["robot-control-host"].textContent, "192.168.1.50:8080");
   assert.equal(harness.body.dataset.robot, "open");
@@ -498,6 +501,7 @@ test("entering a robot IP opens a sandboxed iframe and remembers the address", a
   await harness.elements["robot-control-close"].dispatch("click");
   await settle();
   assert.equal(harness.elements["robot-control"].hidden, true);
+  assert.equal(harness.elements["robot-control-close"].hidden, true);
   assert.equal(harness.elements["robot-control-frame"].src, "");
   assert.equal(harness.body.dataset.robot, undefined);
   assert.match(harness.elements["robotic-status"].textContent, /Robot control closed/);
