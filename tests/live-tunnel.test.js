@@ -795,6 +795,7 @@ function createPageHarness(options = {}) {
   );
   const cloudCalls = { signIn: 0, joined: [] };
   let authCallback;
+  let tunnelsCallback;
   const liveRecords = options.tunnels || [
     {
       id: "live-1",
@@ -818,6 +819,7 @@ function createPageHarness(options = {}) {
       return () => {};
     },
     subscribeLiveTunnels(onChange) {
+      tunnelsCallback = onChange;
       queueMicrotask(() => onChange(liveRecords));
       return () => {};
     },
@@ -939,6 +941,9 @@ function createPageHarness(options = {}) {
     async auth(user, error = null) {
       return authCallback?.(user, error);
     },
+    emitTunnels(records) {
+      return tunnelsCallback?.(records);
+    },
     cloudCalls,
     elements,
     storedRobotIps() {
@@ -983,6 +988,10 @@ test("signing in lists live recordings and tunnels in without an accept step", a
 
   assert.equal(sessionRobotInput(harness).placeholder, "Robot IP address");
   assert.equal(harness.elements["live-tunnel-robot-ip"].placeholder, "Robot IP address");
+  assert.equal(harness.cloudCalls.joined.length, 1);
+  assert.equal(harness.cloudCalls.joined[0].tunnelId, "live-1");
+  assert.equal(harness.elements["live-tunnel-leave"].hidden, false);
+
   await sessionJoin(harness).dispatch("click");
   await settle();
 
@@ -1188,4 +1197,105 @@ test("the live recordings menu hides as an icon and opens over the split", async
   await settle();
   assert.equal(harness.elements["live-tunnel-rail"].dataset.open, "false");
   assert.equal(harness.cloudCalls.joined.length, 1);
+});
+
+test("signing in auto-joins a Robotic control session on the live tunnel", async () => {
+  const harness = createPageHarness({
+    tunnels: [
+      {
+        id: "field-1",
+        ownerId: "owner-1",
+        ownerEmail: "field@example.com",
+        location: "10 Marina Bay",
+        sessionLabel: "Morning",
+        status: "live",
+        lastSeenAtMs: Date.now(),
+        startedAtMs: Date.now() - 60_000,
+      },
+      {
+        id: "robot-1",
+        ownerId: "owner-2",
+        ownerEmail: "robot@example.com",
+        location: "Robotic control",
+        sessionLabel: "Robotic control",
+        status: "live",
+        lastSeenAtMs: Date.now(),
+        startedAtMs: Date.now() - 10_000,
+      },
+    ],
+  });
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+
+  assert.equal(harness.cloudCalls.joined.length, 1);
+  assert.equal(harness.cloudCalls.joined[0].tunnelId, "robot-1");
+  assert.match(harness.elements["live-tunnel-caption"].textContent, /Robotic control/);
+  assert.equal(harness.elements["live-tunnel-leave"].hidden, false);
+});
+
+test("Leave keeps the live tunnel idle until the operator picks a session", async () => {
+  const harness = createPageHarness({
+    tunnels: [
+      {
+        id: "robot-1",
+        ownerId: "owner-2",
+        ownerEmail: "robot@example.com",
+        location: "Robotic control",
+        sessionLabel: "Robotic control",
+        status: "live",
+        lastSeenAtMs: Date.now(),
+        startedAtMs: Date.now() - 10_000,
+      },
+    ],
+  });
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  assert.equal(harness.cloudCalls.joined.length, 1);
+
+  await harness.elements["live-tunnel-leave"].dispatch("click");
+  await settle();
+  harness.emitTunnels([
+    {
+      id: "robot-1",
+      ownerId: "owner-2",
+      ownerEmail: "robot@example.com",
+      location: "Robotic control",
+      sessionLabel: "Robotic control",
+      status: "live",
+      lastSeenAtMs: Date.now(),
+      startedAtMs: Date.now() - 10_000,
+    },
+  ]);
+  await settle();
+  assert.equal(harness.cloudCalls.joined.length, 1);
+  assert.match(
+    harness.elements["live-tunnel-placeholder"].textContent,
+    /Choose a live recording/i,
+  );
+});
+
+test("a stage robot IP draft survives a live-list refresh", async () => {
+  const harness = createPageHarness({
+    storedRobotIps: { "live-1": "10.0.0.9" },
+  });
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  assert.equal(harness.elements["live-tunnel-robot-ip"].value, "10.0.0.9");
+
+  harness.elements["live-tunnel-robot-ip"].value = "192.168.1.50";
+  harness.emitTunnels([
+    {
+      id: "live-1",
+      ownerId: "owner-1",
+      ownerEmail: "field@example.com",
+      location: "10 Marina Bay",
+      sessionLabel: "Morning",
+      status: "live",
+      lastSeenAtMs: Date.now(),
+      startedAtMs: Date.now() - 60_000,
+    },
+  ]);
+  await settle();
+  assert.equal(harness.elements["live-tunnel-robot-ip"].value, "192.168.1.50");
+  assert.equal(harness.elements["live-tunnel-robot-frame"].src, "");
 });

@@ -77,9 +77,9 @@ Allowed hashes: `attendance-panel`, `photos-panel`, `session-facts`, `session-tr
 Watch a camera that is recording right now. The recording device does not accept or reject the tunnel.
 
 1. `#live-tunnel-sign-in` if the gate is shown.
-2. `#live-tunnel-menu` opens the recordings rail. Click `.live-tunnel-join` on a `.live-tunnel-item`.
+2. After sign-in the page auto-joins a live **Robotic control** session if one exists, otherwise the first live recording. `#live-tunnel-menu` opens the recordings rail. Click `.live-tunnel-join` on a `.live-tunnel-item` to switch.
 3. Landscape is 50/50: `#live-tunnel-robot` and `#live-tunnel-stage`. Submit `#live-tunnel-robot-ip-form` or a session card IP to open `#live-tunnel-robot-frame`. Do not auto-open a stored IP. Do not log the IP in telemetry.
-4. `#live-tunnel-video` is the live picture when the camera call opens. `#live-tunnel-picture` is the updating still path when this network cannot complete that call. `#live-tunnel-leave` disconnects.
+4. `#live-tunnel-video` is the live picture when the camera call opens. `#live-tunnel-picture` is the updating still path when this network cannot complete that call. `#live-tunnel-leave` disconnects and does not auto-rejoin.
 5. `#live-tunnel-voice-record` sends a voice message that plays on the recording device. There is no accept/reject step. Voice still sends when the camera call cannot open.
 
 Deep link: `live-tunnel.html?tunnel={tunnelId}`.
@@ -132,10 +132,10 @@ Keep the tab visible. A backgrounded tab suspends the camera.
 
 ## Robotic control (`robotic-control.html`)
 
-Pure live camera for robot controls. Do not start it unless the user asked to stream this page.
+Pure live camera for robot controls. Opening this page starts the camera and publishes Live tunnel when signed in.
 
 1. `#robotic-auth` — sign in so Live tunnel can share the camera. The stream still starts unsigned-in.
-2. `#robotic-toggle` — Start camera (`aria-pressed` becomes true when running). No MediaPipe, attendance, or auto capture.
+2. The camera starts on page open. `#robotic-toggle` stops or restarts it (`aria-pressed` is true while running). No MediaPipe, attendance, or auto capture.
 3. `#camera-loader` may show while the camera connects.
 4. `#camera-facing-toggle` — `data-facing` `environment` (back) or `user` (front); `#camera-facing-name` is the lens in use.
 5. `#robotic-video` fills the page.

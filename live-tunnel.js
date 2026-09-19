@@ -51,6 +51,9 @@
   let signedInUser = null;
   let tunnels = [];
   let selectedId = "";
+  let joiningId = "";
+  let autoSelect = true;
+  let stageRobotSessionId = "";
   let pendingId = readRequestedTunnelId();
   let unsubscribeTunnels = null;
   let viewer = null;
@@ -153,12 +156,20 @@
     return drafts;
   }
 
+  function isRoboticRecord(record) {
+    return /robotic control/i.test(`${record?.location || ""} ${record?.sessionLabel || ""}`);
+  }
+
+  function preferredLiveTunnel(live) {
+    return live.find(isRoboticRecord) || live[0] || null;
+  }
+
   function currentRobotRecord() {
     const live = liveTunnel?.liveTunnels?.(tunnels) || [];
     return (
       live.find((record) => record.id === selectedId) ||
       live.find((record) => record.id === robotOpenId) ||
-      live[0] ||
+      preferredLiveTunnel(live) ||
       { id: "stage" }
     );
   }
@@ -174,9 +185,14 @@
     const record = currentRobotRecord();
     const typed = drafts.get(record.id);
     const stageDraft = drafts.get("__stage");
-    robotIp.value =
-      typed ??
-      (stageDraft ? stageDraft : readStoredRobotIp(record.id));
+    if (typeof stageDraft === "string" && stageRobotSessionId === record.id) {
+      robotIp.value = stageDraft;
+    } else {
+      robotIp.value =
+        typed ??
+        (stageDraft ? stageDraft : readStoredRobotIp(record.id));
+      stageRobotSessionId = record.id;
+    }
     if (robotIpOpen) robotIpOpen.hidden = Boolean(robotOpenId);
     if (robotIpClose) robotIpClose.hidden = !robotOpenId;
   }
@@ -364,9 +380,13 @@
   async function tunnelInto(record) {
     if (!record?.id || !liveTunnel?.createViewer || !cloud) return;
     if (selectedId === record.id && viewer) return;
+    if (joiningId === record.id) return;
 
+    autoSelect = true;
+    joiningId = record.id;
     await leaveTunnel();
     selectedId = record.id;
+    joiningId = record.id;
     viewerState = "connecting";
     if (placeholder) placeholder.textContent = "Opening the live camera…";
     if (caption) caption.textContent = describeTunnel(record);
@@ -425,6 +445,8 @@
         },
         { immediate: true, dedupeMs: 60000 },
       );
+    } finally {
+      if (joiningId === record.id) joiningId = "";
     }
     renderList();
   }
@@ -527,6 +549,7 @@
       const requested = live.find((record) => record.id === pendingId);
       if (requested) {
         pendingId = "";
+        autoSelect = true;
         tunnelInto(requested);
         return;
       }
@@ -542,6 +565,11 @@
     if (robotOpenId && !live.some((record) => record.id === robotOpenId)) {
       clearRobotControl();
       renderList();
+    }
+
+    if (autoSelect && !selectedId && !joiningId) {
+      const next = preferredLiveTunnel(live);
+      if (next) tunnelInto(next);
     }
   }
 
@@ -649,7 +677,10 @@
   });
   voiceCancel?.addEventListener("click", () => cancelVoiceRecord());
   signOutButton?.addEventListener("click", () => cloud.signOut());
-  leaveButton?.addEventListener("click", () => leaveTunnel());
+  leaveButton?.addEventListener("click", () => {
+    autoSelect = false;
+    leaveTunnel();
+  });
 
   if (!cloud || !liveTunnel) {
     setStatus("The live tunnel dependencies are unavailable. Reload the page.", "error");
@@ -672,6 +703,8 @@
     telemetry?.event("cloud.auth.state", { status: user ? "signed_in" : "signed_out" });
     if (!user) {
       stopListening();
+      autoSelect = true;
+      joiningId = "";
       await leaveTunnel();
       clearRobotControl();
       tunnels = [];
