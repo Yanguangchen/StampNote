@@ -641,7 +641,8 @@ button {
   font-size: 13px;
 }
 
-.live-tunnel-voice-record[aria-pressed="true"] {
+.live-tunnel-voice-record[aria-pressed="true"],
+.live-tunnel-talk[aria-pressed="true"] {
   background: var(--danger);
   color: var(--on-ink);
 }

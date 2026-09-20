@@ -241,7 +241,16 @@ button {
   line-height: 1.55;
 }
 
-.live-voice-notice {
+#robotic-incoming-audio {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.live-voice-notice,
+.live-audio-notice {
   position: absolute;
   top: calc(env(safe-area-inset-top, 0px) + 14px);
   left: 50%;
@@ -253,6 +262,14 @@ button {
   background: rgba(8, 14, 12, 0.72);
   color: #fff;
   font-size: 11px;
+}
+
+.live-audio-notice {
+  top: calc(env(safe-area-inset-top, 0px) + 44px);
+}
+
+.tool[data-live="true"] {
+  color: var(--accent);
 }
 
 .status {
@@ -465,7 +482,7 @@ button {
   }
 }
 
-.toolbar > .toolbar-group:first-child > .tool > .hint {
+.toolbar > .toolbar-group:first-child > #camera-facing-toggle > .hint {
   position: static;
   bottom: auto;
   left: auto;

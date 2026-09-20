@@ -28,6 +28,7 @@
   const badge = document.querySelector("#live-tunnel-badge");
   const leaveButton = document.querySelector("#live-tunnel-leave");
   const voicePanel = document.querySelector("#live-tunnel-voice");
+  const talkButton = document.querySelector("#live-tunnel-talk");
   const voiceRecord = document.querySelector("#live-tunnel-voice-record");
   const voiceCancel = document.querySelector("#live-tunnel-voice-cancel");
   const voiceStatus = document.querySelector("#live-tunnel-voice-status");
@@ -59,6 +60,7 @@
   let viewer = null;
   let viewerState = "idle";
   let voiceBusy = false;
+  let talkBusy = false;
   let robotOpenId = "";
   const voiceRecorder = liveTunnel?.createVoiceRecorder?.({
     MediaRecorder: globalScope.MediaRecorder,
@@ -266,18 +268,30 @@
     if (voiceStatus) voiceStatus.textContent = message || "";
   }
 
+  function setTalking(talking) {
+    if (talkButton) {
+      talkButton.setAttribute("aria-pressed", String(Boolean(talking)));
+      talkButton.textContent = talking ? "Stop talk" : "Talk";
+      talkButton.disabled = Boolean(talkBusy) || (voiceBusy && !talking);
+    }
+    if (voiceRecord && talking) voiceRecord.disabled = true;
+    if (voiceRecord && !talking && !voiceBusy) voiceRecord.disabled = false;
+  }
+
   function setVoiceRecording(recording) {
     if (voiceRecord) {
       voiceRecord.setAttribute("aria-pressed", String(Boolean(recording)));
       voiceRecord.textContent = recording ? "Send voice message" : "Voice message";
-      voiceRecord.disabled = voiceBusy && !recording;
+      voiceRecord.disabled = (voiceBusy && !recording) || Boolean(viewer?.isTalking?.());
     }
     if (voiceCancel) voiceCancel.hidden = !recording;
+    if (talkButton && !viewer?.isTalking?.()) talkButton.disabled = Boolean(recording) || talkBusy;
   }
 
   function setVoiceAvailable(available) {
     if (voicePanel) voicePanel.hidden = !available;
     if (!available) {
+      setTalking(false);
       setVoiceRecording(false);
       setVoiceStatus("");
     }
@@ -351,7 +365,9 @@
     viewerState = "idle";
     selectedId = "";
     voiceBusy = false;
+    talkBusy = false;
     await voiceRecorder?.cancel?.();
+    active?.stopTalk?.();
     setVoiceAvailable(false);
     await active?.disconnect?.();
     attachStream(null);
@@ -385,6 +401,9 @@
     viewer = liveTunnel.createViewer({
       cloud,
       RTCPeerConnection: globalScope.RTCPeerConnection,
+      getUserMedia: globalScope.navigator?.mediaDevices?.getUserMedia?.bind(
+        globalScope.navigator.mediaDevices,
+      ),
       onStream: attachStream,
       onPicture: attachPicture,
       onState(state, detail) {
@@ -642,6 +661,46 @@
     }
   });
 
+  async function startTalk() {
+    if (!viewer?.startTalk || talkBusy || voiceBusy || viewerState !== "live") return;
+    if (voiceRecorder?.isRecording?.()) return;
+    talkBusy = true;
+    try {
+      await viewer.startTalk();
+      setTalking(true);
+      setVoiceStatus("Talking — live audio is going to the camera.");
+      telemetry?.event("live_tunnel.talk.started", { status: "success" });
+    } catch (error) {
+      viewer?.stopTalk?.();
+      setTalking(false);
+      setVoiceStatus(
+        error?.name === "NotAllowedError"
+          ? "Microphone permission was denied."
+          : describeError(error),
+      );
+      telemetry?.event(
+        "live_tunnel.talk.failed",
+        {
+          errorCode: telemetry?.safeErrorCode?.(error, "talk_failed") || "talk_failed",
+          status: "failed",
+        },
+        { immediate: true, dedupeMs: 60000 },
+      );
+    } finally {
+      talkBusy = false;
+      if (talkButton) {
+        talkButton.disabled = Boolean(voiceRecorder?.isRecording?.()) || voiceBusy;
+      }
+    }
+  }
+
+  function stopTalk() {
+    viewer?.stopTalk?.();
+    setTalking(false);
+    if (viewerState === "live") setVoiceStatus("Talk stopped.");
+    telemetry?.event("live_tunnel.talk.stopped", { status: "success" });
+  }
+
   async function sendRecordedVoice() {
     if (!viewer?.sendVoiceMessage || voiceBusy) return;
     voiceBusy = true;
@@ -674,7 +733,7 @@
   }
 
   async function startVoiceRecord() {
-    if (!voiceRecorder || voiceBusy || viewerState !== "live") return;
+    if (!voiceRecorder || voiceBusy || viewerState !== "live" || viewer?.isTalking?.()) return;
     try {
       await voiceRecorder.start();
       setVoiceRecording(true);
@@ -700,6 +759,13 @@
     else startVoiceRecord();
   });
   voiceCancel?.addEventListener("click", () => cancelVoiceRecord());
+  talkButton?.addEventListener("click", () => {
+    if (viewer?.isTalking?.()) {
+      stopTalk();
+      return;
+    }
+    return startTalk();
+  });
   signOutButton?.addEventListener("click", () => cloud.signOut());
   leaveButton?.addEventListener("click", () => {
     autoSelect = false;

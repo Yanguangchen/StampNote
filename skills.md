@@ -89,7 +89,7 @@ Shared chrome: `#sidebar-toggle` opens `#app-sidebar`. Groups are **Worker works
 | Coordinate entry | [/agent-coordinates](https://stampnote-omega.vercel.app/agent-coordinates) | Agent search, filters, batch JSON, truck X/Y | Truck X/Y |
 | Metrics | [/metrics](https://stampnote-omega.vercel.app/metrics) | 7/30/90-day attendance, flags, sessions | No |
 | Recording | [/](https://stampnote-omega.vercel.app/) | Camera watch, attendance scan, auto capture | Photos, attendance |
-| Robotic control | [/robotic-control](https://stampnote-omega.vercel.app/robotic-control) | Pure live camera for robot teleoperation; starts on page open; no MediaPipe | Live tunnel share |
+| Robotic control | [/robotic-control](https://stampnote-omega.vercel.app/robotic-control) | Pure live camera for robot teleoperation; starts on page open; live audio in from Live tunnel | Live tunnel share |
 | Worker photos | [/worker-photos](https://stampnote-omega.vercel.app/worker-photos) | Take/pick stamped photos without the watch | Photos |
 | Worker onboarding | [/onboarding](https://stampnote-omega.vercel.app/onboarding) | Enroll/replace/delete face templates | Worker roster |
 
@@ -189,7 +189,7 @@ Leave chat only for the matching job:
 | Enroll or delete a worker | Worker onboarding | Roster writes |
 | Start the camera / take attendance | Recording | Live capture |
 | Stream a camera for robot controls | Robotic control | Pure video; no attendance or MediaPipe |
-| Watch a live recording | Live tunnel | Real-time camera; no call accept/reject |
+| Watch a live recording | Live tunnel | Real-time camera; Talk streams audio to Robotic control; no call accept/reject |
 | Stamp photos without the watch | Worker photos | Capture path |
 | Delete a location/day/session | Photos & attendance rail (user must confirm) | Destructive; never do this unless explicitly asked |
 | Read raw JSON for many sessions | `#agent-data` or `#coordinate-data` after filtering | Chat returns at most 24 facts |
@@ -476,7 +476,7 @@ Use when the user asked to watch a recording that is happening now. Do not start
 2. After sign-in the page auto-joins the first live recording. `#live-tunnel-menu` opens `#live-tunnel-rail`. Each `.live-tunnel-item` has **Watch** and a robot IP field. Opening a robot IP also starts that session's camera on the right. There is no accept/reject step on the recording device.
 3. In landscape the workspace is a 50/50 split: `#live-tunnel-robot` (robot control) and `#live-tunnel-stage` (live stream). In portrait the robot IP bar stays on screen and the iframe is hidden until Open, then the robot pane takes most of the height so the control page can fill the phone. Type a **Robot IP address** in `#live-tunnel-robot-ip` or in a session card field, then Open. `#live-tunnel-robot-frame` loads that robot's web UI inside `#live-tunnel-robot-viewport`. Close hides the page but keeps the landscape split. Do not auto-open a stored IP. Do not log the robot IP in telemetry.
 4. `#live-tunnel-video` shows the live picture when the two devices can open a camera call. `#live-tunnel-picture` shows updating stills when this network cannot complete that call. `#live-tunnel-leave` disconnects.
-5. `#live-tunnel-voice-record` records a voice message and sends it to the recording device. The recording plays it without an accept/reject step. `#live-tunnel-voice-cancel` discards a take. Voice still sends when the camera call cannot open.
+5. `#live-tunnel-talk` streams live microphone audio into Robotic control (`StampNoteRoboticControl.streamIncomingAudio`). `#live-tunnel-voice-record` still sends a clip that plays without an accept/reject step. `#live-tunnel-voice-cancel` discards a take. Voice clips still send when the camera call cannot open; live talk needs the WebRTC path.
 6. `#live-tunnel-empty` means nobody is recording right now.
 
 Deep link: `live-tunnel.html?tunnel={tunnelId}`.
@@ -526,7 +526,7 @@ Pure live camera for robot controls. Opening this page starts the camera and pub
 2. The camera starts on page open. `#robotic-toggle` stops or restarts it (`aria-pressed` is true while running). There is no MediaPipe overlay, attendance taking, or auto capture.
 3. `#camera-loader` may show while the camera connects.
 4. `#camera-facing-toggle` — `data-facing` `environment` (back) or `user` (front); `#camera-facing-name` is the lens in use.
-5. `#robotic-video` fills the page. `#robotic-status` reports stream/sign-in state. `#live-voice-notice` appears when an administrator voice message plays.
+5. `#robotic-video` fills the page. `#robotic-status` reports stream/sign-in state. `#live-voice-notice` appears when an administrator voice message plays. `#robotic-incoming-audio` plays live talk audio from Live tunnel; `#robotic-speaker-toggle` unmutes it if the browser blocks autoplay. `#robotic-incoming-audio-notice` shows while that live audio is attached.
 
 Keep the tab visible. A backgrounded tab suspends the camera.
 
