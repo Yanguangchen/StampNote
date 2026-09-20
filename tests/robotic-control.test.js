@@ -24,6 +24,11 @@ test("robotic control is a dedicated full-page camera without MediaPipe", () => 
   assert.match(html, /<title>Robotic control · StampNote<\/title>/);
   assert.match(html, /<h1 id="robotic-title" class="visually-hidden">Robotic control<\/h1>/);
   assert.match(html, /id="robotic-video"[^>]*playsinline[^>]*muted[^>]*autoplay/);
+  assert.match(html, /id="robotic-incoming-audio"[^>]*autoplay[^>]*playsinline/);
+  assert.match(html, /id="robotic-speaker-toggle"/);
+  assert.match(html, /id="robotic-incoming-audio-notice"/);
+  assert.match(source, /function streamIncomingAudio\(/);
+  assert.match(source, /StampNoteRoboticControl/);
   assert.match(html, /id="robotic-toggle"/);
   assert.match(html, /id="robotic-auth"/);
   assert.match(html, /id="camera-facing-toggle"/);
@@ -52,6 +57,7 @@ class FakeElement {
     this.disabled = false;
     this.textContent = "";
     this.srcObject = null;
+    this.muted = false;
     this.listeners = new Map();
     this.hint = null;
     this.signInIcon = null;
@@ -89,6 +95,8 @@ class FakeElement {
   play() {
     return Promise.resolve();
   }
+
+  pause() {}
 }
 
 function createHarness(options = {}) {
@@ -105,6 +113,10 @@ function createHarness(options = {}) {
     "camera-loader-detail",
     "robotic-auth",
     "live-voice-notice",
+    "robotic-incoming-audio",
+    "robotic-incoming-audio-notice",
+    "robotic-speaker-toggle",
+    "robotic-speaker-name",
     "theme-toggle",
     "theme-toggle-icon",
     "theme-toggle-label",
@@ -113,6 +125,7 @@ function createHarness(options = {}) {
   elements["robotic-frame"].hidden = true;
   elements["camera-loader"].hidden = true;
   elements["live-voice-notice"].hidden = true;
+  elements["robotic-incoming-audio-notice"].hidden = true;
   elements["robotic-auth"].hint = new FakeElement("span");
   elements["robotic-auth"].signInIcon = new FakeElement("svg");
   elements["robotic-auth"].signOutIcon = new FakeElement("svg");
@@ -130,6 +143,7 @@ function createHarness(options = {}) {
   let authCallback;
   const cloudCalls = { liveTunnels: [], signIn: 0, signOut: 0 };
   const publishers = [];
+  const publisherOptions = [];
   let cameraConstraints;
   let nextCameraError = null;
   let trackStopped = false;
@@ -160,7 +174,8 @@ function createHarness(options = {}) {
     : null;
 
   const liveTunnel = {
-    createPublisher() {
+    createPublisher(options) {
+      publisherOptions.push(options);
       const publisher = {
         async publish(session) {
           cloudCalls.liveTunnels.push({ type: "publish", session });
@@ -300,6 +315,8 @@ function createHarness(options = {}) {
     },
     cameraConstraints: () => cameraConstraints,
     cloudCalls,
+    publisherOptions,
+    api: context.StampNoteRoboticControl,
     documentListeners,
     elements,
     events,
@@ -417,4 +434,37 @@ test("signing in after the stream is already running starts the live tunnel", as
   harness.auth({ email: "owner@example.com", uid: "owner-1" });
   await settle();
   assert.ok(harness.cloudCalls.liveTunnels.some((entry) => entry.type === "publish"));
+});
+
+test("streamIncomingAudio plays live talk audio on robotic control", async () => {
+  const harness = createHarness({ camera: true, cloud: true });
+  harness.auth({ email: "owner@example.com", uid: "owner-1" });
+  await settle();
+
+  assert.equal(typeof harness.api.streamIncomingAudio, "function");
+  assert.equal(typeof harness.publisherOptions[0].onAudioStream, "function");
+  assert.equal(harness.publisherOptions[0].onAudioStream, harness.api.streamIncomingAudio);
+
+  const track = { kind: "audio", id: "talk" };
+  const media = { getAudioTracks: () => [track], getTracks: () => [track] };
+  assert.equal(harness.api.streamIncomingAudio(media), media);
+  assert.equal(harness.elements["robotic-incoming-audio"].srcObject, media);
+  assert.equal(harness.elements["robotic-incoming-audio"].muted, false);
+  assert.equal(harness.elements["robotic-incoming-audio-notice"].hidden, false);
+  assert.match(harness.elements["robotic-incoming-audio-notice"].textContent, /Live audio in/);
+  assert.equal(harness.elements["robotic-speaker-toggle"].dataset.live, "true");
+  assert.equal(harness.elements["robotic-speaker-toggle"].getAttribute("aria-pressed"), "true");
+  assert.ok(harness.events.some((event) => event.name === "live_tunnel.audio.in"));
+
+  await harness.elements["robotic-speaker-toggle"].dispatch("click");
+  assert.equal(harness.elements["robotic-incoming-audio"].muted, true);
+  assert.equal(harness.elements["robotic-speaker-toggle"].getAttribute("aria-pressed"), "false");
+
+  await harness.elements["robotic-speaker-toggle"].dispatch("click");
+  assert.equal(harness.elements["robotic-incoming-audio"].muted, false);
+
+  assert.equal(harness.api.streamIncomingAudio(null), null);
+  assert.equal(harness.elements["robotic-incoming-audio"].srcObject, null);
+  assert.equal(harness.elements["robotic-incoming-audio-notice"].hidden, true);
+  assert.equal(harness.elements["robotic-speaker-toggle"].dataset.live, "false");
 });

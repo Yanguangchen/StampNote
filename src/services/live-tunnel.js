@@ -341,6 +341,7 @@
     const getStream = options.getStream || (() => options.stream || null);
     const getSession = options.getSession || (() => ({}));
     const onVoiceMessage = options.onVoiceMessage || (() => {});
+    const onAudioStream = options.onAudioStream || (() => {});
     let tunnel = null;
     let heartbeatTimer = null;
     let pictureTimer = null;
@@ -371,17 +372,49 @@
       const videoTrack = media?.getVideoTracks?.()[0] || null;
       const audioTrack = media?.getAudioTracks?.()[0] || null;
       peers.forEach((peer) => {
-        (peer.pc.getSenders?.() || []).forEach((sender) => {
+        const senders = peer.pc.getSenders?.() || [];
+        let hasVideoSender = senders.some((sender) => sender.track?.kind === "video");
+        senders.forEach((sender) => {
           const kind = sender.track?.kind;
-          if (kind === "video" || (!kind && sender.track == null && videoTrack)) {
+          if (kind === "video") {
             sender.replaceTrack?.(videoTrack);
+            return;
           }
-          if (kind === "audio") sender.replaceTrack?.(audioTrack);
+          // Incoming talk-back uses a recvonly audio m-line. Do not attach the
+          // camera to that sender, and only reuse a blank sender for video once.
+          if (kind === "audio") {
+            if (audioTrack) sender.replaceTrack?.(audioTrack);
+            return;
+          }
+          if (!kind && sender.track == null && videoTrack && !hasVideoSender) {
+            sender.replaceTrack?.(videoTrack);
+            hasVideoSender = true;
+          }
         });
         if (videoTrack && !(peer.pc.getSenders?.() || []).some((sender) => sender.track?.kind === "video")) {
           addLocalTracks(peer.pc);
         }
       });
+    }
+
+    function attachIncomingAudio(event) {
+      const track = event?.track;
+      if (track?.kind !== "audio") return;
+      const media =
+        event.streams?.[0] ||
+        (typeof globalScope.MediaStream === "function" ? new globalScope.MediaStream([track]) : null);
+      onAudioStream(media);
+      if (!track) return;
+      track.onended = () => onAudioStream(null);
+      track.onmute = () => {
+        const tracks = media?.getAudioTracks?.() || [track];
+        if (tracks.every((item) => item.muted || item.readyState === "ended")) {
+          onAudioStream(null);
+        }
+      };
+      track.onunmute = () => {
+        if (media) onAudioStream(media);
+      };
     }
 
     async function answerViewer(viewer) {
@@ -395,6 +428,7 @@
       const peer = { pc, seenIce, iceRecords: [], unsubscribeIce: null };
       peers.set(viewer.id, peer);
       addLocalTracks(pc);
+      pc.ontrack = attachIncomingAudio;
       pc.ondatachannel = (event) => {
         if (event?.channel?.label !== VOICE_CHANNEL) return;
         peer.voiceChannel = event.channel;
@@ -454,6 +488,7 @@
         /* A closed peer is the goal. */
       }
       peers.delete(viewerId);
+      if (!peers.size) onAudioStream(null);
     }
 
     function startHeartbeat() {
@@ -587,6 +622,7 @@
       unsubscribeVoices = null;
       seenVoices.clear();
       [...peers.keys()].forEach(closePeer);
+      onAudioStream(null);
       const ending = tunnel;
       tunnel = null;
       if (ending?.id && cloud?.endLiveTunnel) {
@@ -614,6 +650,8 @@
     const onState = options.onState || (() => {});
     let pc = null;
     let voiceChannel = null;
+    let audioSender = null;
+    let talkStream = null;
     let tunnel = null;
     let viewer = null;
     let unsubscribeViewer = null;
@@ -680,6 +718,8 @@
       voiceChannel = pc.createDataChannel(VOICE_CHANNEL, { ordered: true });
       bindVoiceChannel(voiceChannel, options.onVoiceMessage);
       pc.addTransceiver("video", { direction: "recvonly" });
+      const audioTransceiver = pc.addTransceiver("audio", { direction: "sendonly" });
+      audioSender = audioTransceiver?.sender || null;
       pc.ontrack = (event) => {
         const media = event.streams?.[0] || (event.track && new globalScope.MediaStream([event.track]));
         const track = event.track;
@@ -787,6 +827,57 @@
       });
     }
 
+    function outgoingAudioSender() {
+      if (audioSender?.replaceTrack) return audioSender;
+      return (pc?.getSenders?.() || []).find((sender) => sender.track?.kind === "audio") || null;
+    }
+
+    async function setOutgoingAudio(track) {
+      const sender = outgoingAudioSender();
+      if (!sender?.replaceTrack) return false;
+      await sender.replaceTrack(track || null);
+      return true;
+    }
+
+    function stopTalk() {
+      const media = talkStream;
+      talkStream = null;
+      media?.getTracks?.().forEach((track) => {
+        try {
+          track.stop();
+        } catch {
+          /* Stopping is the goal. */
+        }
+      });
+      if (pc) setOutgoingAudio(null);
+    }
+
+    async function startTalk(input = {}) {
+      if (closed || !pc) {
+        throw new Error("Join a live recording before talking.");
+      }
+      if (talkStream) return talkStream;
+      const getUserMedia =
+        input.getUserMedia ||
+        options.getUserMedia ||
+        globalScope.navigator?.mediaDevices?.getUserMedia?.bind(globalScope.navigator.mediaDevices);
+      if (typeof getUserMedia !== "function") {
+        throw new Error("This browser cannot open a microphone.");
+      }
+      talkStream = await getUserMedia({ audio: true, video: false });
+      const track = talkStream?.getAudioTracks?.()[0] || null;
+      if (!track) {
+        stopTalk();
+        throw new Error("The microphone did not provide audio.");
+      }
+      const attached = await setOutgoingAudio(track);
+      if (!attached) {
+        stopTalk();
+        throw new Error("This live recording cannot carry talk audio.");
+      }
+      return talkStream;
+    }
+
     async function sendVoiceMessage(blob, extra = {}) {
       if (closed || !tunnel) {
         throw new Error("Join a live recording before sending a voice message.");
@@ -811,6 +902,8 @@
 
     async function disconnect() {
       closed = true;
+      stopTalk();
+      audioSender = null;
       clearFailTimer();
       unsubscribeViewer?.();
       unsubscribeIce?.();
@@ -852,6 +945,10 @@
       connect,
       disconnect,
       sendVoiceMessage,
+      startTalk,
+      stopTalk,
+      setOutgoingAudio,
+      isTalking: () => Boolean(talkStream),
       getTunnel: () => tunnel,
     });
   }

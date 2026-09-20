@@ -80,7 +80,7 @@ Watch a camera that is recording right now. The recording device does not accept
 2. After sign-in the page auto-joins the first live recording. `#live-tunnel-menu` opens the recordings rail. Each `.live-tunnel-item` has **Watch** (`.live-tunnel-watch`) and a robot IP field. Opening a robot IP also joins that camera.
 3. Landscape is 50/50: `#live-tunnel-robot` and `#live-tunnel-stage`. Portrait stacks them: the robot IP bar stays, the iframe is hidden until Open, then the robot pane takes most of the height. Submit `#live-tunnel-robot-ip-form` or a session card IP to open `#live-tunnel-robot-frame` inside `#live-tunnel-robot-viewport`. Do not auto-open a stored IP. Do not log the IP in telemetry.
 4. `#live-tunnel-video` is the live picture when the camera call opens. `#live-tunnel-picture` is the updating still path when this network cannot complete that call. `#live-tunnel-leave` disconnects.
-5. `#live-tunnel-voice-record` sends a voice message that plays on the recording device. There is no accept/reject step. Voice still sends when the camera call cannot open.
+5. `#live-tunnel-talk` streams live microphone audio into Robotic control. `#live-tunnel-voice-record` sends a voice-message clip that plays on the recording device. There is no accept/reject step. Clips still send when the camera call cannot open; live talk needs the WebRTC path.
 
 Deep link: `live-tunnel.html?tunnel={tunnelId}`.
 
@@ -138,7 +138,7 @@ Pure live camera for robot controls. Opening this page starts the camera and pub
 2. The camera starts on page open. `#robotic-toggle` stops or restarts it (`aria-pressed` is true while running). No MediaPipe, attendance, or auto capture.
 3. `#camera-loader` may show while the camera connects.
 4. `#camera-facing-toggle` — `data-facing` `environment` (back) or `user` (front); `#camera-facing-name` is the lens in use.
-5. `#robotic-video` fills the page.
+5. `#robotic-video` fills the page. `StampNoteRoboticControl.streamIncomingAudio` plays live talk from Live tunnel on `#robotic-incoming-audio`. `#robotic-speaker-toggle` unmutes it if autoplay is blocked. `#robotic-incoming-audio-notice` shows while that audio is attached. `#live-voice-notice` appears when an administrator voice-message clip plays.
 
 Keep the tab visible. A backgrounded tab suspends the camera.
 

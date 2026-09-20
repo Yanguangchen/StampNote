@@ -1,6 +1,6 @@
 /* Robotic control is the dedicated live camera for robot teleoperation: the
-   picture, a lens switch, and a Live tunnel share. Attendance, MediaPipe, and
-   auto-capture stay on Recording. */
+   picture, a lens switch, live incoming audio, and a Live tunnel share.
+   Attendance, MediaPipe, and auto-capture stay on Recording. */
 (function initializeRoboticControl(globalScope) {
   "use strict";
 
@@ -27,6 +27,10 @@
   const cameraLoaderDetail = document.querySelector("#camera-loader-detail");
   const roboticAuth = document.querySelector("#robotic-auth");
   const liveVoiceNotice = document.querySelector("#live-voice-notice");
+  const incomingAudio = document.querySelector("#robotic-incoming-audio");
+  const incomingAudioNotice = document.querySelector("#robotic-incoming-audio-notice");
+  const speakerToggle = document.querySelector("#robotic-speaker-toggle");
+  const speakerName = document.querySelector("#robotic-speaker-name");
   const themeToggle = document.querySelector("#theme-toggle");
   const themeToggleIcon = document.querySelector("#theme-toggle-icon");
   const themeToggleLabel = document.querySelector("#theme-toggle-label");
@@ -45,6 +49,7 @@
   let signedInUser = null;
   let livePublisher = null;
   let incomingVoiceUrl = "";
+  let incomingAudioStream = null;
   let wakeLock = null;
 
   function environment() {
@@ -228,6 +233,63 @@
     audio.play?.()?.catch?.(() => stopIncomingVoice());
   }
 
+  function setSpeakerState(live, muted = false) {
+    if (!speakerToggle) return;
+    speakerToggle.dataset.live = String(Boolean(live));
+    speakerToggle.setAttribute("aria-pressed", String(Boolean(live) && !muted));
+    speakerToggle.setAttribute(
+      "aria-label",
+      !live
+        ? "Speaker — no live audio yet"
+        : muted
+          ? "Unmute incoming audio"
+          : "Mute incoming audio",
+    );
+    if (speakerName) speakerName.textContent = !live ? "Speaker" : muted ? "Muted" : "Live";
+  }
+
+  function playIncomingAudioElement() {
+    if (!incomingAudio?.srcObject) return;
+    incomingAudio.muted = false;
+    incomingAudio.play?.()?.catch?.(() => {
+      incomingAudio.muted = true;
+      setSpeakerState(true, true);
+      if (incomingAudioNotice) {
+        incomingAudioNotice.hidden = false;
+        incomingAudioNotice.textContent = "Tap speaker to hear live audio";
+      }
+    });
+  }
+
+  function streamIncomingAudio(media) {
+    const tracks = media?.getAudioTracks?.() || media?.getTracks?.() || [];
+    incomingAudioStream = tracks.length ? media : null;
+    if (!incomingAudio) return incomingAudioStream;
+    incomingAudio.srcObject = incomingAudioStream;
+    if (!incomingAudioStream) {
+      try {
+        incomingAudio.pause?.();
+      } catch {
+        /* Clearing is the goal. */
+      }
+      incomingAudio.muted = true;
+      if (incomingAudioNotice) {
+        incomingAudioNotice.hidden = true;
+        incomingAudioNotice.textContent = "Live audio in";
+      }
+      setSpeakerState(false);
+      return null;
+    }
+    if (incomingAudioNotice) {
+      incomingAudioNotice.hidden = false;
+      incomingAudioNotice.textContent = "Live audio in";
+    }
+    setSpeakerState(true, false);
+    playIncomingAudioElement();
+    telemetry?.event("live_tunnel.audio.in", { status: "success" });
+    return incomingAudioStream;
+  }
+
   async function startLiveTunnel() {
     if (!cloud || !signedInUser || !liveTunnelApi?.createPublisher || livePublisher) return;
     livePublisher = liveTunnelApi.createPublisher({
@@ -235,6 +297,7 @@
       getStream: () => stream,
       getPreview: () => video,
       onVoiceMessage: playIncomingVoiceMessage,
+      onAudioStream: streamIncomingAudio,
     });
     try {
       await livePublisher.publish(sessionForLiveTunnel());
@@ -250,6 +313,7 @@
     const publisher = livePublisher;
     livePublisher = null;
     stopIncomingVoice();
+    streamIncomingAudio(null);
     publisher?.close?.();
   }
 
@@ -472,6 +536,21 @@
 
   cameraFacingToggle?.addEventListener("click", switchCameraFacing);
 
+  speakerToggle?.addEventListener("click", () => {
+    if (!incomingAudio?.srcObject) {
+      setStatus("No live audio is coming in yet.");
+      return;
+    }
+    if (incomingAudio.muted) {
+      incomingAudio.muted = false;
+      playIncomingAudioElement();
+      setSpeakerState(true, false);
+      return;
+    }
+    incomingAudio.muted = true;
+    setSpeakerState(true, true);
+  });
+
   roboticAuth?.addEventListener("click", async () => {
     if (!cloud) return;
     roboticAuth.disabled = true;
@@ -513,9 +592,20 @@
     if (streamActive) stopStream();
   });
 
+  document.addEventListener("pointerdown", () => {
+    if (incomingAudio?.srcObject && incomingAudio.muted !== true) {
+      playIncomingAudioElement();
+    }
+  });
+
   setToggleLabel(false);
   setCameraFacingLabel();
+  setSpeakerState(false);
   applyTheme(readStoredTheme());
   initializeCloud();
   startStream();
+
+  globalScope.StampNoteRoboticControl = Object.freeze({
+    streamIncomingAudio,
+  });
 })(typeof globalThis !== "undefined" ? globalThis : this);

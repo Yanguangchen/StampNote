@@ -383,6 +383,7 @@ test("telemetry accepts payloads from all application surfaces and validates new
     "onboarding",
     "worker-photos",
     "robotic-control",
+    "live-tunnel",
   ];
 
   for (const surface of surfaces) {
@@ -466,8 +467,8 @@ test("browser and server telemetry catalogs stay aligned", async () => {
   const client = require("../observability.js");
   const { telemetryRequestSchema } = await import("../api/_telemetry.mjs");
 
-  assert.ok(client.SURFACES.includes("agent-coordinates"));
-  assert.ok(client.EVENT_NAMES.includes("onboarding.scan.completed"));
+  assert.ok(client.SURFACES.includes("live-tunnel"));
+  assert.ok(client.EVENT_NAMES.includes("live_tunnel.audio.in"));
 
   for (const surface of client.SURFACES) {
     const parsed = telemetryRequestSchema.safeParse({

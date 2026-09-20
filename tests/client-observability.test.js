@@ -298,6 +298,7 @@ test("browser telemetry supports all application surfaces and domain events", as
     "onboarding",
     "worker-photos",
     "robotic-control",
+    "live-tunnel",
   ];
 
   for (const surface of surfaces) {
@@ -350,6 +351,9 @@ test("browser telemetry supports all application surfaces and domain events", as
     ["worker.photo.send_failed", { errorCode: "send_failed" }],
     ["worker.photo.sync.completed", { uploadedCount: 2, failedCount: 0 }],
     ["worker.photo.sync.failed", { errorCode: "sync_failed" }],
+    ["live_tunnel.joined", { status: "success" }],
+    ["live_tunnel.talk.started", { status: "success" }],
+    ["live_tunnel.audio.in", { status: "success" }],
   ];
 
   for (const [name, fields] of newEvents) {

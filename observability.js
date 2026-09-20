@@ -11,6 +11,7 @@
     "onboarding",
     "worker-photos",
     "robotic-control",
+    "live-tunnel",
   ]);
   const SURFACES = new Set(SURFACE_LIST);
   const EVENT_NAME_LIST = Object.freeze([
@@ -96,6 +97,15 @@
     "worker.photo.send_failed",
     "worker.photo.sync.completed",
     "worker.photo.sync.failed",
+    "live_tunnel.joined",
+    "live_tunnel.join_failed",
+    "live_tunnel.ended",
+    "live_tunnel.voice.sent",
+    "live_tunnel.voice.failed",
+    "live_tunnel.talk.started",
+    "live_tunnel.talk.stopped",
+    "live_tunnel.talk.failed",
+    "live_tunnel.audio.in",
   ]);
   const EVENT_NAMES = new Set(EVENT_NAME_LIST);
   const NUMBER_FIELDS = new Set([
@@ -124,7 +134,7 @@
   ]);
   const BOOLEAN_FIELDS = new Set(["automatic", "online", "persistent", "flagged", "vision"]);
   const ENUM_FIELDS = Object.freeze({
-    status: new Set(["ok", "degraded", "success", "failed", "signed_in", "signed_out"]),
+    status: new Set(["ok", "degraded", "success", "failed", "signed_in", "signed_out", "ended"]),
     trigger: new Set(["schedule", "gesture", "worker"]),
     facing: new Set(["environment", "user"]),
     theme: new Set(["light", "dark", "system"]),

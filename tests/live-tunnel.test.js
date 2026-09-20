@@ -239,9 +239,21 @@ class FakePeerConnection {
     return this.senders;
   }
 
+  getTransceivers() {
+    return this.transceivers;
+  }
+
   addTransceiver(kind, init) {
-    this.transceivers.push({ kind, init });
-    return { kind, init };
+    const sender = {
+      track: null,
+      async replaceTrack(next) {
+        this.track = next;
+      },
+    };
+    this.senders.push(sender);
+    const transceiver = { kind, init, sender };
+    this.transceivers.push(transceiver);
+    return transceiver;
   }
 
   async createOffer() {
@@ -332,11 +344,78 @@ test("the publisher answers every viewer automatically, with no call prompt", as
   assert.equal(answered.remoteDescription.sdp, "offer-sdp");
   assert.equal(offered.remoteDescription.sdp, "answer-for-offer-sdp");
   assert.equal(answered.senders[0].track.id, "cam");
-  assert.deepEqual(offered.transceivers[0], { kind: "video", init: { direction: "recvonly" } });
+  assert.equal(offered.transceivers[0].kind, "video");
+  assert.deepEqual(offered.transceivers[0].init, { direction: "recvonly" });
+  assert.equal(offered.transceivers[1].kind, "audio");
+  assert.deepEqual(offered.transceivers[1].init, { direction: "sendonly" });
 
   await publisher.close();
   assert.deepEqual(cloud.ended, ["live-1"]);
   assert.equal(answered.connectionState, "closed");
+});
+
+test("the viewer can stream talk audio in to the robotic publisher", async () => {
+  pendingVoiceRemote = null;
+  const cloud = createMemoryCloud();
+  const incoming = [];
+  const stream = {
+    getTracks: () => [{ kind: "video", id: "cam" }],
+    getVideoTracks: () => [{ kind: "video", id: "cam" }],
+    getAudioTracks: () => [],
+  };
+  const peers = [];
+  const publisher = liveTunnel.createPublisher({
+    cloud,
+    getStream: () => stream,
+    RTCPeerConnection: class RecordingPeer extends FakePeerConnection {
+      constructor(config) {
+        super(config);
+        peers.push(this);
+      }
+    },
+    onAudioStream(media) {
+      incoming.push(media);
+    },
+  });
+  await publisher.publish({ tunnelId: "live-1", location: "10 Marina Bay" });
+
+  const micTrack = { kind: "audio", id: "mic", stop() { this.stopped = true; } };
+  const viewer = liveTunnel.createViewer({
+    cloud,
+    RTCPeerConnection: class AdminPeer extends FakePeerConnection {
+      constructor(config) {
+        super(config);
+        peers.push(this);
+      }
+    },
+    async getUserMedia() {
+      return {
+        getAudioTracks: () => [micTrack],
+        getTracks: () => [micTrack],
+      };
+    },
+  });
+  await viewer.connect({ id: "live-1", ownerId: "owner-1" });
+  await settle();
+
+  const offered = peers.find((peer) => peer.localDescription?.type === "offer");
+  const answered = peers.find((peer) => peer.localDescription?.type === "answer");
+  assert.equal(viewer.isTalking(), false);
+  await viewer.startTalk();
+  assert.equal(viewer.isTalking(), true);
+  assert.equal(offered.transceivers[1].sender.track, micTrack);
+
+  const talkStream = { id: "talk", getAudioTracks: () => [micTrack], getTracks: () => [micTrack] };
+  answered.ontrack({ track: micTrack, streams: [talkStream] });
+  assert.equal(incoming.at(-1), talkStream);
+
+  viewer.stopTalk();
+  assert.equal(viewer.isTalking(), false);
+  assert.equal(micTrack.stopped, true);
+  assert.equal(offered.transceivers[1].sender.track, null);
+
+  await publisher.close();
+  assert.equal(incoming.at(-1), null);
 });
 
 test("a voice message is encoded, sent on the open tunnel, and played without an accept step", async () => {
@@ -631,6 +710,8 @@ test("the page is a dedicated admin surface with no accept or reject controls", 
   assert.match(html, /without anyone accepting a call/);
   assert.match(html, /id="live-tunnel-voice-record"/);
   assert.match(html, /Voice message/);
+  assert.match(html, /id="live-tunnel-talk"/);
+  assert.match(html, />\s*Talk\s*</);
   assert.match(html, /id="live-tunnel-robot"/);
   assert.match(html, /id="live-tunnel-robot-frame"/);
   assert.match(html, /id="live-tunnel-robot-viewport"/);
@@ -777,6 +858,7 @@ function createPageHarness(options = {}) {
     "live-tunnel-badge",
     "live-tunnel-leave",
     "live-tunnel-voice",
+    "live-tunnel-talk",
     "live-tunnel-voice-record",
     "live-tunnel-voice-cancel",
     "live-tunnel-voice-status",
@@ -790,6 +872,7 @@ function createPageHarness(options = {}) {
   elements["live-tunnel-badge"].hidden = true;
   elements["live-tunnel-leave"].hidden = true;
   elements["live-tunnel-voice"].hidden = true;
+  elements["live-tunnel-talk"].textContent = "Talk";
   elements["live-tunnel-voice-cancel"].hidden = true;
   elements["live-tunnel-voice-record"].textContent = "Voice message";
   elements["live-tunnel-empty"].hidden = false;
@@ -926,9 +1009,13 @@ function createPageHarness(options = {}) {
     navigator: {
       mediaDevices: {
         async getUserMedia() {
+          const track = { kind: "audio", id: "mic", stop() {} };
           return {
             getTracks() {
-              return [{ stop() {} }];
+              return [track];
+            },
+            getAudioTracks() {
+              return [track];
             },
           };
         },
@@ -1079,6 +1166,28 @@ test("a black camera call keeps the stills instead of covering them", async () =
   await settle();
   assert.equal(harness.elements["live-tunnel-frame"].dataset.mode, "relay");
   assert.match(harness.elements["live-tunnel-picture"].src, /data:image\/jpeg;base64,abc123/);
+});
+
+test("a live tunnel can talk live audio into the robotic camera", async () => {
+  const harness = createPageHarness();
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  await sessionJoin(harness).dispatch("click");
+  await settle();
+
+  assert.equal(harness.elements["live-tunnel-voice"].hidden, false);
+  assert.equal(harness.elements["live-tunnel-talk"].textContent, "Talk");
+
+  await harness.elements["live-tunnel-talk"].dispatch("click");
+  await settle();
+  assert.equal(harness.elements["live-tunnel-talk"].getAttribute("aria-pressed"), "true");
+  assert.equal(harness.elements["live-tunnel-talk"].textContent, "Stop talk");
+  assert.match(harness.elements["live-tunnel-voice-status"].textContent, /Talking/);
+
+  await harness.elements["live-tunnel-talk"].dispatch("click");
+  await settle();
+  assert.equal(harness.elements["live-tunnel-talk"].getAttribute("aria-pressed"), "false");
+  assert.match(harness.elements["live-tunnel-voice-status"].textContent, /Talk stopped/);
 });
 
 test("a live tunnel can record and send a voice message without an accept step", async () => {

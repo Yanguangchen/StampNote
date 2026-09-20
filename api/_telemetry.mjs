@@ -103,6 +103,15 @@ const eventNames = [
   "worker.photo.send_failed",
   "worker.photo.sync.completed",
   "worker.photo.sync.failed",
+  "live_tunnel.joined",
+  "live_tunnel.join_failed",
+  "live_tunnel.ended",
+  "live_tunnel.voice.sent",
+  "live_tunnel.voice.failed",
+  "live_tunnel.talk.started",
+  "live_tunnel.talk.stopped",
+  "live_tunnel.talk.failed",
+  "live_tunnel.audio.in",
 ];
 
 const telemetryFieldsSchema = z
@@ -133,7 +142,7 @@ const telemetryFieldsSchema = z
     flagged: z.boolean().optional(),
     vision: z.boolean().optional(),
     status: z
-      .enum(["ok", "degraded", "success", "failed", "signed_in", "signed_out"])
+      .enum(["ok", "degraded", "success", "failed", "signed_in", "signed_out", "ended"])
       .optional(),
     trigger: z.enum(["schedule", "gesture", "worker"]).optional(),
     facing: z.enum(["environment", "user"]).optional(),
@@ -162,6 +171,7 @@ export const telemetryRequestSchema = z
       "onboarding",
       "worker-photos",
       "robotic-control",
+      "live-tunnel",
     ]),
     events: z
       .array(
