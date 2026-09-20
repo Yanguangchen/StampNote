@@ -517,4 +517,5 @@
   setCameraFacingLabel();
   applyTheme(readStoredTheme());
   initializeCloud();
+  startStream();
 })(typeof globalThis !== "undefined" ? globalThis : this);
