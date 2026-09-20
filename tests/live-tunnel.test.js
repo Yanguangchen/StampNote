@@ -1216,7 +1216,7 @@ test("the robot iframe is stretched to its pane instead of the 300 by 150 defaul
   );
   assert.match(
     css,
-    /@media \(orientation: portrait\)[\s\S]*\.live-tunnel-split\[data-robot-open="true"\]\s*\{[\s\S]*grid-template-rows:\s*minmax\(0,\s*1\.35fr\) minmax\(0,\s*0\.65fr\)/,
+    /@media \(orientation: portrait\)[\s\S]*\.live-tunnel-split\[data-robot-open="true"\]\s*\{[\s\S]*grid-template-rows:\s*minmax\(0,\s*1\.2fr\) minmax\(0,\s*0\.8fr\)/,
   );
   assert.match(source, /split\.dataset\.robotOpen/);
   assert.match(source, /setRobotOpen\(true\);\s*if \(robotControlFrame\) robotControlFrame\.src/);

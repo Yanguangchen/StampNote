@@ -662,7 +662,19 @@ button {
   }
 
   .live-tunnel-split[data-robot-open="true"] {
-    grid-template-rows: minmax(0, 1.35fr) minmax(0, 0.65fr);
+    grid-template-rows: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  }
+
+  .live-tunnel-split[data-robot-open="true"] .live-tunnel-stage-header {
+    padding: 6px 10px 0;
+  }
+
+  .live-tunnel-split[data-robot-open="true"] .live-tunnel-caption {
+    display: none;
+  }
+
+  .live-tunnel-split[data-robot-open="true"] .live-tunnel-voice {
+    padding: 6px 10px calc(env(safe-area-inset-bottom, 0px) + 6px);
   }
 }
 
@@ -678,6 +690,14 @@ button {
 
   .account-name {
     max-width: min(28vw, 140px);
+  }
+
+  .live-tunnel-robot-host {
+    display: none;
+  }
+
+  .live-tunnel-robot-bar {
+    flex-wrap: nowrap;
   }
 }
 
