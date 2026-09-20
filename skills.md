@@ -89,7 +89,7 @@ Shared chrome: `#sidebar-toggle` opens `#app-sidebar`. Groups are **Worker works
 | Coordinate entry | [/agent-coordinates](https://stampnote-omega.vercel.app/agent-coordinates) | Agent search, filters, batch JSON, truck X/Y | Truck X/Y |
 | Metrics | [/metrics](https://stampnote-omega.vercel.app/metrics) | 7/30/90-day attendance, flags, sessions | No |
 | Recording | [/](https://stampnote-omega.vercel.app/) | Camera watch, attendance scan, auto capture | Photos, attendance |
-| Robotic control | [/robotic-control](https://stampnote-omega.vercel.app/robotic-control) | Pure live camera for robot teleoperation; no MediaPipe | Live tunnel share |
+| Robotic control | [/robotic-control](https://stampnote-omega.vercel.app/robotic-control) | Pure live camera for robot teleoperation; starts on page open; no MediaPipe | Live tunnel share |
 | Worker photos | [/worker-photos](https://stampnote-omega.vercel.app/worker-photos) | Take/pick stamped photos without the watch | Photos |
 | Worker onboarding | [/onboarding](https://stampnote-omega.vercel.app/onboarding) | Enroll/replace/delete face templates | Worker roster |
 
@@ -520,10 +520,10 @@ Keep the tab visible. A backgrounded tab suspends the camera.
 
 URL: [https://stampnote-omega.vercel.app/robotic-control](https://stampnote-omega.vercel.app/robotic-control)
 
-Pure live camera for robot controls. Do not start it unless the user asked to stream this page.
+Pure live camera for robot controls. Opening this page starts the camera and publishes Live tunnel when signed in.
 
 1. `#robotic-auth` — sign in with Google/Gmail so Live tunnel can share the camera. The stream still starts unsigned-in.
-2. `#robotic-toggle` — Start camera (`aria-pressed` becomes true when running). There is no MediaPipe overlay, attendance taking, or auto capture.
+2. The camera starts on page open. `#robotic-toggle` stops or restarts it (`aria-pressed` is true while running). There is no MediaPipe overlay, attendance taking, or auto capture.
 3. `#camera-loader` may show while the camera connects.
 4. `#camera-facing-toggle` — `data-facing` `environment` (back) or `user` (front); `#camera-facing-name` is the lens in use.
 5. `#robotic-video` fills the page. `#robotic-status` reports stream/sign-in state. `#live-voice-notice` appears when an administrator voice message plays.
