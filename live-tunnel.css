@@ -103,7 +103,10 @@ button {
   align-items: center;
   gap: 10px;
   min-height: 52px;
-  padding: 8px 12px 8px 12px;
+  padding: calc(env(safe-area-inset-top, 0px) + 8px)
+    calc(env(safe-area-inset-right, 0px) + 12px)
+    8px
+    calc(env(safe-area-inset-left, 0px) + 12px);
   border-bottom: 1px solid var(--line);
   background: var(--surface);
 }
@@ -265,7 +268,7 @@ button {
   min-height: 0;
 }
 
-.live-tunnel-workspace[data-menu-open="true"] #live-tunnel-robot-frame {
+.live-tunnel-workspace[data-menu-open="true"] .live-tunnel-robot-viewport {
   pointer-events: none;
 }
 
@@ -312,6 +315,7 @@ button {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   background: var(--surface);
 }
 
@@ -588,10 +592,28 @@ button {
   display: none;
 }
 
-.live-tunnel-robot iframe {
+/* Phones (especially iOS) will not grow a flex iframe, so this box is the
+   flex child and the iframe is stretched to its edges. width/height 100% on
+   the iframe also replaces the HTML default of 300×150. */
+.live-tunnel-robot-viewport {
+  position: relative;
   flex: 1 1 auto;
-  width: 100%;
+  min-width: 0;
   min-height: 0;
+  width: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  background: var(--stage);
+}
+
+.live-tunnel-robot iframe {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
   border: 0;
   background: #111;
 }
@@ -608,7 +630,7 @@ button {
   flex-wrap: wrap;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px 10px;
+  padding: 8px 12px calc(env(safe-area-inset-bottom, 0px) + 10px);
 }
 
 .live-tunnel-voice-status {
@@ -627,11 +649,74 @@ button {
 @media (orientation: portrait) {
   .live-tunnel-split {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .live-tunnel-robot {
     border-right: 0;
     border-bottom: 1px solid var(--line);
+  }
+
+  .live-tunnel-robot:not([data-open="true"]) .live-tunnel-robot-viewport {
+    display: none;
+  }
+
+  .live-tunnel-split[data-robot-open="true"] {
+    grid-template-rows: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  }
+
+  .live-tunnel-split[data-robot-open="true"] .live-tunnel-stage-header {
+    padding: 6px 10px 0;
+  }
+
+  .live-tunnel-split[data-robot-open="true"] .live-tunnel-caption {
+    display: none;
+  }
+
+  .live-tunnel-split[data-robot-open="true"] .live-tunnel-voice {
+    padding: 6px 10px calc(env(safe-area-inset-bottom, 0px) + 6px);
+  }
+}
+
+@media (max-width: 720px) {
+  .live-tunnel-header .theme-toggle {
+    min-width: 40px;
+    padding: 0 11px;
+  }
+
+  .live-tunnel-header .theme-toggle-label {
+    display: none;
+  }
+
+  .account-name {
+    max-width: min(28vw, 140px);
+  }
+
+  .live-tunnel-robot-host {
+    display: none;
+  }
+
+  .live-tunnel-robot-bar {
+    flex-wrap: nowrap;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 560px) {
+  .live-tunnel-header {
+    min-height: 44px;
+    padding-top: calc(env(safe-area-inset-top, 0px) + 4px);
+    padding-bottom: 4px;
+  }
+
+  .live-tunnel-stage-header {
+    padding: 6px 10px 0;
+  }
+
+  .live-tunnel-caption {
+    padding: 4px 10px;
+  }
+
+  .live-tunnel-voice {
+    padding: 6px 10px calc(env(safe-area-inset-bottom, 0px) + 6px);
   }
 }

@@ -106,7 +106,7 @@
           <ul class="live-tunnel-list" id="live-tunnel-list"></ul>
         </section>
 
-        <div class="live-tunnel-split" id="live-tunnel-split">
+        <div class="live-tunnel-split" id="live-tunnel-split" data-robot-open="false">
           <section class="live-tunnel-robot" id="live-tunnel-robot" data-open="false" aria-label="Robot control">
             <header class="live-tunnel-robot-bar">
               <form class="live-tunnel-robot-ip" id="live-tunnel-robot-ip-form" autocomplete="off">
@@ -133,12 +133,18 @@
               </form>
               <p class="live-tunnel-robot-host" id="live-tunnel-robot-host"></p>
             </header>
-            <iframe
-              id="live-tunnel-robot-frame"
-              title="Robot control"
-              sandbox="allow-scripts allow-forms allow-same-origin"
-              referrerpolicy="no-referrer"
-            ></iframe>
+            <div class="live-tunnel-robot-viewport" id="live-tunnel-robot-viewport">
+              <iframe
+                id="live-tunnel-robot-frame"
+                title="Robot control"
+                width="100%"
+                height="100%"
+                sandbox="allow-scripts allow-forms allow-same-origin"
+                allow="fullscreen; autoplay; clipboard-write; accelerometer; gyroscope; magnetometer"
+                allowfullscreen
+                referrerpolicy="no-referrer"
+              ></iframe>
+            </div>
           </section>
 
           <section class="live-tunnel-stage" id="live-tunnel-stage" aria-labelledby="live-tunnel-stage-title">

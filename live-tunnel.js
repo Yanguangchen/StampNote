@@ -37,6 +37,7 @@
   const robotControl = document.querySelector("#live-tunnel-robot");
   const robotControlHost = document.querySelector("#live-tunnel-robot-host");
   const robotControlFrame = document.querySelector("#live-tunnel-robot-frame");
+  const split = document.querySelector("#live-tunnel-split");
   const robotIpForm = document.querySelector("#live-tunnel-robot-ip-form");
   const robotIp = document.querySelector("#live-tunnel-robot-ip");
   const robotIpOpen = document.querySelector("#live-tunnel-robot-ip-open");
@@ -185,9 +186,11 @@
   }
 
   function setRobotOpen(open) {
-    if (robotControl) robotControl.dataset.open = open ? "true" : "false";
-    if (robotIpOpen) robotIpOpen.hidden = Boolean(open);
-    if (robotIpClose) robotIpClose.hidden = !open;
+    const isOpen = Boolean(open);
+    if (robotControl) robotControl.dataset.open = isOpen ? "true" : "false";
+    if (split) split.dataset.robotOpen = isOpen ? "true" : "false";
+    if (robotIpOpen) robotIpOpen.hidden = isOpen;
+    if (robotIpClose) robotIpClose.hidden = !isOpen;
   }
 
   function clearRobotControl() {
@@ -221,8 +224,8 @@
     robotOpenId = record.id;
     if (robotIp) robotIp.value = String(raw || "").trim();
     if (robotControlHost) robotControlHost.textContent = parsed.host;
-    if (robotControlFrame) robotControlFrame.src = parsed.href;
     setRobotOpen(true);
+    if (robotControlFrame) robotControlFrame.src = parsed.href;
     setMenuOpen(false);
     const mixedContent =
       globalScope.isSecureContext !== false && String(parsed.href).startsWith("http:");

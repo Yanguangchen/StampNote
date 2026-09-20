@@ -633,14 +633,24 @@ test("the page is a dedicated admin surface with no accept or reject controls", 
   assert.match(html, /Voice message/);
   assert.match(html, /id="live-tunnel-robot"/);
   assert.match(html, /id="live-tunnel-robot-frame"/);
+  assert.match(html, /id="live-tunnel-robot-viewport"/);
   assert.match(html, /id="live-tunnel-menu"/);
   assert.match(html, /id="live-tunnel-chooser"/);
   assert.match(html, /id="live-tunnel-split"/);
   assert.match(html, /id="live-tunnel-robot-ip-form"/);
   assert.match(html, /sandbox="allow-scripts allow-forms allow-same-origin"/);
+  assert.match(html, /width="100%"/);
+  assert.match(html, /height="100%"/);
+  assert.match(html, /allowfullscreen/);
   assert.match(html, /src\/services\/robot-control-url\.js/);
   assert.match(css, /\.live-tunnel-robot-ip\s*\{/);
   assert.match(css, /\.live-tunnel-split\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*minmax\(0,\s*1fr\)/);
+  assert.match(css, /\.live-tunnel-robot-viewport\s*\{/);
+  assert.match(css, /\.live-tunnel-robot iframe\s*\{[^}]*position:\s*absolute/);
+  assert.match(css, /\.live-tunnel-robot iframe\s*\{[^}]*height:\s*100%/);
+  assert.match(css, /@media \(orientation: portrait\)[\s\S]*grid-template-rows:\s*auto minmax\(0,\s*1fr\)/);
+  assert.match(css, /@media \(orientation: portrait\)[\s\S]*\.live-tunnel-robot:not\(\[data-open="true"\]\) \.live-tunnel-robot-viewport/);
+  assert.match(css, /@media \(orientation: portrait\)[\s\S]*\[data-robot-open="true"\]/);
   assert.match(css, /\.live-tunnel-menu\s*\{/);
   assert.doesNotMatch(html, /accept call|reject call|incoming call/i);
   assert.match(html, /<header[^>]*data-sidebar-mount/);
@@ -750,6 +760,7 @@ function createPageHarness(options = {}) {
     "live-tunnel-empty",
     "live-tunnel-count",
     "live-tunnel-split",
+    "live-tunnel-robot-viewport",
     "live-tunnel-robot-ip-form",
     "live-tunnel-robot-ip",
     "live-tunnel-robot-ip-open",
@@ -787,6 +798,7 @@ function createPageHarness(options = {}) {
   elements["live-tunnel-rail"].dataset.open = "false";
   elements["live-tunnel-rail-scrim"].hidden = true;
   elements["live-tunnel-robot"].dataset.open = "false";
+  elements["live-tunnel-split"].dataset.robotOpen = "false";
   elements["live-tunnel-robot-close"].hidden = true;
   elements["live-tunnel-robot-ip"].placeholder = "Robot IP address";
   elements["live-tunnel-chooser"].hidden = true;
@@ -1144,6 +1156,7 @@ test("every live tunnel session has a robot IP field that opens an iframe", asyn
   await settle();
 
   assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "true");
+  assert.equal(harness.elements["live-tunnel-split"].dataset.robotOpen, "true");
   assert.equal(harness.elements["live-tunnel-robot-frame"].src, "http://192.168.1.50:8080/");
   assert.equal(harness.elements["live-tunnel-robot-host"].textContent, "192.168.1.50:8080");
   assert.equal(harness.storedRobotIps()["live-2"], "192.168.1.50:8080");
@@ -1157,6 +1170,7 @@ test("every live tunnel session has a robot IP field that opens an iframe", asyn
   await sessionRobotForm(harness, 1).querySelector(".live-tunnel-robot-ip-close").dispatch("click");
   await settle();
   assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "false");
+  assert.equal(harness.elements["live-tunnel-split"].dataset.robotOpen, "false");
   assert.equal(harness.elements["live-tunnel-robot-frame"].src, "");
   assert.match(harness.elements["live-tunnel-status"].textContent, /Robot control closed/);
 });
@@ -1180,8 +1194,32 @@ test("an invalid robot IP stays on the live tunnel without opening the iframe", 
   await sessionRobotForm(harness).dispatch("submit");
   await settle();
   assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "false");
+  assert.equal(harness.elements["live-tunnel-split"].dataset.robotOpen, "false");
   assert.equal(harness.elements["live-tunnel-robot-frame"].src, "");
   assert.match(harness.elements["live-tunnel-status"].textContent, /http or https/i);
+});
+
+test("the robot iframe is stretched to its pane instead of the 300 by 150 default", () => {
+  assert.match(html, /id="live-tunnel-robot-viewport"/);
+  assert.match(html, /<iframe[\s\S]*width="100%"[\s\S]*height="100%"/);
+  assert.match(
+    css,
+    /\.live-tunnel-robot-viewport\s*\{[^}]*position:\s*relative;[^}]*flex:\s*1 1 auto;[^}]*min-height:\s*0/,
+  );
+  assert.match(
+    css,
+    /\.live-tunnel-robot iframe\s*\{[^}]*position:\s*absolute;[^}]*inset:\s*0;[^}]*width:\s*100%;[^}]*height:\s*100%/,
+  );
+  assert.match(
+    css,
+    /@media \(orientation: portrait\)\s*\{[\s\S]*grid-template-rows:\s*auto minmax\(0,\s*1fr\)[\s\S]*\.live-tunnel-robot:not\(\[data-open="true"\]\) \.live-tunnel-robot-viewport\s*\{[\s\S]*display:\s*none/,
+  );
+  assert.match(
+    css,
+    /@media \(orientation: portrait\)[\s\S]*\.live-tunnel-split\[data-robot-open="true"\]\s*\{[\s\S]*grid-template-rows:\s*minmax\(0,\s*1\.2fr\) minmax\(0,\s*0\.8fr\)/,
+  );
+  assert.match(source, /split\.dataset\.robotOpen/);
+  assert.match(source, /setRobotOpen\(true\);\s*if \(robotControlFrame\) robotControlFrame\.src/);
 });
 
 test("the live recordings menu hides as an icon and opens over the split", async () => {
