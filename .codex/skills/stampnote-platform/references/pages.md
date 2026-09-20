@@ -132,10 +132,10 @@ Keep the tab visible. A backgrounded tab suspends the camera.
 
 ## Robotic control (`robotic-control.html`)
 
-Pure live camera for robot controls. Do not start it unless the user asked to stream this page.
+Pure live camera for robot controls. Opening this page starts the camera and publishes Live tunnel when signed in.
 
 1. `#robotic-auth` — sign in so Live tunnel can share the camera. The stream still starts unsigned-in.
-2. `#robotic-toggle` — Start camera (`aria-pressed` becomes true when running). No MediaPipe, attendance, or auto capture.
+2. The camera starts on page open. `#robotic-toggle` stops or restarts it (`aria-pressed` is true while running). No MediaPipe, attendance, or auto capture.
 3. `#camera-loader` may show while the camera connects.
 4. `#camera-facing-toggle` — `data-facing` `environment` (back) or `user` (front); `#camera-facing-name` is the lens in use.
 5. `#robotic-video` fills the page.
