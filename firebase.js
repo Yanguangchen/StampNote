@@ -1263,9 +1263,14 @@
       const id = requireTunnelId(tunnelId);
       return listen(async () => {
         const cloud = services || (await ready);
-        requireUser(cloud, "Sign in with Google before sharing a live recording.");
+        const user = requireUser(cloud, "Sign in with Google before sharing a live recording.");
+        // Rules are not filters: a publisher who is not an administrator may
+        // only list the viewers addressed to them, so the query must say so.
         return cloud.firestoreSdk.onSnapshot(
-          cloud.firestoreSdk.collection(cloud.db, "liveTunnels", id, "viewers"),
+          cloud.firestoreSdk.query(
+            cloud.firestoreSdk.collection(cloud.db, "liveTunnels", id, "viewers"),
+            cloud.firestoreSdk.where("publisherUid", "==", user.uid),
+          ),
           (snapshot) => onChange?.(snapshotRecords(snapshot)),
           (error) => onError?.(error),
         );
@@ -1294,14 +1299,18 @@
       }, onError);
     }
 
-    function subscribeTunnelIce(tunnelId, viewerId, onChange, onError) {
+    function subscribeTunnelIce(tunnelId, viewerId, onChange, onError, options = {}) {
       const id = requireTunnelId(tunnelId);
       const viewer = requireViewerId(viewerId);
       return listen(async () => {
         const cloud = services || (await ready);
-        requireUser(cloud, "Sign in with Google before sharing a live recording.");
+        const user = requireUser(cloud, "Sign in with Google before sharing a live recording.");
+        const publisherUid = String(options.publisherUid || user.uid);
         return cloud.firestoreSdk.onSnapshot(
-          cloud.firestoreSdk.collection(cloud.db, "liveTunnels", id, "viewers", viewer, "ice"),
+          cloud.firestoreSdk.query(
+            cloud.firestoreSdk.collection(cloud.db, "liveTunnels", id, "viewers", viewer, "ice"),
+            cloud.firestoreSdk.where("publisherUid", "==", publisherUid),
+          ),
           (snapshot) => onChange?.(snapshotRecords(snapshot)),
           (error) => onError?.(error),
         );
@@ -1473,9 +1482,12 @@
       const id = requireTunnelId(tunnelId);
       return listen(async () => {
         const cloud = services || (await ready);
-        requireUser(cloud, "Sign in with Google before sharing a live recording.");
+        const user = requireUser(cloud, "Sign in with Google before sharing a live recording.");
         return cloud.firestoreSdk.onSnapshot(
-          cloud.firestoreSdk.collection(cloud.db, "liveTunnels", id, "voices"),
+          cloud.firestoreSdk.query(
+            cloud.firestoreSdk.collection(cloud.db, "liveTunnels", id, "voices"),
+            cloud.firestoreSdk.where("publisherUid", "==", user.uid),
+          ),
           (snapshot) => onChange?.(snapshotRecords(snapshot)),
           (error) => onError?.(error),
         );

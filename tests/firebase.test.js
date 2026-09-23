@@ -1692,3 +1692,46 @@ test("field staff cannot watch live tunnels", async () => {
     (error) => error.code === "admin-required",
   );
 });
+
+test("a field recording listens only to viewers, ICE and voices addressed to it", async () => {
+  const fieldUser = {
+    uid: "worker-1",
+    email: "worker@example.com",
+    async getIdTokenResult() {
+      return { claims: { stampnoteRole: "worker" } };
+    },
+  };
+  const harness = createHarness({ user: fieldUser });
+  await harness.client.ready;
+
+  const stops = [
+    harness.client.subscribeTunnelViewers("live_worker-1_test", () => {}),
+    harness.client.subscribeTunnelIce("live_worker-1_test", "view-admin", () => {}),
+    harness.client.subscribeTunnelVoices("live_worker-1_test", () => {}),
+  ];
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(harness.calls.snapshots.length, 3);
+  harness.calls.snapshots.forEach(({ target }) => {
+    assert.deepEqual(target.clauses, [
+      { kind: "where", field: "publisherUid", operator: "==", value: "worker-1" },
+    ]);
+  });
+  stops.forEach((stop) => stop());
+});
+
+test("an administrator viewer filters ICE by the recording owner", async () => {
+  const harness = createHarness();
+  await harness.client.ready;
+  const stop = harness.client.subscribeTunnelIce(
+    "live_worker-1_test",
+    "view-admin",
+    () => {},
+    undefined,
+    { publisherUid: "worker-1" },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(harness.calls.snapshots[0].target.clauses, [
+    { kind: "where", field: "publisherUid", operator: "==", value: "worker-1" },
+  ]);
+  stop();
+});
