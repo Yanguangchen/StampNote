@@ -193,7 +193,7 @@ function createHarness(options = {}) {
       return publisher;
     },
     voiceMessageToBlob() {
-      return null;
+      return options.voiceBlob || null;
     },
   };
 
@@ -279,6 +279,7 @@ function createHarness(options = {}) {
     addEventListener(name, callback) {
       windowListeners.set(name, callback);
     },
+    ...(options.globals || {}),
     console,
     document,
     isSecureContext: options.secure !== false,
@@ -467,4 +468,77 @@ test("streamIncomingAudio plays live talk audio on robotic control", async () =>
   assert.equal(harness.elements["robotic-incoming-audio"].srcObject, null);
   assert.equal(harness.elements["robotic-incoming-audio-notice"].hidden, true);
   assert.equal(harness.elements["robotic-speaker-toggle"].dataset.live, "false");
+});
+
+test("blocked live talk audio starts on the next tap anywhere on the page", async () => {
+  const harness = createHarness({ camera: true, cloud: true });
+  harness.auth({ email: "owner@example.com", uid: "owner-1" });
+  await settle();
+
+  const audio = harness.elements["robotic-incoming-audio"];
+  let blocked = true;
+  audio.play = () =>
+    blocked
+      ? Promise.reject(Object.assign(new Error("gesture"), { name: "NotAllowedError" }))
+      : Promise.resolve();
+
+  const track = { kind: "audio", id: "talk" };
+  harness.api.streamIncomingAudio({ getAudioTracks: () => [track], getTracks: () => [track] });
+  await settle();
+  assert.equal(audio.muted, true);
+  assert.match(harness.elements["robotic-incoming-audio-notice"].textContent, /Tap anywhere/);
+
+  blocked = false;
+  // A touchscreen pointerdown is not a user gesture; touchend is.
+  assert.equal(harness.documentListeners.has("pointerdown"), false);
+  await harness.documentListeners.get("touchend")({ target: harness.elements["robotic-frame"] });
+  await settle();
+  assert.equal(audio.muted, false);
+  assert.equal(harness.elements["robotic-speaker-toggle"].getAttribute("aria-pressed"), "true");
+  assert.match(harness.elements["robotic-incoming-audio-notice"].textContent, /Live audio in/);
+});
+
+test("a voice message blocked by autoplay waits for a tap instead of being dropped", async () => {
+  const players = [];
+  let blocked = true;
+  class FakeAudio {
+    constructor() {
+      this.src = "";
+      this.plays = 0;
+      players.push(this);
+    }
+    addEventListener() {}
+    play() {
+      this.plays += 1;
+      return blocked
+        ? Promise.reject(Object.assign(new Error("gesture"), { name: "NotAllowedError" }))
+        : Promise.resolve();
+    }
+  }
+  const harness = createHarness({
+    camera: true,
+    cloud: true,
+    voiceBlob: { size: 3, type: "audio/webm" },
+    globals: {
+      Audio: FakeAudio,
+      URL: { createObjectURL: () => "blob:voice-1", revokeObjectURL() {} },
+    },
+  });
+  harness.auth({ email: "owner@example.com", uid: "owner-1" });
+  await settle();
+
+  harness.publisherOptions[0].onVoiceMessage({ type: "voice-message", audio: "AAA" });
+  await settle();
+  const notice = harness.elements["live-voice-notice"];
+  assert.equal(notice.hidden, false);
+  assert.match(notice.textContent, /tap anywhere to play/i);
+  assert.equal(players.length, 1);
+  assert.equal(players[0].src, "blob:voice-1");
+
+  blocked = false;
+  await harness.documentListeners.get("click")({ target: harness.elements["robotic-frame"] });
+  await settle();
+  assert.equal(players.length, 1, "the same player is reused after the tap");
+  assert.equal(players[0].plays, 2);
+  assert.match(notice.textContent, /Playing a voice message/);
 });

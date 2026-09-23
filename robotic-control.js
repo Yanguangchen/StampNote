@@ -50,6 +50,9 @@
   let livePublisher = null;
   let incomingVoiceUrl = "";
   let incomingAudioStream = null;
+  let speakerMuted = false;
+  let pendingVoiceUrl = "";
+  let voicePlayer = null;
   let wakeLock = null;
 
   function environment() {
@@ -216,21 +219,57 @@
       URL.revokeObjectURL(incomingVoiceUrl);
       incomingVoiceUrl = "";
     }
-    if (liveVoiceNotice) liveVoiceNotice.hidden = true;
+    pendingVoiceUrl = "";
+    if (liveVoiceNotice) {
+      liveVoiceNotice.hidden = true;
+      liveVoiceNotice.textContent = "Playing a voice message";
+    }
+  }
+
+  // One reusable player: a browser that let it play once after a tap keeps
+  // letting it play, where a fresh Audio per message would be blocked again.
+  function ensureVoicePlayer() {
+    if (voicePlayer) return voicePlayer;
+    const AudioCtor = globalScope.Audio;
+    if (typeof AudioCtor !== "function") return null;
+    voicePlayer = new AudioCtor();
+    voicePlayer.addEventListener("ended", stopIncomingVoice);
+    voicePlayer.addEventListener("error", stopIncomingVoice);
+    return voicePlayer;
+  }
+
+  function playVoiceUrl(url) {
+    const player = ensureVoicePlayer();
+    if (!player || !url) return;
+    player.src = url;
+    pendingVoiceUrl = "";
+    if (liveVoiceNotice) {
+      liveVoiceNotice.hidden = false;
+      liveVoiceNotice.textContent = "Playing a voice message";
+    }
+    player.play?.()?.catch?.((error) => {
+      if (url !== incomingVoiceUrl) return;
+      if (error?.name !== "NotAllowedError") {
+        stopIncomingVoice();
+        return;
+      }
+      // Autoplay is blocked until someone touches this page. Keep the message
+      // and play it on the next tap instead of discarding it.
+      pendingVoiceUrl = url;
+      if (liveVoiceNotice) {
+        liveVoiceNotice.hidden = false;
+        liveVoiceNotice.textContent = "Voice message waiting — tap anywhere to play";
+      }
+    });
   }
 
   function playIncomingVoiceMessage(message) {
     const blob = liveTunnelApi?.voiceMessageToBlob?.(message);
     if (!blob) return;
-    const AudioCtor = globalScope.Audio;
     stopIncomingVoice();
     incomingVoiceUrl = URL.createObjectURL(blob);
     if (liveVoiceNotice) liveVoiceNotice.hidden = false;
-    if (typeof AudioCtor !== "function") return;
-    const audio = new AudioCtor(incomingVoiceUrl);
-    audio.addEventListener("ended", stopIncomingVoice);
-    audio.addEventListener("error", stopIncomingVoice);
-    audio.play?.()?.catch?.(() => stopIncomingVoice());
+    playVoiceUrl(incomingVoiceUrl);
   }
 
   function setSpeakerState(live, muted = false) {
@@ -249,16 +288,23 @@
   }
 
   function playIncomingAudioElement() {
-    if (!incomingAudio?.srcObject) return;
+    if (!incomingAudio?.srcObject || speakerMuted) return;
     incomingAudio.muted = false;
-    incomingAudio.play?.()?.catch?.(() => {
-      incomingAudio.muted = true;
-      setSpeakerState(true, true);
-      if (incomingAudioNotice) {
-        incomingAudioNotice.hidden = false;
-        incomingAudioNotice.textContent = "Tap speaker to hear live audio";
-      }
-    });
+    incomingAudio.play?.()?.then?.(
+      () => {
+        if (!incomingAudio.srcObject || speakerMuted) return;
+        setSpeakerState(true, false);
+        if (incomingAudioNotice) incomingAudioNotice.textContent = "Live audio in";
+      },
+      () => {
+        incomingAudio.muted = true;
+        setSpeakerState(true, true);
+        if (incomingAudioNotice) {
+          incomingAudioNotice.hidden = false;
+          incomingAudioNotice.textContent = "Tap anywhere to hear live audio";
+        }
+      },
+    );
   }
 
   function streamIncomingAudio(media) {
@@ -284,7 +330,8 @@
       incomingAudioNotice.hidden = false;
       incomingAudioNotice.textContent = "Live audio in";
     }
-    setSpeakerState(true, false);
+    setSpeakerState(true, speakerMuted);
+    incomingAudio.muted = speakerMuted;
     playIncomingAudioElement();
     telemetry?.event("live_tunnel.audio.in", { status: "success" });
     return incomingAudioStream;
@@ -542,11 +589,13 @@
       return;
     }
     if (incomingAudio.muted) {
+      speakerMuted = false;
       incomingAudio.muted = false;
       playIncomingAudioElement();
       setSpeakerState(true, false);
       return;
     }
+    speakerMuted = true;
     incomingAudio.muted = true;
     setSpeakerState(true, true);
   });
@@ -592,10 +641,16 @@
     if (streamActive) stopStream();
   });
 
-  document.addEventListener("pointerdown", () => {
-    if (incomingAudio?.srcObject && incomingAudio.muted !== true) {
-      playIncomingAudioElement();
-    }
+  // Browsers only allow sound after a user gesture, and a touchscreen's
+  // pointerdown does not count as one. Retry blocked audio on the events that
+  // do, so one tap anywhere turns on Talk and waiting voice messages.
+  function resumeBlockedAudio(event) {
+    if (event?.target && speakerToggle?.contains?.(event.target)) return;
+    if (incomingAudio?.srcObject && !speakerMuted) playIncomingAudioElement();
+    if (pendingVoiceUrl) playVoiceUrl(pendingVoiceUrl);
+  }
+  ["click", "touchend", "keydown"].forEach((name) => {
+    document.addEventListener(name, resumeBlockedAudio, true);
   });
 
   setToggleLabel(false);
