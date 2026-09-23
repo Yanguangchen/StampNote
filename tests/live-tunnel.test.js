@@ -46,6 +46,7 @@ function createMemoryCloud() {
   const viewerListListeners = [];
   const viewerDocListeners = [];
   const iceListeners = [];
+  const iceFilters = [];
   const pictureListeners = [];
   const voiceListeners = [];
   const pictures = new Map();
@@ -65,6 +66,7 @@ function createMemoryCloud() {
   return {
     published: [],
     ended: [],
+    iceFilters,
     async publishLiveTunnel(session) {
       const record = {
         id: session.tunnelId || "live-1",
@@ -99,7 +101,8 @@ function createMemoryCloud() {
         if (index >= 0) viewerDocListeners.splice(index, 1);
       };
     },
-    subscribeTunnelIce(tunnelId, viewerId, onChange) {
+    subscribeTunnelIce(tunnelId, viewerId, onChange, onError, options = {}) {
+      iceFilters.push(options.publisherUid);
       const listener = { key: viewerKey(tunnelId, viewerId), onChange };
       iceListeners.push(listener);
       onChange([...(iceByViewer.get(listener.key) || [])]);
@@ -349,9 +352,37 @@ test("the publisher answers every viewer automatically, with no call prompt", as
   assert.equal(offered.transceivers[1].kind, "audio");
   assert.deepEqual(offered.transceivers[1].init, { direction: "sendonly" });
 
+  assert.deepEqual(cloud.iceFilters, ["owner-1", "owner-1"]);
+
   await publisher.close();
   assert.deepEqual(cloud.ended, ["live-1"]);
   assert.equal(answered.connectionState, "closed");
+});
+
+test("talk refuses to open the microphone when the WebRTC call has failed", async () => {
+  pendingVoiceRemote = null;
+  const cloud = createMemoryCloud();
+  let micRequests = 0;
+  const peers = [];
+  const viewer = liveTunnel.createViewer({
+    cloud,
+    RTCPeerConnection: class AdminPeer extends FakePeerConnection {
+      constructor(config) {
+        super(config);
+        peers.push(this);
+      }
+    },
+    async getUserMedia() {
+      micRequests += 1;
+      return { getAudioTracks: () => [], getTracks: () => [] };
+    },
+  });
+  await viewer.connect({ id: "live-1", ownerId: "owner-1" });
+  peers[0].connectionState = "failed";
+  await assert.rejects(viewer.startTalk(), /voice message/);
+  assert.equal(micRequests, 0);
+  assert.equal(viewer.isTalking(), false);
+  await viewer.disconnect();
 });
 
 test("the viewer can stream talk audio in to the robotic publisher", async () => {

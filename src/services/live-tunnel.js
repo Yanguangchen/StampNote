@@ -462,6 +462,8 @@
               seenIce,
             );
           },
+          undefined,
+          { publisherUid: tunnel.ownerId },
         );
         attachRemoteIce(
           pc,
@@ -786,6 +788,8 @@
             seenIce,
           );
         },
+        undefined,
+        { publisherUid: tunnel.ownerId },
       );
       unsubscribeViewer = cloud.subscribeTunnelViewer?.(
         tunnel.id,
@@ -857,6 +861,11 @@
         throw new Error("Join a live recording before talking.");
       }
       if (talkStream) return talkStream;
+      // Talk rides the WebRTC call. When only relayed stills reach this
+      // network the call has failed, so a microphone would talk to nobody.
+      if (pc.connectionState === "failed" || pc.connectionState === "closed") {
+        throw new Error("Talk needs a direct connection to the camera. Send a voice message instead.");
+      }
       const getUserMedia =
         input.getUserMedia ||
         options.getUserMedia ||
