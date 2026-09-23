@@ -46,6 +46,7 @@
   const poseOverlay = document.querySelector("#pose-overlay");
   const poseBadge = document.querySelector("#pose-badge");
   const liveVoiceNotice = document.querySelector("#live-voice-notice");
+  const liveIncomingAudio = document.querySelector("#live-incoming-audio");
   const cameraLoader = document.querySelector("#camera-loader");
   const cameraLoaderDetail = document.querySelector("#camera-loader-detail");
   const faceEnrollment = document.querySelector("#face-enrollment");
@@ -532,6 +533,9 @@
   let stream = null;
   let livePublisher = null;
   let incomingVoiceUrl = "";
+  let pendingVoiceUrl = "";
+  let voicePlayer = null;
+  let liveAudioBlocked = false;
   let controller = null;
   let cameraSwitching = false;
   let computerVisionSwitching = false;
@@ -2263,27 +2267,107 @@
     };
   }
 
+  function showLiveNotice(message) {
+    if (!liveVoiceNotice) return;
+    liveVoiceNotice.hidden = !message;
+    liveVoiceNotice.textContent = message || "Playing a voice message";
+  }
+
+  function refreshLiveNotice() {
+    if (pendingVoiceUrl) showLiveNotice("Voice message waiting — tap anywhere to play");
+    else if (incomingVoiceUrl) showLiveNotice("Playing a voice message");
+    else if (liveAudioBlocked) showLiveNotice("Tap anywhere to hear live audio");
+    else if (liveIncomingAudio?.srcObject) showLiveNotice("Live audio in");
+    else showLiveNotice("");
+  }
+
   function stopIncomingVoice() {
     if (incomingVoiceUrl) {
       URL.revokeObjectURL(incomingVoiceUrl);
       incomingVoiceUrl = "";
     }
-    if (liveVoiceNotice) liveVoiceNotice.hidden = true;
+    pendingVoiceUrl = "";
+    refreshLiveNotice();
+  }
+
+  // One reusable player: a browser that let it play once after a tap keeps
+  // letting it play, where a fresh Audio per message would be blocked again.
+  function ensureVoicePlayer() {
+    if (voicePlayer) return voicePlayer;
+    const AudioCtor = window.Audio;
+    if (typeof AudioCtor !== "function") return null;
+    voicePlayer = new AudioCtor();
+    voicePlayer.addEventListener("ended", stopIncomingVoice);
+    voicePlayer.addEventListener("error", stopIncomingVoice);
+    return voicePlayer;
+  }
+
+  function playVoiceUrl(url) {
+    const player = ensureVoicePlayer();
+    if (!player || !url) return;
+    player.src = url;
+    pendingVoiceUrl = "";
+    refreshLiveNotice();
+    player.play?.()?.catch?.((error) => {
+      if (url !== incomingVoiceUrl) return;
+      if (error?.name !== "NotAllowedError") {
+        stopIncomingVoice();
+        return;
+      }
+      // Autoplay is blocked until someone touches this page. Keep the message
+      // and play it on the next tap instead of discarding it.
+      pendingVoiceUrl = url;
+      refreshLiveNotice();
+    });
   }
 
   function playIncomingVoiceMessage(message) {
     const blob = liveTunnelApi?.voiceMessageToBlob?.(message);
     if (!blob) return;
-    const AudioCtor = window.Audio;
     stopIncomingVoice();
     incomingVoiceUrl = URL.createObjectURL(blob);
-    if (liveVoiceNotice) liveVoiceNotice.hidden = false;
-    if (typeof AudioCtor !== "function") return;
-    const audio = new AudioCtor(incomingVoiceUrl);
-    audio.addEventListener("ended", stopIncomingVoice);
-    audio.addEventListener("error", stopIncomingVoice);
-    audio.play?.()?.catch?.(() => stopIncomingVoice());
+    playVoiceUrl(incomingVoiceUrl);
   }
+
+  function playLiveIncomingAudio() {
+    if (!liveIncomingAudio?.srcObject) return;
+    liveIncomingAudio.muted = false;
+    liveIncomingAudio.play?.()?.then?.(
+      () => {
+        liveAudioBlocked = false;
+        refreshLiveNotice();
+      },
+      () => {
+        liveAudioBlocked = Boolean(liveIncomingAudio.srcObject);
+        refreshLiveNotice();
+      },
+    );
+  }
+
+  // Live tunnel Talk streams the administrator's microphone to this camera.
+  function streamIncomingAudio(media) {
+    const tracks = media?.getAudioTracks?.() || [];
+    const incoming = tracks.length ? media : null;
+    liveAudioBlocked = false;
+    if (liveIncomingAudio) {
+      liveIncomingAudio.srcObject = incoming;
+      if (incoming) playLiveIncomingAudio();
+      else liveIncomingAudio.pause?.();
+    }
+    refreshLiveNotice();
+    return incoming;
+  }
+
+  // Browsers only allow sound after a user gesture, and a touchscreen's
+  // pointerdown does not count as one. Retry blocked audio on the events that
+  // do, so one tap anywhere turns on Talk and waiting voice messages.
+  function resumeBlockedAudio() {
+    if (liveAudioBlocked) playLiveIncomingAudio();
+    if (pendingVoiceUrl) playVoiceUrl(pendingVoiceUrl);
+  }
+  ["click", "touchend", "keydown"].forEach((name) => {
+    document.addEventListener(name, resumeBlockedAudio, true);
+  });
 
   // Administrators tunnel into this camera without a call prompt, so the
   // recording only has to be signed in and running. A failed publish must not
@@ -2295,6 +2379,7 @@
       getStream: () => stream,
       getPreview: () => monitorVideo,
       onVoiceMessage: playIncomingVoiceMessage,
+      onAudioStream: streamIncomingAudio,
     });
     try {
       await livePublisher.publish(sessionForLiveTunnel());
@@ -2310,6 +2395,7 @@
     const publisher = livePublisher;
     livePublisher = null;
     stopIncomingVoice();
+    streamIncomingAudio(null);
     publisher?.close?.();
   }
 
