@@ -438,3 +438,109 @@ test("views split between two workers never record either of them", async () => 
   }
   assert.equal(recognizer.enrollmentState().workerId, null);
 });
+
+function atDistance(chord) {
+  return unitAt(2 * Math.asin(chord / 2));
+}
+
+// Turned away from Ari's profile in a direction that brings it no nearer Bo.
+function awayFromEveryone(chord) {
+  const angle = 2 * Math.asin(chord / 2);
+  const values = Array.from({ length: 128 }, () => 0);
+  values[0] = Math.cos(angle);
+  values[2] = Math.sin(angle);
+  return values;
+}
+
+const improvementRoster = [
+  { workerId: "worker-7", displayName: "Ari Tan", embeddings: [unitAt(0)] },
+  { workerId: "worker-9", displayName: "Bo Lim", embeddings: [unitAt(Math.PI / 2)] },
+];
+
+test("an improvement scan opens on a confident match, then collects views the profile lacks", async () => {
+  const harness = canvasHarness();
+  const recognizer = scriptedRecognizer(
+    harness,
+    [atDistance(0.65), atDistance(0.4), atDistance(0.68), atDistance(0.5)],
+    improvementRoster,
+    { improvingWorkerId: "worker-7", enrollmentSamples: 3 },
+  );
+  const bodies = [{ face: faceAt() }];
+  const source = { videoWidth: 640, videoHeight: 480 };
+
+  // 0.65 is past the attendance bar, so it cannot be the view that proves who
+  // is scanning.
+  let described = await recognizer.describe(bodies, source, 1_000);
+  let state = recognizer.enrollmentState();
+  assert.equal(state.status, "verifying");
+  assert.equal(state.improving, true);
+  assert.equal(state.anchored, false);
+  assert.equal(state.samples, 0);
+  assert.equal(state.matchThreshold, 0.6);
+  assert.equal(described[0].enrollmentAccepted, false);
+
+  described = await recognizer.describe(bodies, source, 2_000);
+  state = recognizer.enrollmentState();
+  assert.equal(state.anchored, true);
+  assert.equal(state.samples, 1);
+  assert.equal(state.matchThreshold, 0.72);
+  assert.equal(described[0].enrollmentAccepted, true);
+
+  // Once proven, a weaker view is exactly what the profile is missing.
+  described = await recognizer.describe(bodies, source, 3_000);
+  assert.equal(described[0].enrollmentAccepted, true);
+  assert.ok(Math.abs(recognizer.enrollmentState().matchDistance - 0.68) < 1e-5);
+
+  await recognizer.describe(bodies, source, 4_000);
+  state = recognizer.enrollmentState();
+  assert.equal(state.status, "complete");
+  assert.equal(state.samples, 3);
+  assert.equal(state.candidateWorkerId, "WORKER-7");
+  assert.equal(state.workerId, null, "an improvement scan never records attendance");
+  assert.equal("embedding" in state, false, "raw biometric vectors never enter UI state");
+});
+
+test("an improvement scan refuses views that belong to somebody else", async () => {
+  const harness = canvasHarness();
+  const nearerBo = unitAt(Math.PI / 2 - 0.2);
+  const recognizer = scriptedRecognizer(
+    harness,
+    [atDistance(0.4), atDistance(0.45), awayFromEveryone(0.8), nearerBo],
+    improvementRoster,
+    { improvingWorkerId: "worker-7", enrollmentSamples: 5 },
+  );
+  const bodies = [{ face: faceAt() }];
+  const source = { videoWidth: 640, videoHeight: 480 };
+
+  await recognizer.describe(bodies, source, 1_000);
+  await recognizer.describe(bodies, source, 2_000);
+  assert.equal(recognizer.enrollmentState().samples, 2);
+
+  const tooFar = await recognizer.describe(bodies, source, 3_000);
+  assert.equal(recognizer.enrollmentState().status, "too_different");
+  assert.equal(tooFar[0].enrollmentAccepted, false);
+  assert.equal(recognizer.enrollmentState().samples, 2);
+
+  // Nearer another enrolled worker: the scan starts over and must prove who
+  // is in front of the camera again.
+  const swapped = await recognizer.describe(bodies, source, 4_000);
+  const state = recognizer.enrollmentState();
+  assert.equal(swapped[0].enrollmentAccepted, false);
+  assert.equal(state.status, "not_this_worker");
+  assert.equal(state.matchReason, "other_worker");
+  assert.equal(state.samples, 0);
+  assert.equal(state.anchored, false);
+});
+
+test("an improvement scan for a worker who is not enrolled never starts", async () => {
+  const harness = canvasHarness();
+  const recognizer = scriptedRecognizer(harness, [unitAt(0)], improvementRoster, {
+    improvingWorkerId: "worker-404",
+  });
+  const bodies = [{ face: faceAt() }];
+  const described = await recognizer.describe(bodies, { videoWidth: 640, videoHeight: 480 }, 1_000);
+  assert.equal(described, bodies);
+  assert.equal(recognizer.enrollmentState().status, "unavailable");
+  recognizer.reset();
+  assert.equal(recognizer.enrollmentState().status, "unavailable");
+});

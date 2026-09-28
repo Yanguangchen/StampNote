@@ -298,6 +298,7 @@ function createOnboardingHarness(options = {}) {
     "roster-toggle-label",
     "camera-facing-toggle",
     "camera-facing-state",
+    "scanner-mode",
   ];
   const elements = Object.fromEntries(ids.map((id) => [id, new OnboardElement()]));
   elements["scanner-card"].hidden = true;
@@ -307,7 +308,7 @@ function createOnboardingHarness(options = {}) {
   elements["onboarding-progress"].value = 0;
 
   const timers = [];
-  const cloudCalls = { saved: [], deleted: [], faces: 0 };
+  const cloudCalls = { saved: [], deleted: [], faces: 0, improved: [], recognizers: [] };
   let authCallback;
   const workers = [...(options.workers || [])];
   const cloud = {
@@ -329,6 +330,22 @@ function createOnboardingHarness(options = {}) {
     async deleteWorkerFace(workerId) {
       cloudCalls.deleted.push(workerId);
     },
+    async improveWorkerFace(record) {
+      cloudCalls.improved.push(record);
+      const worker = workers.find((entry) => entry.workerId === record.workerId);
+      const improvementScans = (worker?.improvementScans || 0) + 1;
+      if (worker) worker.improvementScans = improvementScans;
+      return {
+        workerId: record.workerId,
+        displayName: worker?.displayName || record.workerId,
+        embeddingCount: 10,
+        maxEmbeddings: 12,
+        improvementScans,
+        added: 3,
+        skipped: 2,
+        retired: 0,
+      };
+    },
     async signIn() {},
     async signOut() {},
     subscribeAuth(callback) {
@@ -347,12 +364,11 @@ function createOnboardingHarness(options = {}) {
   };
 
   const embedding = Array.from({ length: 128 }, (unused, index) => (index + 1) / 200);
-  let sampleCount = 0;
   const pending = [];
   const cachesStore = new Map();
   const context = {
     Blob,
-    confirm: () => true,
+    confirm: options.confirm || (() => true),
     console,
     document,
     fetch: async (url) => ({
@@ -397,7 +413,10 @@ function createOnboardingHarness(options = {}) {
     },
     StampNoteCameraFacing: cameraFacing,
     StampNoteFaceIdentity: {
-      createFaceIdentity() {
+      createFaceIdentity(recognizerOptions = {}) {
+        cloudCalls.recognizers.push(recognizerOptions);
+        const total = recognizerOptions.enrollmentSamples || 7;
+        let sampleCount = 0;
         return {
           async load() {},
           describe() {
@@ -410,7 +429,7 @@ function createOnboardingHarness(options = {}) {
             ];
           },
           enrollmentState() {
-            return { status: "scanning", samples: sampleCount, total: 7 };
+            return { status: "scanning", samples: sampleCount, total };
           },
           reset() {},
         };
@@ -508,3 +527,99 @@ test("signed-in enrollment issues an ID, takes seven samples, and saves the temp
   assert.equal(harness.pending[0], "sw.js");
 });
 
+
+function enrolledWorker(overrides = {}) {
+  const view = Array.from({ length: 128 }, (unused, index) => (index + 1) / 200);
+  return {
+    workerId: "AT-0001",
+    documentId: "AT-0001",
+    displayName: "Ari Tan",
+    embeddings: Array.from({ length: 7 }, () => view),
+    improvementScans: 0,
+    ...overrides,
+  };
+}
+
+async function openRoster(harness) {
+  harness.elements["roster-body"].hidden = true;
+  await harness.elements["roster-toggle"].dispatch("click");
+  await settleOnboarding();
+  return harness.elements["worker-roster"].children;
+}
+
+test("an enrolled worker can opt in to scanning again to improve recognition", async () => {
+  const harness = createOnboardingHarness({ workers: [enrolledWorker()] });
+  await harness.auth({ email: "admin@example.com", uid: "owner-1" });
+  await settleOnboarding();
+
+  const [row] = await openRoster(harness);
+  const [, identity, actions] = row.children;
+  assert.equal(
+    identity.children[2].textContent,
+    "Face profile: 7 of 12 views · not improved yet",
+  );
+  const [improve, remove] = actions.children;
+  assert.equal(improve.className, "improve-worker");
+  assert.equal(improve.textContent, "Improve recognition");
+  assert.equal(remove.className, "delete-worker");
+
+  await improve.dispatch("click");
+  await settleOnboarding();
+  const recognizer = harness.cloudCalls.recognizers.at(-1);
+  assert.equal(recognizer.improvingWorkerId, "AT-0001");
+  assert.equal(recognizer.enrollmentSamples, 5);
+  assert.equal(recognizer.knownIdentities.length, 1, "every view is checked against the roster");
+  assert.equal(harness.elements["scanner-mode"].hidden, false);
+  assert.equal(
+    harness.elements["scanner-mode"].textContent,
+    "Improving recognition for Ari Tan (AT-0001)",
+  );
+  assert.equal(harness.elements["scanner-card"].hidden, false);
+
+  await harness.flushScan();
+  await settleOnboarding();
+
+  assert.equal(harness.cloudCalls.saved.length, 0, "no new enrollment is created");
+  assert.equal(harness.cloudCalls.improved.length, 1);
+  assert.equal(harness.cloudCalls.improved[0].workerId, "AT-0001");
+  assert.equal(harness.cloudCalls.improved[0].documentId, "AT-0001");
+  assert.equal(harness.cloudCalls.improved[0].embeddings.length, 5);
+  assert.equal("profilePhoto" in harness.cloudCalls.improved[0], false);
+  assert.equal(
+    harness.elements["onboarding-status"].textContent,
+    "Ari Tan (AT-0001) recognition improved: 3 new views added. Profile now holds 10 of 12 views.",
+  );
+  assert.equal(harness.elements["scanner-mode"].hidden, true);
+
+  const [refreshed] = harness.elements["worker-roster"].children;
+  assert.match(refreshed.children[1].children[2].textContent, /1 improvement scan$/);
+});
+
+test("declining the improvement prompt opens no camera and changes nothing", async () => {
+  const harness = createOnboardingHarness({
+    workers: [enrolledWorker()],
+    confirm: () => false,
+  });
+  await harness.auth({ email: "admin@example.com", uid: "owner-1" });
+  await settleOnboarding();
+
+  const [row] = await openRoster(harness);
+  await row.children[2].children[0].dispatch("click");
+  await settleOnboarding();
+
+  assert.equal(harness.cloudCalls.recognizers.length, 0);
+  assert.equal(harness.cloudCalls.improved.length, 0);
+  assert.equal(harness.elements["scanner-card"].hidden, true);
+});
+
+test("the improvement flow is opt-in and explains what it keeps", () => {
+  assert.match(html, /id="scanner-mode"[^>]*hidden/);
+  assert.match(html, /Improving recognition is optional/);
+  assert.match(app, /window\.confirm\(\s*`Improve face recognition for/);
+  assert.match(app, /IMPROVEMENT_SAMPLES\s*=\s*5/);
+  assert.match(app, /cloud\.improveWorkerFace\(/);
+  // The worker's portrait is the one they enrolled with.
+  assert.match(app, /if \(!improving\) captureProfileFrame\(\);/);
+  assert.match(css, /\.improve-worker\s*\{/);
+  assert.match(css, /\.worker-actions\s*\{/);
+});

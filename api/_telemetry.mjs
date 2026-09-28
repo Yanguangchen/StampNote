@@ -97,6 +97,8 @@ const eventNames = [
   "onboarding.worker.save_failed",
   "onboarding.worker.deleted",
   "onboarding.worker.delete_failed",
+  "onboarding.worker.improved",
+  "onboarding.worker.improve_failed",
   "worker.photo.staged",
   "worker.photo.gps.failed",
   "worker.photo.sent",
@@ -128,6 +130,9 @@ const telemetryFieldsSchema = z
     matchVotes: z.number().int().min(0).max(20).optional(),
     requiredVotes: z.number().int().min(0).max(20).optional(),
     sampleCount: z.number().int().min(0).max(20).optional(),
+    addedCount: z.number().int().min(0).max(20).optional(),
+    retiredCount: z.number().int().min(0).max(20).optional(),
+    templateCount: z.number().int().min(0).max(20).optional(),
     checkInCount: z.number().int().min(0).max(10_000).optional(),
     workerCount: z.number().int().min(0).max(10_000).optional(),
     accuracyMeters: z.number().min(0).max(10_000).optional(),
@@ -155,6 +160,7 @@ const telemetryFieldsSchema = z
     httpStatus: z.number().int().min(100).max(599).optional(),
     action: z.enum(["save", "clear", "delete", "rename", "keep", "discard", "review"]).optional(),
     source: z.enum(["camera", "library"]).optional(),
+    mode: z.enum(["enroll", "improve"]).optional(),
   })
   .strict();
 

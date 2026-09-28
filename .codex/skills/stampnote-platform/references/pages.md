@@ -162,8 +162,9 @@ Enroll, replace, or delete worker face templates. Templates are 128-number embed
 3. `#start-face-scan` — `#scanner-card` appears. Front camera is default; `#camera-facing-toggle` switches.
 4. Face fills the oval. `#onboarding-progress` counts **7** samples (~6 s).
 5. `#roster-toggle` opens `#worker-roster` to replace or delete.
+6. Each roster row's **Improve recognition** (`.improve-worker`) is an opt-in rescan: after a confirmation, `#scanner-mode` names the worker and `#onboarding-progress` counts **5** views. The scan must first match that worker at the attendance bar; views nearer another worker restart it. New views are merged into the same template (up to 12 views); no photo is kept.
 
-Do not enroll a worker unless the user asked. Deleting a roster entry is destructive.
+Do not enroll a worker, or start an improvement scan, unless the user asked. Deleting a roster entry is destructive.
 
 ## Coordinate pages
 

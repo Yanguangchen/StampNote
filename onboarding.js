@@ -30,12 +30,17 @@
   const rosterToggleLabel = document.querySelector("#roster-toggle-label");
   const cameraFacingToggle = document.querySelector("#camera-facing-toggle");
   const cameraFacingState = document.querySelector("#camera-facing-state");
+  const scannerMode = document.querySelector("#scanner-mode");
 
   // Enrollment deliberately takes longer than the opening match. Seven
   // spaced, mutually consistent views make the stored template less dependent
   // on one blink, expression, or moment of motion.
   const ONBOARDING_SAMPLES = 7;
   const ONBOARDING_SAMPLE_MS = 900;
+  // An improvement scan is shorter: it tops up a profile that already exists.
+  // Worth doing more than once, in whatever light and with whichever camera the
+  // worker is usually recorded with.
+  const IMPROVEMENT_SAMPLES = 5;
   // Enrollment keeps no photograph beyond a badge-sized portrait, so the camera
   // is asked only for what the face model and that portrait can use. A larger
   // frame would be shrunk again before anything looked at it.
@@ -68,6 +73,9 @@
   let saving = false;
   let samples = [];
   let scaler = null;
+  // The enrolled worker an opted-in improvement scan is adding views to, or
+  // null while enrolling somebody new.
+  let improving = null;
   // True from the moment a scan is committed to until the camera is released,
   // which is wider than `scanning`: it also covers the seconds spent opening the
   // camera and loading the model, when the card must not be taken away.
@@ -172,7 +180,11 @@
   }
 
   function scanMessage(scanState) {
+    const who = improving?.displayName || "the selected worker";
     const messages = {
+      verifying: `Checking this is ${who} — look straight at the camera.`,
+      not_this_worker: `This face is too close to another enrolled worker to be sure. Only ${who} can improve this profile.`,
+      too_different: "This view is too different from the saved profile. Face the camera and hold still.",
       loading: "Preparing the on-device face model…",
       no_face: "Step into view and move close to the camera.",
       move_closer: "Move closer until your face fills the oval.",
@@ -186,8 +198,9 @@
     };
     if (scanState?.status === "scanning") {
       const count = Number(scanState.samples) || samples.length;
-      if (count >= 5) return "Now turn slightly right and keep your eyes on the camera.";
-      if (count >= 3) return "Now turn slightly left and keep your eyes on the camera.";
+      const [left, right] = improving ? [2, 4] : [3, 5];
+      if (count >= right) return "Now turn slightly right and keep your eyes on the camera.";
+      if (count >= left) return "Now turn slightly left and keep your eyes on the camera.";
     }
     return messages[scanState?.status] || messages.no_face;
   }
@@ -267,7 +280,23 @@
     video.srcObject = null;
     scannerView.dataset.status = nextState;
     cancelButton.hidden = true;
+    improving = null;
+    if (scannerMode) {
+      scannerMode.hidden = true;
+      scannerMode.textContent = "";
+    }
     refreshFlow();
+  }
+
+  // How much of the profile is filled, and how often the worker has opted to
+  // top it up. More views, from more conditions, is what recognition improves on.
+  function profileSummary(worker) {
+    const views = Array.isArray(worker?.embeddings) ? worker.embeddings.length : 0;
+    const max = Number(workerFace?.MAX_TEMPLATES) || views;
+    const scans = Math.max(0, Number(worker?.improvementScans) || 0);
+    const summary = `Face profile: ${views} of ${max} views`;
+    if (scans === 0) return `${summary} · not improved yet`;
+    return `${summary} · ${scans} improvement ${scans === 1 ? "scan" : "scans"}`;
   }
 
   function renderRoster(workers) {
@@ -305,7 +334,19 @@
       const id = document.createElement("p");
       id.className = "worker-id";
       id.textContent = worker.workerId;
-      identity.append(name, id);
+      const profile = document.createElement("p");
+      profile.className = "worker-profile";
+      profile.textContent = profileSummary(worker);
+      identity.append(name, id, profile);
+      const improve = document.createElement("button");
+      improve.className = "improve-worker";
+      improve.type = "button";
+      improve.textContent = "Improve recognition";
+      improve.setAttribute(
+        "aria-label",
+        `Scan ${worker.workerId} again to improve face recognition`,
+      );
+      improve.addEventListener("click", () => startImprovement(worker));
       const remove = document.createElement("button");
       remove.className = "delete-worker";
       remove.type = "button";
@@ -332,7 +373,10 @@
           remove.disabled = false;
         }
       });
-      row.append(avatar, identity, remove);
+      const actions = document.createElement("div");
+      actions.className = "worker-actions";
+      actions.append(improve, remove);
+      row.append(avatar, identity, actions);
       roster.append(row);
     });
   }
@@ -472,6 +516,73 @@
     }
   }
 
+  function improvementSummary(worker, result) {
+    const who = `${result?.displayName || worker.displayName} (${result?.workerId || worker.workerId})`;
+    const views = `${result.embeddingCount} of ${result.maxEmbeddings} views`;
+    const added = Number(result?.added) || 0;
+    const retired = Number(result?.retired) || 0;
+    if (added === 0) {
+      return `${who}: these views were already covered, so the profile is unchanged (${views}). Scans in different light, or with the other camera, add the most.`;
+    }
+    const retiredNote =
+      retired > 0
+        ? `, ${retired} redundant older ${retired === 1 ? "view" : "views"} retired`
+        : "";
+    return `${who} recognition improved: ${added} new ${added === 1 ? "view" : "views"} added${retiredNote}. Profile now holds ${views}.`;
+  }
+
+  // Nothing is written until the whole improvement scan is in, and what is
+  // written is the stored gallery with these views folded in — the worker's
+  // enrollment is never replaced by a shorter scan.
+  async function saveImprovement() {
+    if (saving || !improving) return;
+    saving = true;
+    const worker = improving;
+    scannerView.dataset.status = "saving";
+    instruction.textContent = "Adding the new views to the face profile…";
+
+    try {
+      const result = await cloud.improveWorkerFace({
+        workerId: worker.workerId,
+        documentId: worker.documentId,
+        embeddings: samples,
+      });
+      telemetry?.event(
+        "onboarding.worker.improved",
+        {
+          sampleCount: samples.length,
+          addedCount: Number(result?.added) || 0,
+          retiredCount: Number(result?.retired) || 0,
+          templateCount: Number(result?.embeddingCount) || 0,
+          status: "success",
+        },
+        { immediate: true, traceId: scanTraceId },
+      );
+      releaseScanner("complete");
+      progress.max = IMPROVEMENT_SAMPLES;
+      progress.value = IMPROVEMENT_SAMPLES;
+      progressCount.textContent = `${IMPROVEMENT_SAMPLES} of ${IMPROVEMENT_SAMPLES}`;
+      instruction.textContent = `${worker.workerId} face profile updated.`;
+      setStatus(improvementSummary(worker, result), "success");
+      await refreshRoster();
+    } catch (error) {
+      saving = false;
+      scannerView.dataset.status = "scanning";
+      cancelButton.hidden = false;
+      setStatus(error?.message || "The face profile could not be updated.", "error");
+      instruction.textContent = "The scan is complete but has not been saved. Try again.";
+      telemetry?.event(
+        "onboarding.worker.improve_failed",
+        {
+          sampleCount: samples.length,
+          errorCode: telemetry?.safeErrorCode(error, "improve_worker_failed"),
+          status: "failed",
+        },
+        { immediate: true, traceId: scanTraceId },
+      );
+    }
+  }
+
   async function scanOnce() {
     if (!scanning || saving || !scanner || !recognizer) return;
 
@@ -486,26 +597,35 @@
       const accepted = described.find(
         (body) => body?.faceEmbedding && body?.enrollmentAccepted === true,
       );
-      if (accepted && samples.length < ONBOARDING_SAMPLES) {
+      const wanted = improving ? IMPROVEMENT_SAMPLES : ONBOARDING_SAMPLES;
+      if (accepted && samples.length < wanted) {
         samples.push(accepted.faceEmbedding);
         // Keep the most recent accepted frame: by the last sample the worker has
-        // settled, so the newest one is usually the best portrait.
-        captureProfileFrame();
+        // settled, so the newest one is usually the best portrait. An
+        // improvement scan keeps the portrait the worker enrolled with.
+        if (!improving) captureProfileFrame();
       }
       const scanState = recognizer.enrollmentState();
+      // The recognizer starts an improvement scan over when a different face
+      // appears; the views collected before that go with it.
+      if (improving && Number(scanState?.samples) < samples.length) {
+        samples = samples.slice(0, Math.max(0, Number(scanState.samples) || 0));
+      }
       updateProgress({ ...scanState, samples: samples.length });
-      if (samples.length >= ONBOARDING_SAMPLES) {
+      if (samples.length >= wanted) {
         telemetry?.event(
           "onboarding.scan.completed",
           {
             sampleCount: samples.length,
             durationMs: Math.max(0, performance.now() - scanStartedAt),
             facing: currentCameraFacing(),
+            mode: improving ? "improve" : "enroll",
             status: "success",
           },
           { traceId: scanTraceId },
         );
-        await saveEnrollment();
+        if (improving) await saveImprovement();
+        else await saveEnrollment();
         return;
       }
     } catch {
@@ -521,6 +641,7 @@
   }
 
   async function startScan() {
+    if (scanActive) return;
     const normalizedId = workerFace.normalizeWorkerId(workerId.value);
     const normalizedName = workerFace.normalizeDisplayName(workerName.value);
     if (!user) {
@@ -549,13 +670,96 @@
     }
     workerId.value = normalizedId;
     workerName.value = normalizedName;
+    await beginScan({
+      total: ONBOARDING_SAMPLES,
+      recognizerOptions: {
+        enrollmentSamples: ONBOARDING_SAMPLES,
+        sampleMs: ONBOARDING_SAMPLE_MS,
+      },
+      readyMessage: (resolution) =>
+        `Face scan in progress${resolution}. Keep one worker close for about six seconds.`,
+    });
+  }
+
+  // Opt-in, per worker: the worker scans again and the views that are clearly
+  // theirs are folded into the profile they already have. Each scan can add
+  // what the last one missed, so recognition keeps getting better for workers
+  // who choose to do it.
+  async function startImprovement(worker) {
+    if (scanActive || saving) {
+      setStatus("Finish or cancel the current scan first.", "error");
+      return;
+    }
+    if (!user) {
+      setStatus("Sign in with Google before improving a face profile.", "error");
+      return;
+    }
+    const who = `${worker.displayName} (${worker.workerId})`;
+    if (
+      !window.confirm(
+        `Improve face recognition for ${who}?\n\n` +
+          `${worker.displayName} scans their face again. Views that clearly match their saved ` +
+          "profile are added to it, so attendance recognises them more reliably. No photo is " +
+          "kept, and the scan can be repeated any time.",
+      )
+    ) {
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setStatus("This browser cannot open a camera for a face scan.", "error");
+      return;
+    }
+    if (!window.StampNoteModel?.loadFaceScanner || !faceIdentity || !cloud.improveWorkerFace) {
+      setStatus("The on-device face scanner has not loaded. Reload and try again.", "error");
+      return;
+    }
+
+    // The whole roster, fresh: the scan checks every view is nearer this
+    // worker than anyone else enrolled, against templates as they are now.
+    let workers;
+    try {
+      workers = await readWorkers({ fresh: true });
+    } catch (error) {
+      setStatus(error?.message || "Enrolled workers could not be read.", "error");
+      return;
+    }
+    // A second click, or an enrollment started, while the roster was read.
+    if (scanActive || saving) return;
+    const target = workers.find((entry) => entry.workerId === worker.workerId);
+    if (!target) {
+      setStatus(`${worker.workerId} is no longer enrolled.`, "error");
+      await refreshRoster();
+      return;
+    }
+
+    improving = target;
+    if (scannerMode) {
+      scannerMode.textContent = `Improving recognition for ${who}`;
+      scannerMode.hidden = false;
+    }
+    await beginScan({
+      total: IMPROVEMENT_SAMPLES,
+      recognizerOptions: {
+        enrollmentSamples: IMPROVEMENT_SAMPLES,
+        sampleMs: ONBOARDING_SAMPLE_MS,
+        knownIdentities: workers,
+        improvingWorkerId: target.workerId,
+      },
+      readyMessage: (resolution) =>
+        `Improvement scan for ${who}${resolution}. Keep only this worker close for a few seconds.`,
+    });
+  }
+
+  // Opens the camera and both models. Enrolling and improving differ only in
+  // what the recognizer checks each view against and how many views they want.
+  async function beginScan({ total, recognizerOptions, readyMessage }) {
     samples = [];
     profileReady = false;
     scanActive = true;
     refreshFlow();
     cancelButton.hidden = false;
     scannerView.dataset.status = "scanning";
-    updateProgress({ status: "loading", samples: 0, total: ONBOARDING_SAMPLES });
+    updateProgress({ status: "loading", samples: 0, total });
     const facing = currentCameraFacing();
     scanTraceId = telemetry?.createTraceId?.() || undefined;
     scanStartedAt = performance.now();
@@ -564,7 +768,8 @@
     );
 
     try {
-      telemetry?.event("onboarding.scan.started", { facing, status: "ok" }, { traceId: scanTraceId });
+      const mode = improving ? "improve" : "enroll";
+      telemetry?.event("onboarding.scan.started", { facing, mode, status: "ok" }, { traceId: scanTraceId });
       stream = await navigator.mediaDevices.getUserMedia({
         video: cameraFacing
           ? cameraFacing.videoConstraints(facing, {
@@ -585,24 +790,19 @@
       scaler = frameScaling?.createFrameScaler() || null;
       [scanner, recognizer] = await Promise.all([
         window.StampNoteModel.loadFaceScanner(),
-        Promise.resolve(
-          faceIdentity.createFaceIdentity({
-            enrollmentSamples: ONBOARDING_SAMPLES,
-            sampleMs: ONBOARDING_SAMPLE_MS,
-          }),
-        ).then(async (instance) => {
-          await instance.load();
-          return instance;
-        }),
+        Promise.resolve(faceIdentity.createFaceIdentity(recognizerOptions)).then(
+          async (instance) => {
+            await instance.load();
+            return instance;
+          },
+        ),
       ]);
       scanning = true;
       const resolution =
         video.videoWidth && video.videoHeight
           ? ` at ${video.videoWidth} × ${video.videoHeight}`
           : "";
-      setStatus(
-        `Face scan in progress${resolution}. Keep one worker close for about six seconds.`,
-      );
+      setStatus(readyMessage(resolution));
       scanOnce();
     } catch (error) {
       releaseScanner("idle");
@@ -641,12 +841,17 @@
   });
 
   cancelButton?.addEventListener("click", () => {
+    const wasImproving = Boolean(improving);
     releaseScanner("idle");
     samples = [];
     profileReady = false;
     updateProgress({ status: "no_face", samples: 0, total: ONBOARDING_SAMPLES });
     instruction.textContent = "Your face should fill the oval.";
-    setStatus("Face scan cancelled. No template was saved.");
+    setStatus(
+      wasImproving
+        ? "Improvement scan cancelled. The saved face profile is unchanged."
+        : "Face scan cancelled. No template was saved.",
+    );
   });
 
   authButton?.addEventListener("click", async () => {
