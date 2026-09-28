@@ -2,7 +2,7 @@
   "use strict";
 
   const EMBEDDING_LENGTH = 128;
-  const MATCH_THRESHOLD = 0.55;
+  const MATCH_THRESHOLD = 0.6;
   const MATCH_MARGIN = 0.08;
   const MAX_TEMPLATES = 7;
 

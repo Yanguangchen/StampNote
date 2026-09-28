@@ -17,12 +17,20 @@
     enrollmentMaximumScaleShift: 0.28,
     enrollmentMaximumRollShift: 0.14,
     enrollmentConsistencyThreshold: 0.72,
-    // Unit normalization makes front/rear-camera distances comparable. Three
-    // independently sampled views must agree, and the nearest worker must be
-    // clearly separated from the runner-up on every accepted view.
-    knownIdentityThreshold: 0.55,
+    // Unit normalization makes front/rear-camera distances comparable. 0.6 is
+    // the recognition network's own reference threshold; 0.55 rejected enough
+    // genuine views of an enrolled worker, on the same phone that enrolled
+    // them, that attendance rarely completed. Three independently sampled
+    // views must agree, and the nearest worker must be clearly separated from
+    // the runner-up on every accepted view.
+    knownIdentityThreshold: 0.6,
     knownIdentityMargin: 0.08,
     knownIdentityVotes: 3,
+    // The agreeing views are counted over the last five samples rather than
+    // the last three. Requiring three in a row let one blurred or turned frame
+    // throw away two good ones, so a worker holding still could scan for a
+    // long time. A wrong worker still has to win three separate views outright.
+    knownIdentityWindow: 5,
   });
 
   // One page, one recognition network.
@@ -421,11 +429,21 @@
                 );
                 const match = evaluation.match;
                 enrollmentAccepted = Boolean(match);
+                const requiredVotes = Math.min(
+                  settings.knownIdentityVotes,
+                  settings.enrollmentSamples,
+                );
                 enrollmentMatches.push(match);
-                if (enrollmentMatches.length > settings.enrollmentSamples) {
+                if (
+                  enrollmentMatches.length >
+                  Math.max(settings.knownIdentityWindow || 0, settings.enrollmentSamples)
+                ) {
                   enrollmentMatches.shift();
                 }
-                enrollmentSamples = enrollmentMatches.length;
+                enrollmentSamples = Math.min(
+                  enrollmentMatches.length,
+                  settings.enrollmentSamples,
+                );
                 const votes = new Map();
                 enrollmentMatches.filter(Boolean).forEach((candidate) => {
                   const vote = votes.get(candidate.workerId) || { count: 0, candidate };
@@ -443,7 +461,7 @@
                 };
                 if (
                   enrollmentMatches.length >= settings.enrollmentSamples &&
-                  winner?.count >= Math.min(settings.knownIdentityVotes, settings.enrollmentSamples)
+                  winner?.count >= requiredVotes
                 ) {
                   matchedIdentity = winner.candidate;
                   enrollmentStatus = "complete";

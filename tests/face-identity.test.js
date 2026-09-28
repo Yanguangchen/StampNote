@@ -349,3 +349,92 @@ test("repeat agreement never turns an ambiguous worker into a match", async () =
   assert.equal(state.matchVotes, 0);
   assert.equal(state.matchReason, "ambiguous");
 });
+
+function unitAt(angle) {
+  return [Math.cos(angle), Math.sin(angle), ...Array.from({ length: 126 }, () => 0)];
+}
+
+function scriptedRecognizer(harness, descriptors, knownIdentities, options = {}) {
+  let call = 0;
+  return identity.createFaceIdentity({
+    document: harness.document,
+    faceApi: {
+      nets: {
+        faceRecognitionNet: {
+          async computeFaceDescriptor() {
+            const next = descriptors[Math.min(call, descriptors.length - 1)];
+            call += 1;
+            return Float32Array.from(next);
+          },
+        },
+      },
+    },
+    sampleMs: 0,
+    knownIdentities,
+    ...options,
+  });
+}
+
+test("an enrolled worker a little under the reference threshold is still recognised", async () => {
+  const harness = canvasHarness();
+  // Chord length 2·sin(θ/2) = 0.58: outside the old 0.55 gate, inside 0.6.
+  const live = unitAt(2 * Math.asin(0.29));
+  const recognizer = scriptedRecognizer(harness, [live], [
+    { workerId: "worker-7", displayName: "Ari Tan", embeddings: [unitAt(0)] },
+  ]);
+  const bodies = [{ face: faceAt() }];
+  const source = { videoWidth: 640, videoHeight: 480 };
+
+  for (let sample = 0; sample < 3; sample += 1) {
+    await recognizer.describe(bodies, source, 1_000 + sample * 1_000);
+  }
+
+  const state = recognizer.enrollmentState();
+  assert.equal(identity.DEFAULTS.knownIdentityThreshold, 0.6);
+  assert.equal(state.status, "complete");
+  assert.equal(state.workerId, "WORKER-7");
+  assert.ok(Math.abs(state.matchDistance - 0.58) < 0.000001);
+});
+
+test("one poor view between good ones does not restart attendance", async () => {
+  const harness = canvasHarness();
+  const good = unitAt(0);
+  const blurred = unitAt(Math.PI / 2);
+  const recognizer = scriptedRecognizer(harness, [good, blurred, good, good], [
+    { workerId: "worker-7", displayName: "Ari Tan", embeddings: [good] },
+  ]);
+  const bodies = [{ face: faceAt() }];
+  const source = { videoWidth: 640, videoHeight: 480 };
+
+  await recognizer.describe(bodies, source, 1_000);
+  await recognizer.describe(bodies, source, 2_000);
+  await recognizer.describe(bodies, source, 3_000);
+  assert.equal(recognizer.enrollmentState().status, "retrying");
+  assert.equal(recognizer.enrollmentState().matchVotes, 2);
+
+  await recognizer.describe(bodies, source, 4_000);
+  const state = recognizer.enrollmentState();
+  assert.equal(state.status, "complete");
+  assert.equal(state.workerId, "WORKER-7");
+  assert.equal(state.matchVotes, 3);
+  assert.equal(state.samples, 3);
+});
+
+test("views split between two workers never record either of them", async () => {
+  const harness = canvasHarness();
+  const ari = unitAt(0);
+  const bo = unitAt(Math.PI / 2);
+  const recognizer = scriptedRecognizer(harness, [ari, bo, ari, bo], [
+    { workerId: "worker-7", displayName: "Ari Tan", embeddings: [ari] },
+    { workerId: "worker-9", displayName: "Bo Lim", embeddings: [bo] },
+  ]);
+  const bodies = [{ face: faceAt() }];
+  const source = { videoWidth: 640, videoHeight: 480 };
+
+  // Neither worker ever holds three of the last five views.
+  for (let sample = 0; sample < 4; sample += 1) {
+    await recognizer.describe(bodies, source, 1_000 + sample * 1_000);
+    assert.notEqual(recognizer.enrollmentState().status, "complete");
+  }
+  assert.equal(recognizer.enrollmentState().workerId, null);
+});

@@ -28,7 +28,7 @@
     faceTextureSampleMs: 1_000,
     faceEmbeddingReentryDistance: 0.55,
     faceEmbeddingMismatchDistance: 0.72,
-    faceIdentityMatchDistance: 0.55,
+    faceIdentityMatchDistance: 0.6,
     faceIdentityMargin: 0.08,
     faceEmbeddingGallerySize: 10,
     faceEmbeddingSampleMs: 1_000,
