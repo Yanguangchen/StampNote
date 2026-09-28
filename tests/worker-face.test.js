@@ -115,3 +115,73 @@ test("a nearest face is rejected when another worker is inside the safety margin
     null,
   );
 });
+
+// A unit view turned `angle` away from straight on, along its own direction:
+// different axes stand for different lighting, angles or cameras.
+function view(axis, angle = 0.3) {
+  const values = Array.from({ length: 128 }, () => 0);
+  values[0] = Math.cos(angle);
+  values[axis] += Math.sin(angle);
+  return values;
+}
+
+function minimumPairDistance(views) {
+  let minimum = Infinity;
+  views.forEach((left, index) =>
+    views.slice(index + 1).forEach((right) => {
+      minimum = Math.min(minimum, workerFace.distance(left, right));
+    }),
+  );
+  return minimum;
+}
+
+test("improvement scans fill an enrolled gallery until it holds twelve views", () => {
+  assert.equal(workerFace.MAX_TEMPLATES, 12);
+  const enrolled = [1, 2, 3, 4, 5, 6, 7].map((axis) => view(axis));
+  const refined = workerFace.refineGallery(enrolled, [8, 9, 10].map((axis) => view(axis)));
+
+  assert.equal(refined.embeddings.length, 10);
+  assert.equal(refined.added, 3);
+  assert.equal(refined.skipped, 0);
+  assert.equal(refined.retired, 0, "nothing saved is dropped while there is room");
+  assert.ok(workerFace.distance(refined.embedding, view(1, 0)) < 0.2);
+  refined.embeddings.forEach((embedding) => {
+    const magnitude = Math.sqrt(embedding.reduce((total, value) => total + value ** 2, 0));
+    assert.ok(Math.abs(magnitude - 1) < 1e-9);
+  });
+});
+
+test("once full, a scan swaps redundant views for ones that cover something new", () => {
+  const full = Array.from({ length: 12 }, (unused, index) => view(index + 1));
+  const repeats = [1, 2, 3].map((axis) => view(axis, 0.299));
+  const newCondition = view(40, 0.5);
+  const refined = workerFace.refineGallery(full, [...repeats, newCondition]);
+
+  assert.equal(refined.embeddings.length, 12);
+  assert.ok(
+    refined.embeddings.some((embedding) => workerFace.distance(embedding, newCondition) < 1e-9),
+    "the view from new conditions is kept",
+  );
+  assert.equal(refined.added + refined.skipped, 4);
+  assert.ok(refined.retired >= 1);
+  assert.ok(
+    minimumPairDistance(refined.embeddings) > 0.1,
+    "no two kept views are near-copies of each other",
+  );
+  assert.ok(refined.spread > workerFace.refineGallery(full, []).spread);
+});
+
+test("a view the worker's own consensus would not match is never kept", () => {
+  const enrolled = [1, 2, 3, 4, 5, 6, 7].map((axis) => view(axis));
+  const stranger = view(50, 1.4);
+  const refined = workerFace.refineGallery(enrolled, [view(8), stranger]);
+
+  assert.equal(refined.added, 1);
+  assert.equal(refined.skipped, 1);
+  assert.ok(refined.embeddings.every((embedding) => workerFace.distance(embedding, stranger) > 0.5));
+  assert.ok(workerFace.distance(refined.embedding, view(1, 0)) < 0.2);
+
+  assert.equal(workerFace.refineGallery([], []), null);
+  assert.equal(workerFace.refineGallery([], [Array(128).fill(0)]), null);
+  assert.equal(workerFace.refineGallery([stranger], []).embeddings.length, 1);
+});

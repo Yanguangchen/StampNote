@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 
 const cloudData = require("../photo-cloud.js");
+const workerFace = require("../worker-face.js");
 const { SDK_BASE, createFirebaseClient, firebaseConfig } = require("../firebase.js");
 
 function createHarness(options = {}) {
@@ -70,6 +71,7 @@ function createHarness(options = {}) {
     atob: (value) => Buffer.from(value, "base64").toString("binary"),
     btoa: (value) => Buffer.from(value, "binary").toString("base64"),
     StampNoteCloudData: options.cloudData === undefined ? cloudData : options.cloudData,
+    StampNoteWorkerFace: options.workerFace === undefined ? workerFace : options.workerFace,
     URL: {
       createObjectURL(blob) {
         calls.objectUrlBlob = blob;
@@ -198,6 +200,24 @@ function createHarness(options = {}) {
     },
     async setDoc(reference, value, writeOptions) {
       calls.writes.push({ reference, value, writeOptions });
+    },
+    // Documents a transaction can read, keyed by their path under the database.
+    async runTransaction(receivedDb, update) {
+      assert.equal(receivedDb, db);
+      const stored = options.transactionDocuments || {};
+      const staged = [];
+      const result = await update({
+        async get(reference) {
+          calls.transactionReads = [...(calls.transactionReads || []), reference];
+          const data = stored[reference.segments.slice(1).join("/")];
+          return { exists: () => Boolean(data), data: () => (data ? { ...data } : undefined) };
+        },
+        set(reference, value, writeOptions) {
+          staged.push({ reference, value, writeOptions, transaction: true });
+        },
+      });
+      calls.writes.push(...staged);
+      return result;
     },
     onSnapshot(target, onNext, onError) {
       calls.snapshots.push({ target, onNext, onError });
@@ -1734,4 +1754,151 @@ test("an administrator viewer filters ICE by the recording owner", async () => {
     { kind: "where", field: "publisherUid", operator: "==", value: "worker-1" },
   ]);
   stop();
+});
+
+// A unit view turned `angle` away from the worker's straight-on face, along
+// its own direction.
+function faceView(axis, angle = 0.3) {
+  const view = Array.from({ length: 128 }, () => 0);
+  view[0] = Math.cos(angle);
+  view[axis] += Math.sin(angle);
+  return view;
+}
+
+function straightOn() {
+  return faceView(1, 0);
+}
+
+test("an opted-in improvement scan folds new views into the stored gallery", async () => {
+  const saved = [1, 2, 3, 4, 5, 6, 7].map((axis) => faceView(axis));
+  const harness = createHarness({
+    transactionDocuments: {
+      "users/user-1/workers/AT-0001": {
+        workerId: "AT-0001",
+        displayName: "Ari Tan",
+        ownerId: "user-1",
+        embedding: straightOn(),
+        embeddingGallery: saved.flat(),
+        sampleCount: 7,
+        improvementScans: 1,
+      },
+    },
+  });
+  await harness.client.ready;
+
+  const result = await harness.client.improveWorkerFace({
+    workerId: "at-0001",
+    embeddings: [8, 9, 10].map((axis) => faceView(axis)),
+  });
+
+  assert.deepEqual(result, {
+    workerId: "AT-0001",
+    displayName: "Ari Tan",
+    embeddingCount: 10,
+    maxEmbeddings: 12,
+    improvementScans: 2,
+    added: 3,
+    skipped: 0,
+    retired: 0,
+  });
+  const write = harness.calls.writes.at(-1);
+  assert.equal(write.transaction, true, "the read and the write share one transaction");
+  assert.deepEqual(write.reference.segments.slice(1), ["users", "user-1", "workers", "AT-0001"]);
+  assert.deepEqual(write.writeOptions, { merge: true });
+  assert.equal(write.value.ownerId, "user-1");
+  assert.equal(write.value.embeddingGallery.length, 128 * 10);
+  assert.equal(write.value.embeddingCount, 10);
+  assert.equal(write.value.improvementScans, 2);
+  assert.equal(write.value.viewsCollected, 10);
+  assert.equal(write.value.improvementConsentVersion, "worker-face-improve-v1");
+  assert.equal(write.value.embeddings, undefined, "the Firestore payload has no nested arrays");
+  // The portrait and enrollment time belong to the enrollment, not to this scan.
+  assert.equal("profilePhotoData" in write.value, false);
+  assert.equal("enrolledAt" in write.value, false);
+
+  // The roster reports how often the worker has opted in.
+  const roster = createHarness({
+    documents: [
+      {
+        id: "AT-0001",
+        data: () => ({
+          workerId: "AT-0001",
+          displayName: "Ari Tan",
+          embedding: straightOn(),
+          embeddingGallery: [...saved, faceView(8), faceView(9)].flat(),
+          improvementScans: 2,
+        }),
+      },
+    ],
+  });
+  await roster.client.ready;
+  const [worker] = await roster.client.getWorkerFaces();
+  assert.equal(worker.improvementScans, 2);
+  assert.equal(worker.embeddings.length, 9, "galleries beyond seven views are read whole");
+});
+
+test("an improvement never resurrects a deleted worker and needs an administrator", async () => {
+  const harness = createHarness({ transactionDocuments: {} });
+  await harness.client.ready;
+  await assert.rejects(
+    harness.client.improveWorkerFace({ workerId: "AT-0001", embeddings: [faceView(1)] }),
+    (error) => error.code === "worker-not-found",
+  );
+  assert.equal(harness.calls.writes.length, 0);
+
+  await assert.rejects(
+    harness.client.improveWorkerFace({ workerId: "AT-0001", embeddings: [] }),
+    /no usable face views/,
+  );
+
+  const field = createHarness({ stampnoteRole: "worker", transactionDocuments: {} });
+  await field.client.ready;
+  await assert.rejects(
+    field.client.improveWorkerFace({ workerId: "AT-0001", embeddings: [faceView(1)] }),
+    (error) => error.code === "admin-required",
+  );
+});
+
+test("a legacy enrollment is improved into the account-scoped record", async () => {
+  const harness = createHarness({
+    transactionDocuments: {
+      "workers/legacy-7": {
+        workerId: "WORKER-7",
+        displayName: "Bo Lim",
+        ownerId: "user-1",
+        embedding: straightOn(),
+      },
+      "workers/not-mine": {
+        workerId: "WORKER-8",
+        displayName: "Cy Ong",
+        ownerId: "someone-else",
+        embedding: straightOn(),
+      },
+    },
+  });
+  await harness.client.ready;
+
+  const result = await harness.client.improveWorkerFace({
+    workerId: "WORKER-7",
+    documentId: "legacy-7",
+    embeddings: [faceView(1), faceView(2)],
+  });
+  assert.equal(result.embeddingCount, 3);
+  assert.equal(result.improvementScans, 1);
+  assert.deepEqual(harness.calls.writes.at(-1).reference.segments.slice(1), [
+    "users",
+    "user-1",
+    "workers",
+    "WORKER-7",
+  ]);
+
+  await assert.rejects(
+    harness.client.improveWorkerFace({
+      workerId: "WORKER-8",
+      documentId: "not-mine",
+      embeddings: [faceView(1)],
+    }),
+    (error) => error.code === "worker-not-found",
+    "another account's legacy template is never copied into this one",
+  );
 });

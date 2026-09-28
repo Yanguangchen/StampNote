@@ -91,6 +91,8 @@
     "onboarding.worker.save_failed",
     "onboarding.worker.deleted",
     "onboarding.worker.delete_failed",
+    "onboarding.worker.improved",
+    "onboarding.worker.improve_failed",
     "worker.photo.staged",
     "worker.photo.gps.failed",
     "worker.photo.sent",
@@ -123,6 +125,9 @@
     "matchVotes",
     "requiredVotes",
     "sampleCount",
+    "addedCount",
+    "retiredCount",
+    "templateCount",
     "checkInCount",
     "workerCount",
     "accuracyMeters",
@@ -143,6 +148,7 @@
     metricRating: new Set(["good", "needs_improvement", "poor", "unknown"]),
     action: new Set(["save", "clear", "delete", "rename", "keep", "discard", "review"]),
     source: new Set(["camera", "library"]),
+    mode: new Set(["enroll", "improve"]),
   });
   const MAX_QUEUE = 40;
   const FLUSH_DELAY = 1800;

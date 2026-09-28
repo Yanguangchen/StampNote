@@ -17,13 +17,29 @@
     enrollmentMaximumScaleShift: 0.28,
     enrollmentMaximumRollShift: 0.14,
     enrollmentConsistencyThreshold: 0.72,
-    // Unit normalization makes front/rear-camera distances comparable. Three
-    // independently sampled views must agree, and the nearest worker must be
-    // clearly separated from the runner-up on every accepted view.
-    knownIdentityThreshold: 0.55,
+    // Unit normalization makes front/rear-camera distances comparable. 0.6 is
+    // the recognition network's own reference threshold; 0.55 rejected enough
+    // genuine views of an enrolled worker, on the same phone that enrolled
+    // them, that attendance rarely completed. Three independently sampled
+    // views must agree, and the nearest worker must be clearly separated from
+    // the runner-up on every accepted view.
+    knownIdentityThreshold: 0.6,
     knownIdentityMargin: 0.08,
     knownIdentityVotes: 3,
+    // The agreeing views are counted over the last five samples rather than
+    // the last three. Requiring three in a row let one blurred or turned frame
+    // throw away two good ones, so a worker holding still could scan for a
+    // long time. A wrong worker still has to win three separate views outright.
+    knownIdentityWindow: 5,
+    // An improvement scan adds views to one chosen worker's profile. It opens
+    // only once a view matches that worker at the attendance bar above; after
+    // that, views up to this distance from the saved profile are accepted,
+    // since the views a profile is missing are exactly the ones it matches
+    // poorly. Every view must still be clearly nearer this worker than anyone
+    // else enrolled.
+    improvementThreshold: 0.72,
   });
+  const MAX_TEMPLATES = 12;
 
   // One page, one recognition network.
   //
@@ -196,7 +212,7 @@
         (candidate, index, gallery) =>
           gallery.findIndex((saved) => embeddingDistance(saved, candidate) < 0.000001) === index,
       )
-      .slice(0, 7);
+      .slice(0, MAX_TEMPLATES);
     if (!/^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(workerId) || embeddings.length === 0) {
       return null;
     }
@@ -245,6 +261,32 @@
       nearest,
       reason: "matched",
     };
+  }
+
+  // One view in an improvement scan: is it the chosen worker, and nobody else?
+  function evaluateImprovementView(embedding, target, identities, anchored, settings) {
+    const nearestTemplate = (identity) =>
+      identity.embeddings
+        .map((template) => embeddingDistance(embedding, template))
+        .filter(Number.isFinite)
+        .sort((left, right) => left - right)[0] ?? null;
+    const distance = nearestTemplate(target);
+    if (!Number.isFinite(distance)) return { accepted: false, distance: null, reason: "no_template" };
+    const rival = identities
+      .filter((identity) => identity.workerId !== target.workerId)
+      .map((identity) => ({ workerId: identity.workerId, distance: nearestTemplate(identity) }))
+      .filter((candidate) => Number.isFinite(candidate.distance))
+      .sort((left, right) => left.distance - right.distance)[0];
+    if (rival && rival.distance - distance < settings.knownIdentityMargin) {
+      return {
+        accepted: false,
+        distance,
+        reason: rival.distance < distance ? "other_worker" : "ambiguous",
+      };
+    }
+    const limit = anchored ? settings.improvementThreshold : settings.knownIdentityThreshold;
+    if (distance > limit) return { accepted: false, distance, reason: "too_far" };
+    return { accepted: true, distance, reason: "matched" };
   }
 
   function matchKnownIdentity(embedding, identities, settings) {
@@ -318,7 +360,15 @@
     let lastEnrollmentGeometry = null;
     let matchedIdentity = null;
     let matchDiagnostic = null;
+    let improvementAnchored = false;
     const knownIdentities = (options.knownIdentities || []).map(normalizedIdentity).filter(Boolean);
+    // Set only for an improvement scan the worker has opted into. Its views go
+    // to this one worker, so it must be somebody the roster already knows.
+    const improvingWorkerId = String(options.improvingWorkerId || "").trim().toUpperCase();
+    const improvingIdentity = improvingWorkerId
+      ? knownIdentities.find((identity) => identity.workerId === improvingWorkerId) || null
+      : null;
+    if (improvingWorkerId && !improvingIdentity) enrollmentStatus = "unavailable";
 
     function enrollmentState() {
       return {
@@ -329,7 +379,20 @@
         progress: Math.min(1, enrollmentSamples / settings.enrollmentSamples),
         workerId: matchedIdentity?.workerId || null,
         personLabel: matchedIdentity?.personLabel || null,
-        ...(knownIdentities.length > 0
+        ...(improvingWorkerId
+          ? {
+              improving: true,
+              anchored: improvementAnchored,
+              candidateWorkerId: improvingWorkerId,
+              matchDistance: Number.isFinite(matchDiagnostic?.distance)
+                ? matchDiagnostic.distance
+                : null,
+              matchThreshold: improvementAnchored
+                ? settings.improvementThreshold
+                : settings.knownIdentityThreshold,
+              matchReason: matchDiagnostic?.reason || "waiting",
+            }
+          : knownIdentities.length > 0
           ? {
               candidateWorkerId: matchDiagnostic?.workerId || null,
               matchDistance: Number.isFinite(matchDiagnostic?.distance)
@@ -365,6 +428,10 @@
     }
 
     async function describe(bodies = [], source = null, timestamp = Date.now()) {
+      if (improvingWorkerId && !improvingIdentity) {
+        enrollmentStatus = "unavailable";
+        return bodies;
+      }
       if (!faceApi) {
         if (!failed) load().catch(() => {});
         enrollmentStatus = failed ? "unavailable" : "loading";
@@ -412,7 +479,57 @@
           const faceEmbedding = normalizedEmbedding(descriptors?.[descriptorIndex]);
           if (faceEmbedding) {
             let enrollmentAccepted = false;
-            if (enrolling) {
+            // Every collected view must also agree with the ones already taken
+            // this session, so one scan cannot mix two faces.
+            const collectConsistentView = () => {
+              const reference = averageEmbedding(enrollmentEmbeddings);
+              const separation = reference
+                ? embeddingDistance(faceEmbedding, reference)
+                : 0;
+              if (
+                reference &&
+                (!Number.isFinite(separation) ||
+                  separation > settings.enrollmentConsistencyThreshold)
+              ) {
+                enrollmentStatus = "face_changed";
+                return false;
+              }
+              enrollmentEmbeddings.push(faceEmbedding);
+              enrollmentSamples = enrollmentEmbeddings.length;
+              enrollmentStatus =
+                enrollmentSamples >= settings.enrollmentSamples ? "complete" : "scanning";
+              return true;
+            };
+            if (enrolling && improvingIdentity) {
+              const verdict = evaluateImprovementView(
+                faceEmbedding,
+                improvingIdentity,
+                knownIdentities,
+                improvementAnchored,
+                settings,
+              );
+              matchDiagnostic = {
+                workerId: improvingIdentity.workerId,
+                distance: verdict.distance,
+                reason: verdict.reason,
+              };
+              if (verdict.reason === "other_worker") {
+                // Nearer somebody else than the chosen worker: whoever is in
+                // front of the camera now may not be who the scan started
+                // with, so nothing collected so far is trusted.
+                enrollmentEmbeddings = [];
+                enrollmentSamples = 0;
+                improvementAnchored = false;
+                enrollmentStatus = "not_this_worker";
+              } else if (verdict.reason === "ambiguous") {
+                enrollmentStatus = "not_this_worker";
+              } else if (!verdict.accepted) {
+                enrollmentStatus = improvementAnchored ? "too_different" : "verifying";
+              } else {
+                enrollmentAccepted = collectConsistentView();
+                if (enrollmentAccepted) improvementAnchored = true;
+              }
+            } else if (enrolling) {
               if (knownIdentities.length > 0) {
                 const evaluation = evaluateKnownIdentity(
                   faceEmbedding,
@@ -421,11 +538,21 @@
                 );
                 const match = evaluation.match;
                 enrollmentAccepted = Boolean(match);
+                const requiredVotes = Math.min(
+                  settings.knownIdentityVotes,
+                  settings.enrollmentSamples,
+                );
                 enrollmentMatches.push(match);
-                if (enrollmentMatches.length > settings.enrollmentSamples) {
+                if (
+                  enrollmentMatches.length >
+                  Math.max(settings.knownIdentityWindow || 0, settings.enrollmentSamples)
+                ) {
                   enrollmentMatches.shift();
                 }
-                enrollmentSamples = enrollmentMatches.length;
+                enrollmentSamples = Math.min(
+                  enrollmentMatches.length,
+                  settings.enrollmentSamples,
+                );
                 const votes = new Map();
                 enrollmentMatches.filter(Boolean).forEach((candidate) => {
                   const vote = votes.get(candidate.workerId) || { count: 0, candidate };
@@ -443,7 +570,7 @@
                 };
                 if (
                   enrollmentMatches.length >= settings.enrollmentSamples &&
-                  winner?.count >= Math.min(settings.knownIdentityVotes, settings.enrollmentSamples)
+                  winner?.count >= requiredVotes
                 ) {
                   matchedIdentity = winner.candidate;
                   enrollmentStatus = "complete";
@@ -454,23 +581,7 @@
                       : "scanning";
                 }
               } else {
-                const reference = averageEmbedding(enrollmentEmbeddings);
-                const separation = reference
-                  ? embeddingDistance(faceEmbedding, reference)
-                  : 0;
-                if (
-                  reference &&
-                  (!Number.isFinite(separation) ||
-                    separation > settings.enrollmentConsistencyThreshold)
-                ) {
-                  enrollmentStatus = "face_changed";
-                } else {
-                  enrollmentEmbeddings.push(faceEmbedding);
-                  enrollmentSamples = enrollmentEmbeddings.length;
-                  enrollmentAccepted = true;
-                  enrollmentStatus =
-                    enrollmentSamples >= settings.enrollmentSamples ? "complete" : "scanning";
-                }
+                enrollmentAccepted = collectConsistentView();
               }
             }
             enriched[entry.index] = {
@@ -502,7 +613,13 @@
       lastEnrollmentGeometry = null;
       matchedIdentity = null;
       matchDiagnostic = null;
-      enrollmentStatus = failed ? "unavailable" : faceApi ? "no_face" : "loading";
+      improvementAnchored = false;
+      enrollmentStatus =
+        failed || (improvingWorkerId && !improvingIdentity)
+          ? "unavailable"
+          : faceApi
+            ? "no_face"
+            : "loading";
     }
 
     function status() {

@@ -34,7 +34,7 @@
     <script src="frame-scaler.js" defer></script>
     <script src="face-identity.js" defer></script>
     <script src="pose-mapping.js" defer></script>
-    <script src="firebase.js?v=20260818-2" defer></script>
+    <script src="firebase.js?v=20260928-1" defer></script>
     <script src="pose-model.js" type="module"></script>
     <script src="onboarding.js" type="module"></script>
   </head>
@@ -115,6 +115,7 @@
              are filled in. -->
         <section class="card scanner" id="scanner-card" aria-labelledby="scanner-title" hidden>
           <p class="card-title" id="scanner-title"><span class="step-badge">2</span>Face scan</p>
+          <p class="scanner-mode" id="scanner-mode" aria-live="polite" hidden></p>
 
           <div class="scanner-view" id="scanner-view" data-status="idle">
             <video id="onboarding-video" playsinline muted autoplay></video>
@@ -173,6 +174,7 @@
 
         <p class="privacy-note">
           A scan stores one face template for worker ID matching and one profile photo for the roster.
+          Improving recognition is optional: it adds more views to the same template and keeps no photo.
         </p>
       </div>
     </main>

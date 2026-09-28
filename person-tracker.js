@@ -28,9 +28,12 @@
     faceTextureSampleMs: 1_000,
     faceEmbeddingReentryDistance: 0.55,
     faceEmbeddingMismatchDistance: 0.72,
-    faceIdentityMatchDistance: 0.55,
+    faceIdentityMatchDistance: 0.6,
     faceIdentityMargin: 0.08,
     faceEmbeddingGallerySize: 10,
+    // An enrolled worker's saved profile, which opt-in improvement scans can
+    // grow to twelve views; it is read whole rather than cut to the live gallery.
+    enrolledFaceEmbeddingGallerySize: 12,
     faceEmbeddingSampleMs: 1_000,
     velocitySmoothing: 0.2,
   });
@@ -690,7 +693,7 @@
         ]
           .map(normalizedFaceEmbedding)
           .filter(Boolean)
-          .slice(0, settings.faceEmbeddingGallerySize);
+          .slice(0, settings.enrolledFaceEmbeddingGallerySize);
         const displayName = String(identity?.displayName || "").trim().replace(/\s+/g, " ");
         return /^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(workerId) && embeddings.length > 0
           ? { workerId, displayName: displayName || null, embeddings }

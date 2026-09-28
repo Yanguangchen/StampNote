@@ -116,6 +116,9 @@
       return user;
     }
 
+    // Seven views from enrollment, and room for the ones improvement scans add.
+    const MAX_FACE_TEMPLATES = 12;
+
     function normalizeFaceEmbedding(value) {
       const raw = ArrayBuffer.isView(value) ? Array.from(value) : value;
       if (
@@ -152,7 +155,7 @@
         value.embeddingGallery.length % 128 === 0
       ) {
         return Array.from(
-          { length: Math.min(7, value.embeddingGallery.length / 128) },
+          { length: Math.min(MAX_FACE_TEMPLATES, value.embeddingGallery.length / 128) },
           (_, index) => value.embeddingGallery.slice(index * 128, (index + 1) * 128),
         );
       }
@@ -171,7 +174,7 @@
               saved.every((entry, position) => Math.abs(entry - candidate[position]) < 0.000001),
             ) === index,
         )
-        .slice(0, 7);
+        .slice(0, MAX_FACE_TEMPLATES);
       const embedding =
         normalizeFaceEmbedding(value?.embedding) || averageFaceEmbeddings(embeddings);
 
@@ -453,6 +456,110 @@
     };
   }
 
+  // A scan the worker opted into, to be recognised more reliably. Its views are
+  // folded into the saved gallery rather than replacing it, and the read and
+  // the write share one transaction so two devices improving the same worker
+  // at once cannot drop each other's views. The gallery is always the stored
+  // one, never a copy held by the page: a template deleted a moment ago stays
+  // deleted.
+  async function improveWorkerFace(input) {
+    const cloud = services || (await ready);
+    const user = await requireAdmin(
+      cloud,
+      "Administrator access is required to improve a face profile.",
+    );
+    const refineGallery = scope.StampNoteWorkerFace?.refineGallery;
+    if (typeof refineGallery !== "function") {
+      throw new Error("The face profile helpers are unavailable. Reload and try again.");
+    }
+    const workerId = String(input?.workerId || "").trim().toUpperCase();
+    if (!/^[A-Z0-9][A-Z0-9_-]{1,31}$/.test(workerId)) {
+      throw new Error("The worker enrollment has no valid ID.");
+    }
+    const views = (Array.isArray(input?.embeddings) ? input.embeddings : [])
+      .map(normalizeFaceEmbedding)
+      .filter(Boolean);
+    if (views.length === 0) {
+      throw new Error("The improvement scan collected no usable face views.");
+    }
+
+    const scopedReference = cloud.firestoreSdk.doc(
+      cloud.db,
+      "users",
+      user.uid,
+      "workers",
+      workerId,
+    );
+    const legacyId = String(input?.documentId || "").trim();
+    const legacyReference =
+      legacyId && !legacyId.includes("/")
+        ? cloud.firestoreSdk.doc(cloud.db, "workers", legacyId)
+        : null;
+
+    return cloud.firestoreSdk.runTransaction(cloud.db, async (transaction) => {
+      const scoped = await transaction.get(scopedReference);
+      let stored = scoped.exists() ? scoped.data() : null;
+      if (!stored && legacyReference) {
+        // Enrolled before account-scoped records. The improved gallery is
+        // written to the scoped record, which the roster prefers from then on.
+        const legacy = await transaction.get(legacyReference);
+        const value = legacy.exists() ? legacy.data() : null;
+        if (value && String(value.ownerId || "") === user.uid) stored = value;
+      }
+      if (!stored) {
+        throw Object.assign(new Error(`${workerId} is no longer enrolled.`), {
+          code: "worker-not-found",
+        });
+      }
+      const baseline = workerRecord({ workerId, ...stored });
+      if (baseline.workerId !== workerId) {
+        throw new Error("The stored enrollment belongs to a different worker ID.");
+      }
+
+      const refined = refineGallery(baseline.embeddings, views, { max: MAX_FACE_TEMPLATES });
+      const improvementScans =
+        Math.max(0, Math.floor(Number(stored.improvementScans) || 0)) + 1;
+      const viewsCollected =
+        Math.max(
+          baseline.embeddings.length,
+          Math.floor(Number(stored.viewsCollected ?? stored.sampleCount) || 0),
+        ) + views.length;
+
+      transaction.set(
+        scopedReference,
+        {
+          workerId,
+          displayName: baseline.displayName,
+          embedding: refined.embedding,
+          embeddingGallery: refined.embeddings.flat(),
+          embeddingCount: refined.embeddings.length,
+          embeddingDimensions: 128,
+          ownerId: user.uid,
+          templateType: "face-api-128-flat-gallery",
+          schemaVersion: 3,
+          consentVersion: "worker-face-v1",
+          improvementConsentVersion: "worker-face-improve-v1",
+          improvementScans,
+          viewsCollected,
+          improvedAt: cloud.firestoreSdk.serverTimestamp(),
+          updatedAt: cloud.firestoreSdk.serverTimestamp(),
+        },
+        { merge: true },
+      );
+
+      return {
+        workerId,
+        displayName: baseline.displayName,
+        embeddingCount: refined.embeddings.length,
+        maxEmbeddings: MAX_FACE_TEMPLATES,
+        improvementScans,
+        added: refined.added,
+        skipped: refined.skipped,
+        retired: refined.retired,
+      };
+    });
+  }
+
   async function getWorkerFaces() {
     const cloud = services || (await ready);
     const user = requireUser(cloud, "Sign in with Google to load enrolled workers.");
@@ -469,6 +576,7 @@
           documentId: entry.id,
           ...workerRecord(data),
           profilePhoto: encodeProfilePhoto(data),
+          improvementScans: Math.max(0, Math.floor(Number(data?.improvementScans) || 0)),
         };
         workers.set(worker.workerId, worker);
       } catch {
@@ -1507,6 +1615,7 @@
       signOut,
       subscribeAuth,
       getWorkerFaces,
+      improveWorkerFace,
       saveAttendance,
       saveWorkerFace,
       renameSession,

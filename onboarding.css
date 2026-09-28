@@ -612,7 +612,8 @@ a {
 }
 
 .worker-name,
-.worker-id {
+.worker-id,
+.worker-profile {
   margin: 0;
 }
 
@@ -626,6 +627,49 @@ a {
   color: var(--muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+}
+
+.worker-profile {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Improving is the everyday action and deleting the rare one, so the two sit
+   together but only delete wears the warning colour. */
+.worker-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-xs);
+  justify-content: flex-end;
+}
+
+.improve-worker {
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 650;
+  transition:
+    border-color var(--motion-fast) var(--ease),
+    background var(--motion-fast) var(--ease);
+}
+
+.improve-worker:hover {
+  border-color: var(--accent);
+  background: var(--field);
+}
+
+.scanner-mode {
+  margin: calc(var(--gap-xs) * -1) 0 var(--gap-sm);
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 650;
 }
 
 .delete-worker {
@@ -690,6 +734,17 @@ a {
 
   .scanner-view {
     aspect-ratio: 3 / 4;
+  }
+
+  /* Two buttons beside a name leave the name no room on a phone, so the
+     actions take their own line under it. */
+  .worker-row {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .worker-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
   }
 }
 

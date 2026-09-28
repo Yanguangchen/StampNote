@@ -2,9 +2,16 @@
   "use strict";
 
   const EMBEDDING_LENGTH = 128;
-  const MATCH_THRESHOLD = 0.55;
+  const MATCH_THRESHOLD = 0.6;
   const MATCH_MARGIN = 0.08;
-  const MAX_TEMPLATES = 7;
+  // Enrollment stores seven views. The remaining room is filled by improvement
+  // scans a worker opts into, so a profile can grow to cover the light, angles
+  // and camera they are actually seen with.
+  const MAX_TEMPLATES = 12;
+  // A view further than this from the worker's own consensus is one the
+  // consensus would not match either, so keeping it would widen the profile
+  // towards other people rather than cover more of this one.
+  const REFINE_OUTLIER_DISTANCE = MATCH_THRESHOLD;
 
   function normalizeWorkerId(value) {
     const normalized = String(value || "").trim().toUpperCase();
@@ -117,6 +124,92 @@
     return unique.slice(0, MAX_TEMPLATES);
   }
 
+  function uniqueEmbeddings(values) {
+    const unique = [];
+    (Array.isArray(values) ? values : []).forEach((value) => {
+      const embedding = normalizeEmbedding(value);
+      // An all-zero vector has no direction, so it describes nobody.
+      if (!embedding || embedding.every((entry) => entry === 0)) return;
+      if (!unique.some((saved) => distance(saved, embedding) < 0.000001)) {
+        unique.push(embedding);
+      }
+    });
+    return unique;
+  }
+
+  // Folds the views from an improvement scan into a worker's saved gallery.
+  //
+  // Every scan is pooled with what is already stored, then views the pooled
+  // consensus would not itself match are dropped as bad captures. What is left
+  // is chosen for coverage: the most typical view first, then repeatedly the
+  // view least like anything already chosen. So while there is room every
+  // consistent view is kept, and once the gallery is full a new scan only
+  // displaces a view it makes redundant — each opt-in scan can widen what the
+  // profile recognises, and none can narrow it to one afternoon's lighting.
+  function refineGallery(saved, incoming, options = {}) {
+    const max = Math.max(1, Math.floor(Number(options.max) || MAX_TEMPLATES));
+    const outlierDistance = Number.isFinite(options.outlierDistance)
+      ? options.outlierDistance
+      : REFINE_OUTLIER_DISTANCE;
+    const savedViews = uniqueEmbeddings(saved);
+    const freshViews = uniqueEmbeddings(incoming).filter(
+      (view) => !savedViews.some((kept) => distance(kept, view) < 0.000001),
+    );
+    const pool = [
+      ...savedViews.map((embedding) => ({ embedding, fresh: false })),
+      ...freshViews.map((embedding) => ({ embedding, fresh: true })),
+    ];
+    if (pool.length === 0) return null;
+
+    const pooledCenter = averageEmbeddings(pool.map((view) => view.embedding));
+    const nearestToCenter = (views, center) =>
+      views.reduce((best, view) =>
+        distance(view.embedding, center) < distance(best.embedding, center) ? view : best,
+      );
+    let consistent = pool.filter(
+      (view) => distance(view.embedding, pooledCenter) <= outlierDistance,
+    );
+    // A gallery is never emptied: with nothing consistent, the most typical
+    // view still stands for the worker.
+    if (consistent.length === 0) consistent = [nearestToCenter(pool, pooledCenter)];
+
+    const embedding = averageEmbeddings(consistent.map((view) => view.embedding));
+    const selected = [nearestToCenter(consistent, embedding)];
+    let remaining = consistent.filter((view) => view !== selected[0]);
+    while (selected.length < max && remaining.length > 0) {
+      let best = null;
+      let bestGap = -Infinity;
+      // Saved views come first in the pool, so a tie keeps what is stored.
+      remaining.forEach((view) => {
+        const gap = Math.min(...selected.map((kept) => distance(kept.embedding, view.embedding)));
+        if (gap > bestGap) {
+          best = view;
+          bestGap = gap;
+        }
+      });
+      selected.push(best);
+      remaining = remaining.filter((view) => view !== best);
+    }
+
+    const keptSaved = selected.filter((view) => !view.fresh).length;
+    const added = selected.length - keptSaved;
+    return {
+      embedding,
+      embeddings: selected.map((view) => view.embedding),
+      // Views from this scan that made it into the gallery.
+      added,
+      // Views from this scan left out: redundant with the gallery, or outliers.
+      skipped: freshViews.length - added,
+      // Saved views this scan made redundant, or showed to be outliers.
+      retired: savedViews.length - keptSaved,
+      // How widely the kept views spread around the consensus. It grows as
+      // scans in new conditions are added.
+      spread:
+        selected.reduce((total, view) => total + distance(view.embedding, embedding), 0) /
+        selected.length,
+    };
+  }
+
   function match(embedding, workers = [], options = {}) {
     const candidate = normalizeEmbedding(embedding);
     if (!candidate) return null;
@@ -155,6 +248,7 @@
     MAX_TEMPLATES,
     MATCH_MARGIN,
     MATCH_THRESHOLD,
+    REFINE_OUTLIER_DISTANCE,
     averageEmbeddings,
     distance,
     match,
@@ -163,6 +257,7 @@
     normalizeEmbedding,
     normalizeEmbeddings,
     normalizeWorkerId,
+    refineGallery,
     workerIdPrefix,
   });
 
