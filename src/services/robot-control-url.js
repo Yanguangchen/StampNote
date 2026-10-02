@@ -6,6 +6,11 @@
   const DOMAIN = /^(?:[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?\.)+[a-z](?:[a-z\d-]{0,61}[a-z\d])?\.?$/i;
   const ADDRESS_ERROR = "Enter a robot IP address or HTTPS URL.";
 
+  // The rover's control page, reachable over HTTPS from anywhere. Live tunnel
+  // opens it on its own, so nobody has to type an address; another robot can
+  // still be opened by its IP or its own HTTPS URL.
+  const DEFAULT_ROBOT_CONTROL_URL = "https://rover.webwizardsg.com/";
+
   function parseRobotControlUrl(raw, urlCtor = globalScope.URL) {
     const trimmed = String(raw ?? "").trim();
     if (!trimmed) {
@@ -47,7 +52,7 @@
     return { ok: true, href: String(parsed.href), host: String(parsed.host) };
   }
 
-  const api = { parseRobotControlUrl };
+  const api = { DEFAULT_ROBOT_CONTROL_URL, parseRobotControlUrl };
   globalScope.StampNoteRobotControlUrl = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);
