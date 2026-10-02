@@ -937,6 +937,7 @@ function createPageHarness(options = {}) {
     },
   ];
 
+  let tunnelSnapshot = null;
   const cloud = {
     async signIn() {
       cloudCalls.signIn += 1;
@@ -947,6 +948,7 @@ function createPageHarness(options = {}) {
       return () => {};
     },
     subscribeLiveTunnels(onChange) {
+      tunnelSnapshot = onChange;
       queueMicrotask(() => onChange(liveRecords));
       return () => {};
     },
@@ -1074,6 +1076,9 @@ function createPageHarness(options = {}) {
     },
     cloudCalls,
     elements,
+    pushTunnels(records) {
+      tunnelSnapshot?.(records);
+    },
     storedRobotIps() {
       try {
         return JSON.parse(storage.get("stampnote-live-tunnel-robot-ip") || "{}");
@@ -1278,6 +1283,15 @@ test("a secure remote controls link opens beside its camera and is remembered in
   assert.doesNotMatch(harness.elements["live-tunnel-status"].textContent, /may be blocked/);
 });
 
+test("the default robot controls are the rover, opened over HTTPS", () => {
+  const parse = robotControlUrl.parseRobotControlUrl;
+  assert.equal(robotControlUrl.DEFAULT_ROBOT_CONTROL_URL, "https://rover.webwizardsg.com/");
+  assert.deepEqual(
+    { ...parse(robotControlUrl.DEFAULT_ROBOT_CONTROL_URL) },
+    { ok: true, href: "https://rover.webwizardsg.com/", host: "rover.webwizardsg.com" },
+  );
+});
+
 test("every live tunnel session has a robot IP field that opens an iframe", async () => {
   const harness = createPageHarness({
     tunnels: [
@@ -1309,7 +1323,10 @@ test("every live tunnel session has a robot IP field that opens an iframe", asyn
   assert.equal(harness.elements["live-tunnel-list"].children.length, 2);
   assert.equal(sessionRobotInput(harness, 0).placeholder, "Robot controls URL or IP");
   assert.equal(sessionRobotInput(harness, 1).placeholder, "Robot controls URL or IP");
-  assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "false");
+  // The rover opens beside the first recording on its own; another robot can
+  // still be opened by IP for any session.
+  assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "true");
+  assert.equal(harness.elements["live-tunnel-robot-frame"].src, "https://rover.webwizardsg.com/");
 
   sessionRobotInput(harness, 1).value = "192.168.1.50:8080";
   await sessionRobotForm(harness, 1).dispatch("submit");
@@ -1335,20 +1352,22 @@ test("every live tunnel session has a robot IP field that opens an iframe", asyn
   assert.match(harness.elements["live-tunnel-status"].textContent, /Robot control closed/);
 });
 
-test("a stored robot IP fills that session field but does not open the iframe", async () => {
+test("a robot address typed for a session reopens in place of the rover", async () => {
   const harness = createPageHarness({
     storedRobotIps: { "live-1": "10.0.0.9" },
   });
   await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
   await settle();
   assert.equal(sessionRobotInput(harness).value, "10.0.0.9");
-  assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "false");
-  assert.equal(harness.elements["live-tunnel-robot-frame"].src, "");
+  assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "true");
+  assert.equal(harness.elements["live-tunnel-robot-frame"].src, "http://10.0.0.9/");
 });
 
 test("an invalid robot IP stays on the live tunnel without opening the iframe", async () => {
   const harness = createPageHarness();
   await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  await harness.elements["live-tunnel-robot-close"].dispatch("click");
   await settle();
   sessionRobotInput(harness).value = "javascript:alert(1)";
   await sessionRobotForm(harness).dispatch("submit");
@@ -1357,6 +1376,119 @@ test("an invalid robot IP stays on the live tunnel without opening the iframe", 
   assert.equal(harness.elements["live-tunnel-split"].dataset.robotOpen, "false");
   assert.equal(harness.elements["live-tunnel-robot-frame"].src, "");
   assert.match(harness.elements["live-tunnel-status"].textContent, /http or https/i);
+});
+
+test("an invalid address leaves the open rover where it is", async () => {
+  const harness = createPageHarness();
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  sessionRobotInput(harness).value = "not a robot";
+  await sessionRobotForm(harness).dispatch("submit");
+  await settle();
+  assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "true");
+  assert.equal(harness.elements["live-tunnel-robot-frame"].src, "https://rover.webwizardsg.com/");
+  assert.match(harness.elements["live-tunnel-status"].textContent, /robot IP address or HTTPS URL/i);
+});
+
+test("live tunnel opens the rover beside the live picture without typing", async () => {
+  const harness = createPageHarness();
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+
+  assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "true");
+  assert.equal(harness.elements["live-tunnel-split"].dataset.robotOpen, "true");
+  assert.equal(harness.elements["live-tunnel-robot-frame"].src, "https://rover.webwizardsg.com/");
+  assert.equal(harness.elements["live-tunnel-robot-host"].textContent, "rover.webwizardsg.com");
+  // The fields say what is open, so nobody has to type it.
+  assert.equal(sessionRobotInput(harness).value, "https://rover.webwizardsg.com/");
+  assert.equal(harness.elements["live-tunnel-robot-ip"].value, "https://rover.webwizardsg.com/");
+  assert.equal(harness.elements["live-tunnel-robot-ip-open"].hidden, true);
+  assert.equal(harness.elements["live-tunnel-robot-close"].hidden, false);
+  // Opening the rover and auto-joining the recording are one join, not two.
+  assert.equal(harness.cloudCalls.joined.length, 1);
+  assert.equal(harness.cloudCalls.joined[0].tunnelId, "live-1");
+  assert.match(harness.elements["live-tunnel-status"].textContent, /Opened robot control at rover\.webwizardsg\.com/);
+});
+
+test("with no live recording the rover waits, then opens with the first one", async () => {
+  const harness = createPageHarness({ tunnels: [] });
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "false");
+  assert.equal(harness.elements["live-tunnel-robot-frame"].src, "");
+  assert.equal(harness.elements["live-tunnel-robot-ip"].value, "https://rover.webwizardsg.com/");
+
+  harness.pushTunnels([
+    {
+      id: "live-7",
+      ownerId: "owner-1",
+      location: "Depot",
+      status: "live",
+      lastSeenAtMs: Date.now(),
+      startedAtMs: Date.now() - 1_000,
+    },
+  ]);
+  await settle();
+  assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "true");
+  assert.equal(harness.elements["live-tunnel-robot-frame"].src, "https://rover.webwizardsg.com/");
+  assert.equal(harness.cloudCalls.joined.at(-1).tunnelId, "live-7");
+});
+
+test("closing the rover keeps it closed until it is opened again or the operator signs in afresh", async () => {
+  const harness = createPageHarness();
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  await harness.elements["live-tunnel-robot-close"].dispatch("click");
+  await settle();
+  assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "false");
+
+  const record = {
+    id: "live-1",
+    ownerId: "owner-1",
+    location: "10 Marina Bay",
+    status: "live",
+    lastSeenAtMs: Date.now(),
+    startedAtMs: Date.now() - 60_000,
+  };
+  harness.pushTunnels([record]);
+  await settle();
+  assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "false", "a tunnel update does not undo Close");
+  assert.equal(harness.elements["live-tunnel-robot-frame"].src, "");
+
+  // The prefilled address is one tap away.
+  await harness.elements["live-tunnel-robot-ip-form"].dispatch("submit");
+  await settle();
+  assert.equal(harness.elements["live-tunnel-robot-frame"].src, "https://rover.webwizardsg.com/");
+
+  await harness.elements["live-tunnel-robot-close"].dispatch("click");
+  await harness.auth(null);
+  await settle();
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "true");
+  assert.equal(harness.elements["live-tunnel-robot-frame"].src, "https://rover.webwizardsg.com/");
+});
+
+test("when the rover's recording stops, the rover reopens beside the next one", async () => {
+  const now = Date.now();
+  const first = { id: "live-1", ownerId: "owner-1", location: "Bay", status: "live", lastSeenAtMs: now, startedAtMs: now - 60_000 };
+  const second = { id: "live-2", ownerId: "owner-1", location: "Depot", status: "live", lastSeenAtMs: now, startedAtMs: now - 30_000 };
+  const harness = createPageHarness({ tunnels: [first, second] });
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  assert.equal(harness.cloudCalls.joined.at(-1).tunnelId, "live-1");
+  assert.equal(harness.elements["live-tunnel-robot-frame"].src, "https://rover.webwizardsg.com/");
+
+  harness.pushTunnels([second]);
+  await settle();
+  assert.equal(harness.cloudCalls.joined.at(-1).tunnelId, "live-2");
+  assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "true");
+  assert.equal(harness.elements["live-tunnel-robot-frame"].src, "https://rover.webwizardsg.com/");
+  assert.equal(
+    sessionRobotForm(harness).querySelector(".live-tunnel-robot-ip-close").hidden,
+    false,
+    "the remaining session now owns the open rover",
+  );
 });
 
 test("the robot iframe is stretched to its pane instead of the 300 by 150 default", () => {

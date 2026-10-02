@@ -10,6 +10,7 @@
   const telemetry = globalScope.StampNoteObservability;
   const THEME_KEY = "stampnote-theme";
   const ROBOT_IP_KEY = "stampnote-live-tunnel-robot-ip";
+  const DEFAULT_ROBOT_URL = robotControlUrl?.DEFAULT_ROBOT_CONTROL_URL || "";
 
   const signInButton = document.querySelector("#live-tunnel-sign-in");
   const signOutButton = document.querySelector("#live-tunnel-sign-out");
@@ -62,6 +63,10 @@
   let voiceBusy = false;
   let talkBusy = false;
   let robotOpenId = "";
+  // The rover's control page opens beside the live picture on its own. Once
+  // the operator closes it, it stays closed until they open it again or sign
+  // in afresh, rather than springing back on the next tunnel update.
+  let robotAutoOpen = true;
   const voiceRecorder = liveTunnel?.createVoiceRecorder?.({
     MediaRecorder: globalScope.MediaRecorder,
     getUserMedia: globalScope.navigator?.mediaDevices?.getUserMedia?.bind(
@@ -147,6 +152,13 @@
     }
   }
 
+  // An address typed for this recording session wins; otherwise the rover.
+  // Tunnel IDs are per session, so an address from an earlier one never
+  // stands in for the rover.
+  function robotAddressFor(tunnelId) {
+    return readStoredRobotIp(tunnelId) || DEFAULT_ROBOT_URL;
+  }
+
   function readDraftRobotIps() {
     const drafts = new Map();
     for (const item of list?.children || []) {
@@ -182,7 +194,7 @@
     const stageDraft = drafts.get("__stage");
     robotIp.value =
       typed ??
-      (stageDraft ? stageDraft : readStoredRobotIp(record.id));
+      (stageDraft ? stageDraft : robotAddressFor(record.id));
     if (robotIpOpen) robotIpOpen.hidden = Boolean(robotOpenId);
     if (robotIpClose) robotIpClose.hidden = !robotOpenId;
   }
@@ -207,6 +219,7 @@
 
   function closeRobotControl() {
     if (!robotOpenId && robotControl?.dataset.open !== "true") return;
+    robotAutoOpen = false;
     clearRobotControl();
     setStatus("Robot control closed.");
     renderList();
@@ -239,6 +252,18 @@
     });
     renderList();
     return true;
+  }
+
+  // Opening robot control also joins that recording, so this both opens the
+  // control page and starts the picture beside it.
+  function openRobotAutomatically(record) {
+    if (!robotAutoOpen || robotOpenId || !record?.id) return false;
+    const address = robotAddressFor(record.id);
+    return Boolean(address) && openRobotControl(record, address);
+  }
+
+  function joinTunnel(record) {
+    if (!openRobotAutomatically(record)) tunnelInto(record);
   }
 
   function describeError(error) {
@@ -491,7 +516,7 @@
         join.append(location, meta);
         join.addEventListener("click", () => {
           setMenuOpen(false);
-          tunnelInto(record);
+          joinTunnel(record);
         });
 
         const watch = document.createElement("button");
@@ -501,7 +526,7 @@
         watch.disabled = record.id === selectedId;
         watch.addEventListener("click", () => {
           setMenuOpen(false);
-          tunnelInto(record);
+          joinTunnel(record);
         });
 
         const form = document.createElement("form");
@@ -527,7 +552,7 @@
         input.placeholder = "Robot controls URL or IP";
         input.value = draftIps.has(record.id)
           ? draftIps.get(record.id)
-          : readStoredRobotIp(record.id);
+          : robotAddressFor(record.id);
 
         const open = document.createElement("button");
         open.type = "submit";
@@ -574,7 +599,7 @@
         watch.type = "button";
         watch.className = "live-tunnel-watch";
         watch.textContent = `Watch ${record.location || "live recording"}`;
-        watch.addEventListener("click", () => tunnelInto(record));
+        watch.addEventListener("click", () => joinTunnel(record));
         item.append(watch);
         return item;
       }),
@@ -584,6 +609,11 @@
   function handleTunnels(records) {
     tunnels = records || [];
     const live = liveTunnel?.liveTunnels?.(tunnels) || [];
+    // Robot control belongs to a recording, so it closes with that recording
+    // before the next one is chosen, and reopens beside whichever that is.
+    if (robotOpenId && !live.some((record) => record.id === robotOpenId)) {
+      clearRobotControl();
+    }
     renderList();
 
     if (pendingId) {
@@ -591,28 +621,27 @@
       if (requested) {
         pendingId = "";
         autoSelect = true;
-        tunnelInto(requested);
+        joinTunnel(requested);
         return;
       }
     }
 
-    if (selectedId && !live.some((record) => record.id === selectedId)) {
+    const selected = selectedId ? live.find((record) => record.id === selectedId) : null;
+    if (selectedId && !selected) {
       const ended = selectedId;
       const next = autoSelect
         ? live.find((record) => record.id !== ended) || live[0] || null
         : null;
       setStatus("That recording stopped.");
       telemetry?.event("live_tunnel.ended", { tunnelId: ended, status: "ended" });
-      if (next) tunnelInto(next);
+      if (next) joinTunnel(next);
       else leaveTunnel();
     } else if (autoSelect && !selectedId) {
       const next = live[0] || null;
-      if (next) tunnelInto(next);
-    }
-
-    if (robotOpenId && !live.some((record) => record.id === robotOpenId)) {
-      clearRobotControl();
-      renderList();
+      if (next) joinTunnel(next);
+    } else if (selected) {
+      // Already watching: the control page joins it without reconnecting.
+      openRobotAutomatically(selected);
     }
   }
 
@@ -794,6 +823,7 @@
     if (!user) {
       stopListening();
       autoSelect = true;
+      robotAutoOpen = true;
       await leaveTunnel();
       clearRobotControl();
       tunnels = [];
