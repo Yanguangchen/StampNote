@@ -20,6 +20,7 @@
   const captureAttendanceApi = window.StampNoteCaptureAttendance;
   const captureCamera = window.StampNoteCaptureCamera;
   const liveTunnelApi = window.StampNoteLiveTunnel;
+  const faceScanTonesApi = window.StampNoteFaceScanTones;
   const REQUIRED_ATTENDANCE_MATCH_VOTES = 3;
   const addressField = document.querySelector("#address-field");
   const status = document.querySelector("#location-status");
@@ -567,6 +568,12 @@
   let lastTrackingErrorCode = null;
   let faceEnrollmentWasScanning = false;
   let manualAttendanceFormOpen = false;
+  // Attendance taking is heard as well as seen: the worker is looking at the
+  // lens, not the screen. The tones share the shutter's audio context, which
+  // the record tap has already unlocked.
+  const faceScanTones = faceScanTonesApi?.createFaceScanTones({
+    getContext: () => getCaptureAudioContext(),
+  });
   const attendanceRecorder = captureAttendanceApi.createAttendanceRecorder({
     cloud,
     requiredMatchVotes: REQUIRED_ATTENDANCE_MATCH_VOTES,
@@ -643,8 +650,12 @@
     if (manualAttendanceOpen) manualAttendanceOpen.disabled = enrollments.length === 0;
   }
 
-  function saveVisibleAttendance(bodies = []) {
-    attendanceRecorder.saveVisible(bodies);
+  function saveVisibleAttendance(bodies = [], activityStarted = false) {
+    const checkedIn = attendanceRecorder.saveVisible(bodies);
+    // Somebody recognised while work is already being recorded hears the same
+    // chime as the opening scan, so they know they were checked in. Before
+    // then the opening scan confirms its own match, and one chime is enough.
+    if (activityStarted && checkedIn?.length > 0) faceScanTones?.play("complete");
   }
 
   function setMonitorStatus(message, state = "idle") {
@@ -1286,6 +1297,12 @@
     faceEnrollment.dataset.status = awaitingChoice ? "complete" : enrollment?.status || "no_face";
     faceEnrollment.hidden = !(scanning || awaitingChoice);
 
+    if (scanning) {
+      faceScanTones?.observe(enrollment);
+    } else {
+      faceScanTones?.reset();
+    }
+
     if (completedNow) {
       if (manualCheckIn) {
         telemetry?.event(
@@ -1299,6 +1316,9 @@
         );
         saveManualAttendance(enrollment);
       } else {
+        // A face match is confirmed out loud; a manual check-in was the
+        // operator's own tap and needs no chime to be believed.
+        faceScanTones?.play("complete");
         telemetry?.event(
           "face.match.completed",
           {
@@ -2213,7 +2233,7 @@
       if (controller !== activeController) {
         return;
       }
-      saveVisibleAttendance(state.bodies);
+      saveVisibleAttendance(state.bodies, state.activityStarted);
 
       if (state.captures !== before) {
         telemetry?.event("capture.saved", {

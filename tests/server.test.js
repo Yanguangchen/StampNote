@@ -137,6 +137,9 @@ test("the local server exposes public assets and every API boundary without expo
     const faceIdentity = await fetch(`${origin}/face-identity.js`);
     assert.equal(faceIdentity.status, 200);
     assert.match(faceIdentity.headers.get("content-type"), /^text\/javascript/);
+    const faceScanTones = await fetch(`${origin}/face-scan-tones.js`);
+    assert.equal(faceScanTones.status, 200);
+    assert.match(faceScanTones.headers.get("content-type"), /^text\/javascript/);
     const faceModel = await fetch(
       `${origin}/vendor/face-api/model/face_recognition_model-weights_manifest.json`,
     );

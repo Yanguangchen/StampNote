@@ -110,8 +110,12 @@
       return save(enrollment, { source: "manual" });
     }
 
+    // Returns the workers checked in for the first time by these bodies, so
+    // the page can confirm a new arrival without repeating itself when a
+    // failed save is retried.
     function saveVisible(bodies = []) {
       const seenWorkers = new Set();
+      const checkedIn = [];
       (bodies || []).forEach((body) => {
         const workerId = String(body?.workerId || "").trim().toUpperCase();
         if (!workerId || !body?.faceMatched || seenWorkers.has(workerId)) return;
@@ -124,11 +128,13 @@
         matchVotes.set(workerId, votes);
         if (votes < requiredVotes) return;
 
-        saveMatched({
+        const started = saveMatched({
           workerId,
           personLabel: enrolledNames.get(workerId) || workerId,
         });
+        if (started && !entry) checkedIn.push(workerId);
       });
+      return checkedIn;
     }
 
     return Object.freeze({

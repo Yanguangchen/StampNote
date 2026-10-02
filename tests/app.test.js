@@ -901,6 +901,7 @@ function createAppHarness(options = {}) {
   scope.performance = performance;
 
   [
+    resolve(__dirname, "..", "face-scan-tones.js"),
     resolve(__dirname, "..", "src/components/pose-overlay.js"),
     resolve(__dirname, "..", "src/services/capture-attendance.js"),
     resolve(__dirname, "..", "src/capture/camera-controller.js"),
@@ -908,6 +909,7 @@ function createAppHarness(options = {}) {
     vm.runInContext(readFileSync(file, "utf8"), context, { filename: file });
   });
   [
+    "StampNoteFaceScanTones",
     "StampNotePoseOverlay",
     "StampNoteCaptureAttendance",
     "StampNoteCaptureCamera",
@@ -1708,6 +1710,114 @@ test("recording loads enrolled faces and records each matched worker once", asyn
   assert.equal(harness.cloudCalls.attendance.length, 2, "a worker is recorded once per session");
 
   assert.equal(harness.elements["face-enrollment-actions"].hidden, true);
+});
+
+test("attendance taking is heard as it progresses, and each new check-in chimes once", async () => {
+  const embedding = Array.from({ length: 128 }, (unused, index) => index / 1000);
+  const harness = createAppHarness({
+    audio: true,
+    camera: true,
+    cloud: true,
+    faceEnrollment: true,
+    workerFaces: [
+      { workerId: "WORKER-7", displayName: "Ari Tan", embedding },
+      { workerId: "WORKER-9", displayName: "Bo Lim", embedding },
+    ],
+  });
+  // Every audible tone sets a pitch; the silent primer and the shutter do not.
+  const tones = () =>
+    harness.audioCalls.oscillators
+      .map((calls) => calls.find((call) => call.method === "setValueAtTime"))
+      .filter(Boolean)
+      .map((call) => call.value);
+  const enrollment = (fields) => {
+    harness.controllerState.faceEnrollment = { required: true, total: 3, ...fields };
+    harness.captureConfiguration.onUpdate({ ...harness.controllerState });
+  };
+
+  await settle();
+  await harness.elements["monitor-toggle"].dispatch("click");
+  await settle(8);
+  assert.equal(harness.audioCalls.contexts, 1, "the scan shares the shutter's unlocked context");
+  assert.equal(tones().length, 2, "the scan opens with a two-note cue");
+
+  // Framing prompts change with every movement and stay silent.
+  enrollment({ status: "center_face", samples: 0 });
+  assert.equal(tones().length, 2);
+
+  enrollment({ status: "scanning", samples: 1 });
+  enrollment({ status: "scanning", samples: 2 });
+  const ticks = tones().slice(2);
+  assert.equal(ticks.length, 2, "each accepted view ticks");
+  assert.ok(ticks[1] > ticks[0], "ticks climb as the scan fills");
+
+  enrollment({ status: "retrying", samples: 3 });
+  assert.equal(tones().length, 6, "a miss is heard as a falling pair");
+  enrollment({ status: "retrying", samples: 3 });
+  assert.equal(tones().length, 6, "a miss that continues is not repeated every frame");
+
+  enrollment({
+    status: "complete",
+    samples: 3,
+    workerId: "WORKER-7",
+    personLabel: "Ari Tan",
+    matchVotes: 3,
+    requiredVotes: 3,
+  });
+  const chime = tones().slice(6);
+  assert.equal(chime.length, 4, "a recognised face is confirmed with a chime");
+  chime.slice(1).forEach((frequency, index) => assert.ok(frequency > chime[index]));
+  harness.captureConfiguration.onUpdate({ ...harness.controllerState });
+  assert.equal(tones().length, 10, "the confirmation chimes once, not on every render");
+  await settle();
+
+  await harness.elements["face-enrollment-record"].dispatch("click");
+  harness.controllerState.bodies = [
+    { workerId: "WORKER-9", personLabel: "WORKER-9", faceMatched: true },
+  ];
+  for (let view = 0; view < 2; view += 1) {
+    await harness.timers.findLast((timer) => timer.delay === 250).callback();
+    await settle();
+  }
+  assert.equal(tones().length, 10, "background matching is silent until it decides");
+  await harness.timers.findLast((timer) => timer.delay === 250).callback();
+  await settle();
+  assert.equal(harness.cloudCalls.attendance.length, 2);
+  assert.equal(tones().length, 14, "a worker recognised mid-recording hears the chime");
+  await harness.timers.findLast((timer) => timer.delay === 250).callback();
+  await settle();
+  assert.equal(tones().length, 14, "each worker is announced once");
+});
+
+test("a manual check-in and a skipped scan make no confirmation sound", async () => {
+  const harness = createAppHarness({ audio: true, camera: true, faceEnrollment: true });
+  const tones = () =>
+    harness.audioCalls.oscillators.filter((calls) =>
+      calls.some((call) => call.method === "setValueAtTime"),
+    ).length;
+
+  await settle();
+  await harness.elements["monitor-toggle"].dispatch("click");
+  await settle(8);
+  const opening = tones();
+  assert.equal(opening, 2);
+
+  harness.controllerState.faceEnrollment = {
+    required: true,
+    status: "complete",
+    samples: 0,
+    total: 3,
+    workerId: "WORKER-7",
+    personLabel: "Ari Tan",
+    source: "manual",
+  };
+  harness.captureConfiguration.onUpdate({ ...harness.controllerState });
+  assert.equal(tones(), opening, "the operator's own tap needs no chime");
+
+  await harness.elements["face-enrollment-another"].dispatch("click");
+  assert.equal(tones(), opening + 2, "the next worker's scan opens with its own cue");
+  await harness.elements["face-enrollment-skip"].dispatch("click");
+  assert.equal(tones(), opening + 2);
 });
 
 test("each completed check-in can hand the camera to another worker before work starts", async () => {

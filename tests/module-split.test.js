@@ -60,9 +60,12 @@ test("attendance recorder waits for match votes and retries a failed save", asyn
   });
 
   recorder.rememberEnrollment("W001", "Jane Tan");
-  recorder.saveVisible([{ workerId: "W001", faceMatched: true }]);
+  assert.deepEqual(recorder.saveVisible([{ workerId: "W001", faceMatched: true }]), []);
   assert.equal(saved.length, 0);
-  recorder.saveVisible([{ workerId: "W001", faceMatched: true }]);
+  // The page chimes for the workers this returns, so a first check-in is
+  // reported once and a worker already being saved is not reported again.
+  assert.deepEqual(recorder.saveVisible([{ workerId: "W001", faceMatched: true }]), ["W001"]);
+  assert.deepEqual(recorder.saveVisible([{ workerId: "W001", faceMatched: true }]), []);
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(saved.length, 1);
   assert.equal(saved[0].workerId, "W001");
@@ -71,6 +74,34 @@ test("attendance recorder waits for match votes and retries a failed save", asyn
   assert.equal(saved[0].source, "face-match");
   assert.equal(saved[0].reviewStatus, "clear");
   assert.equal(attendance.attendanceDateKey(new Date("2026-08-18T04:00:00.000Z")).length, 10);
+});
+
+test("a check-in retried after a failed save is not reported as a new arrival", async () => {
+  let attempts = 0;
+  const realNow = Date.now;
+  let clock = realNow();
+  Date.now = () => clock;
+  try {
+    const recorder = attendance.createAttendanceRecorder({
+      requiredMatchVotes: 1,
+      cloud: {
+        async saveAttendance() {
+          attempts += 1;
+          if (attempts === 1) throw new Error("offline");
+        },
+      },
+    });
+    recorder.rememberEnrollment("W001", "Jane Tan");
+
+    assert.deepEqual(recorder.saveVisible([{ workerId: "W001", faceMatched: true }]), ["W001"]);
+    await new Promise((resolve) => setImmediate(resolve));
+    clock += 10_001;
+    assert.deepEqual(recorder.saveVisible([{ workerId: "W001", faceMatched: true }]), []);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(attempts, 2, "the save is still retried");
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test("manual attendance accepts only an enrolled profile and requires review", async () => {
