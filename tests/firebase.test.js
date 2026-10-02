@@ -21,6 +21,7 @@ function createHarness(options = {}) {
     snapshots: [],
     unsubscribedSnapshots: [],
     writes: [],
+    adminChecks: [],
   };
   const auth = {
     currentUser:
@@ -169,6 +170,28 @@ function createHarness(options = {}) {
       assert.equal(receivedApp, app);
       return db;
     },
+    // Stands in for the Firestore rules answering the admin check. Only
+    // harnesses that ask for it get one, as the real SDK always has it.
+    ...(options.adminCheck
+      ? {
+          async getDocFromServer(reference) {
+            calls.adminChecks.push(reference.segments.slice(1));
+            const answer =
+              typeof options.adminCheck === "function" ? options.adminCheck() : options.adminCheck;
+            if (answer === "deny") {
+              throw Object.assign(new Error("Missing or insufficient permissions."), {
+                code: "permission-denied",
+              });
+            }
+            if (answer === "offline") {
+              throw Object.assign(new Error("Failed to get document because the client is offline."), {
+                code: "unavailable",
+              });
+            }
+            return { exists: () => false };
+          },
+        }
+      : {}),
     async getDocs(query) {
       calls.queries.push(query);
       if (
@@ -1630,6 +1653,54 @@ test("a failed token refresh falls back to the held token instead of reading as 
     },
   };
   await assert.rejects(() => harness.client.getAccess(noToken), /signed out elsewhere/);
+});
+
+test("an email the rules list as administrator wins over a worker marker", async () => {
+  const markedAdmin = {
+    uid: "listed-1",
+    email: "lysshaan2005@gmail.com",
+    async getIdTokenResult() {
+      return { claims: { stampnoteRole: "worker" } };
+    },
+  };
+  const listed = createHarness({ user: markedAdmin, adminCheck: "allow" });
+  await listed.client.ready;
+  assert.deepEqual(await listed.client.getAccess(markedAdmin), { role: "admin", canAccessAdmin: true });
+  // The check reads the document only isAdmin() may read, and is asked once.
+  assert.deepEqual(listed.calls.adminChecks, [["attendanceDays", "access-check"]]);
+  await listed.client.getAccess(markedAdmin);
+  assert.equal(listed.calls.adminChecks.length, 1);
+
+  // Field staff the rules do not list stay field staff.
+  const field = { ...markedAdmin, uid: "field-9", email: "field@example.com" };
+  const unlisted = createHarness({ user: field, adminCheck: "deny" });
+  await unlisted.client.ready;
+  assert.deepEqual(await unlisted.client.getAccess(field), { role: "worker", canAccessAdmin: false });
+  await unlisted.client.getAccess(field);
+  assert.equal(unlisted.calls.adminChecks.length, 1, "a refusal is kept for the visit");
+
+  // An outage is not a refusal: it is asked again rather than remembered.
+  const answers = ["offline", "allow"];
+  const flaky = createHarness({ user: markedAdmin, adminCheck: () => answers.shift() });
+  await flaky.client.ready;
+  assert.equal((await flaky.client.getAccess(markedAdmin)).role, "worker");
+  assert.equal((await flaky.client.getAccess(markedAdmin)).role, "admin");
+
+  // Accounts without a marker never need the check.
+  const plain = { ...markedAdmin, uid: "plain-1", async getIdTokenResult() { return { claims: {} }; } };
+  const unmarked = createHarness({ user: plain, adminCheck: "deny" });
+  await unmarked.client.ready;
+  assert.equal((await unmarked.client.getAccess(plain)).role, "admin");
+  assert.equal(unmarked.calls.adminChecks.length, 0);
+});
+
+test("the admin check reads a document the rules open to administrators alone", () => {
+  const rules = require("node:fs").readFileSync(require("node:path").resolve(__dirname, "../firestore.rules"), "utf8");
+  const block = rules.match(/match \/attendanceDays\/\{dateKey\} \{\s*allow read: if ([^;]+);/);
+  assert.ok(block, "attendanceDays keeps its own read rule");
+  assert.equal(block[1].trim(), "isAdmin()");
+  // The catch-all must not open it to anyone else.
+  assert.match(rules, /collection != "attendanceDays"/);
 });
 
 test("a signed-in recording publishes a live tunnel that administrators can subscribe to", async () => {

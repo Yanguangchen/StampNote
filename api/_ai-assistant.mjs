@@ -19,6 +19,13 @@ export const MAX_PUBLIC_SITE_CANDIDATES = 6;
 
 const FIREBASE_WEB_API_KEY =
   process.env.FIREBASE_WEB_API_KEY || "AIzaSyArs5PDu31KE6wdV-o3Y16UpTdRkaj2JYw";
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || "stampnote-eedcd";
+// The same check the app makes: Firestore's rules allow this read exactly when
+// isAdmin() is true, so an email the rules list as administrator wins over a
+// worker marker. The document does not need to exist.
+const ADMIN_CHECK_URL = `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
+  FIREBASE_PROJECT_ID,
+)}/databases/(default)/documents/attendanceDays/access-check`;
 const LOCAL_ASSISTANT_ORIGINS = new Set([
   "http://127.0.0.1:5500",
   "http://localhost:5500",
@@ -396,6 +403,22 @@ export function roleFromIdToken(token) {
   }
 }
 
+// Asked as the signed-in person, with their own ID token, so the rules see
+// exactly who is asking. Allowed reads answer 200 or 404; a refusal is 403.
+export async function rulesAllowAdmin(token, options = {}) {
+  const fetchImplementation = options.fetchImplementation || fetch;
+  try {
+    const response = await fetchImplementation(ADMIN_CHECK_URL, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+      signal: options.abortSignal,
+    });
+    return response.status === 200 || response.status === 404;
+  } catch {
+    return false;
+  }
+}
+
 export async function verifyFirebaseIdToken(token, options = {}) {
   if (!token) return null;
   const fetchImplementation = options.fetchImplementation || fetch;
@@ -413,13 +436,10 @@ export async function verifyFirebaseIdToken(token, options = {}) {
   if (!response.ok) return null;
   const body = await response.json();
   const user = body?.users?.[0];
-  return user?.localId
-    ? {
-        uid: String(user.localId),
-        email: String(user.email || ""),
-        role: roleFromIdToken(token),
-      }
-    : null;
+  if (!user?.localId) return null;
+  let role = roleFromIdToken(token);
+  if (role === "worker" && (await rulesAllowAdmin(token, options))) role = "admin";
+  return { uid: String(user.localId), email: String(user.email || ""), role };
 }
 
 function cleanGeographyEvidence(value) {

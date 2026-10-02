@@ -103,6 +103,10 @@
   const links = [];
   const renderedGroups = [];
   let accessGate = null;
+  let accessGateAccount = null;
+  let accessGateReason = null;
+  let accessGateSignOut = null;
+  let boundCloud = null;
 
   GROUPS.forEach((group) => {
     const heading = document.createElement("p");
@@ -239,12 +243,48 @@
     photos.className = "access-gate-link";
     photos.href = "worker-photos.html";
     photos.textContent = "Go to Worker photos";
-    accessGate.append(title, copy, recording, robotic, photos);
+    // The gate covers the page's own header, so it says which account it is
+    // judging, why, and offers the way out to a different one.
+    accessGateAccount = document.createElement("p");
+    accessGateAccount.id = "access-gate-account";
+    accessGateAccount.className = "access-gate-account";
+    accessGateReason = document.createElement("p");
+    accessGateReason.id = "access-gate-reason";
+    accessGateSignOut = document.createElement("button");
+    accessGateSignOut.type = "button";
+    accessGateSignOut.className = "access-gate-sign-out";
+    accessGateSignOut.textContent = "Sign out to use another account";
+    accessGateSignOut.hidden = true;
+    accessGateSignOut.addEventListener("click", async () => {
+      accessGateSignOut.disabled = true;
+      try {
+        await boundCloud?.signOut?.();
+      } finally {
+        accessGateSignOut.disabled = false;
+      }
+    });
+    accessGate.append(
+      title,
+      accessGateAccount,
+      accessGateReason,
+      copy,
+      recording,
+      robotic,
+      photos,
+      accessGateSignOut,
+    );
     document.body.append(accessGate);
     return accessGate;
   }
 
-  function applyRole(role) {
+  const ACCESS_REASONS = {
+    worker:
+      "This account is set up as field staff. To make it an administrator, add this email to the admin list in StampNote's Firestore rules, then reload.",
+    unverified:
+      "StampNote could not confirm this account's access just now. Check the connection and reload.",
+  };
+
+  function applyRole(role, detail = {}) {
     const currentRole = role === "admin" || role === "worker" ? role : "signed_out";
     renderedGroups.forEach((group) => {
       const hidden = currentRole === "worker" && group.access === "admin";
@@ -257,6 +297,12 @@
     const blocked = currentRole === "worker" && currentPageRequiresAdmin();
     const gate = ensureAccessGate();
     gate.hidden = !blocked;
+    const email = String(detail?.email || "").trim();
+    accessGateAccount.textContent = email ? `Signed in as ${email}.` : "";
+    accessGateAccount.hidden = !email;
+    accessGateReason.textContent = ACCESS_REASONS[detail?.reason] || "";
+    accessGateReason.hidden = !accessGateReason.textContent;
+    accessGateSignOut.hidden = !blocked || typeof boundCloud?.signOut !== "function";
     if (document.documentElement?.dataset) {
       document.documentElement.dataset.pageAccess = blocked ? "denied" : "allowed";
     }
@@ -265,6 +311,7 @@
 
   function bindCloudAccess(cloud) {
     if (!cloud?.subscribeAuth) return;
+    boundCloud = cloud;
     cloud.subscribeAuth(async (user, error) => {
       if (error || !user) {
         applyRole("signed_out");
@@ -274,11 +321,13 @@
         applyRole("signed_out");
         return;
       }
+      const email = user.email || "";
       try {
         const access = await cloud.getAccess(user);
-        applyRole(access.role === "admin" ? "admin" : "worker");
+        const admin = access.role === "admin";
+        applyRole(admin ? "admin" : "worker", { email, reason: admin ? "" : "worker" });
       } catch {
-        applyRole("worker");
+        applyRole("worker", { email, reason: "unverified" });
       }
     });
   }

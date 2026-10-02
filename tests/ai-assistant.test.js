@@ -531,18 +531,69 @@ test("a verified request returns only the generated answer contract", async () =
   assert.ok(response.headers.get("x-request-id"));
 });
 
+function fakeFirebaseFetch({ adminCheckStatus = 403 } = {}) {
+  const requests = [];
+  return {
+    requests,
+    async fetchImplementation(url, options) {
+      requests.push({ url, options });
+      if (url.startsWith("https://firestore.googleapis.com/")) {
+        return { ok: adminCheckStatus < 300, status: adminCheckStatus, json: async () => ({}) };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ users: [{ localId: "owner-1", email: "a@b.c" }] }),
+      };
+    },
+  };
+}
+
 test("Firebase ID tokens are checked with the configured Firebase project", async () => {
   const { verifyFirebaseIdToken } = await import("../api/_ai-assistant.mjs");
-  let request;
-  const verified = await verifyFirebaseIdToken("token-value", {
+  const fake = fakeFirebaseFetch();
+  const verified = await verifyFirebaseIdToken("token-value", fake);
+  assert.deepEqual(verified, { uid: "owner-1", email: "a@b.c", role: "worker" });
+  const [lookup] = fake.requests;
+  assert.match(lookup.url, /identitytoolkit\.googleapis\.com\/v1\/accounts:lookup\?key=/);
+  assert.deepEqual(JSON.parse(lookup.options.body), { idToken: "token-value" });
+});
+
+test("an email the Firestore rules list as administrator wins over a worker marker", async () => {
+  const { verifyFirebaseIdToken } = await import("../api/_ai-assistant.mjs");
+  const workerToken = `header.${Buffer.from(JSON.stringify({ stampnoteRole: "worker" })).toString("base64url")}.sig`;
+
+  // The rules answer as the person asking: their own token, the document only
+  // isAdmin() may read. Allowed is 200 or 404 (it need not exist).
+  for (const status of [200, 404]) {
+    const listed = fakeFirebaseFetch({ adminCheckStatus: status });
+    assert.equal((await verifyFirebaseIdToken(workerToken, listed)).role, "admin");
+    const check = listed.requests.at(-1);
+    assert.equal(
+      check.url,
+      "https://firestore.googleapis.com/v1/projects/stampnote-eedcd/databases/(default)/documents/attendanceDays/access-check",
+    );
+    assert.equal(check.options.headers.Authorization, `Bearer ${workerToken}`);
+  }
+
+  // A refusal, an error status or an unreachable Firestore keeps field staff out.
+  for (const status of [403, 401, 500]) {
+    assert.equal((await verifyFirebaseIdToken(workerToken, fakeFirebaseFetch({ adminCheckStatus: status }))).role, "worker");
+  }
+  const unreachable = fakeFirebaseFetch();
+  const offline = await verifyFirebaseIdToken(workerToken, {
     async fetchImplementation(url, options) {
-      request = { url, options };
-      return { ok: true, json: async () => ({ users: [{ localId: "owner-1", email: "a@b.c" }] }) };
+      if (url.startsWith("https://firestore.googleapis.com/")) throw new Error("network down");
+      return unreachable.fetchImplementation(url, options);
     },
   });
-  assert.deepEqual(verified, { uid: "owner-1", email: "a@b.c", role: "worker" });
-  assert.match(request.url, /identitytoolkit\.googleapis\.com\/v1\/accounts:lookup\?key=/);
-  assert.deepEqual(JSON.parse(request.options.body), { idToken: "token-value" });
+  assert.equal(offline.role, "worker");
+
+  // Accounts without a marker never need the extra request.
+  const plainToken = `header.${Buffer.from("{}").toString("base64url")}.sig`;
+  const plain = fakeFirebaseFetch();
+  assert.equal((await verifyFirebaseIdToken(plainToken, plain)).role, "admin");
+  assert.equal(plain.requests.length, 1);
 });
 
 test("signed-in ID tokens without a worker claim are superadmins", async () => {
