@@ -3,14 +3,16 @@
 
   const IPV4 =
     /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+  const DOMAIN = /^(?:[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?\.)+[a-z](?:[a-z\d-]{0,61}[a-z\d])?\.?$/i;
+  const ADDRESS_ERROR = "Enter a robot IP address or HTTPS URL.";
 
   function parseRobotControlUrl(raw, urlCtor = globalScope.URL) {
     const trimmed = String(raw ?? "").trim();
     if (!trimmed) {
-      return { ok: false, error: "Enter a robot IP address." };
+      return { ok: false, error: ADDRESS_ERROR };
     }
-    if (trimmed.length > 128 || /[\s<>"'`]/.test(trimmed)) {
-      return { ok: false, error: "Enter a robot IP address, like 192.168.1.50." };
+    if (trimmed.length > 2048 || /[\s<>"'`\\]/.test(trimmed)) {
+      return { ok: false, error: ADDRESS_ERROR };
     }
     if (/^(javascript|data|file|blob|vbscript):/i.test(trimmed)) {
       return { ok: false, error: "Use an http or https robot address." };
@@ -21,7 +23,7 @@
     try {
       parsed = new urlCtor(candidate);
     } catch {
-      return { ok: false, error: "Enter a robot IP address, like 192.168.1.50." };
+      return { ok: false, error: ADDRESS_ERROR };
     }
 
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
@@ -34,7 +36,12 @@
     const isIpv4 = IPV4.test(parsed.hostname);
     const isIpv6 = parsed.hostname.includes(":");
     if (!isIpv4 && !isIpv6) {
-      return { ok: false, error: "Enter a robot IP address, like 192.168.1.50." };
+      if (parsed.hostname.length > 253 || !DOMAIN.test(parsed.hostname)) {
+        return { ok: false, error: ADDRESS_ERROR };
+      }
+      if (parsed.protocol !== "https:") {
+        return { ok: false, error: "Use a full HTTPS URL for remote robot controls." };
+      }
     }
 
     return { ok: true, href: String(parsed.href), host: String(parsed.host) };
