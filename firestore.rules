@@ -15,7 +15,8 @@ service cloud.firestore {
             request.auth.token.email_verified == true
             && request.auth.token.email in [
               "yanguangchensp@gmail.com",
-              "shen.hocklim@gmail.com"
+              "shen.hocklim@gmail.com",
+              "lysshaan2005@gmail.com"
             ]
           )
           || request.auth.token.stampnoteRole in ["admin", "superadmin"]
