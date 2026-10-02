@@ -7,6 +7,9 @@
   const frameScaling = window.StampNoteFrameScaler;
   const cameraFacing = window.StampNoteCameraFacing;
   const telemetry = window.StampNoteObservability;
+  // The worker being scanned is looking at the lens, not the screen, so every
+  // step of the scan is also heard.
+  const faceScanTones = window.StampNoteFaceScanTones?.createFaceScanTones();
   const form = document.querySelector("#worker-form");
   const workerId = document.querySelector("#worker-id");
   const workerName = document.querySelector("#worker-name");
@@ -281,6 +284,7 @@
     scannerView.dataset.status = nextState;
     cancelButton.hidden = true;
     improving = null;
+    faceScanTones?.reset();
     if (scannerMode) {
       scannerMode.hidden = true;
       scannerMode.textContent = "";
@@ -346,7 +350,10 @@
         "aria-label",
         `Scan ${worker.workerId} again to improve face recognition`,
       );
-      improve.addEventListener("click", () => startImprovement(worker));
+      improve.addEventListener("click", () => {
+        faceScanTones?.prime();
+        startImprovement(worker);
+      });
       const remove = document.createElement("button");
       remove.className = "delete-worker";
       remove.type = "button";
@@ -466,6 +473,7 @@
       cancelButton.hidden = false;
       setStatus("A worker ID could not be issued, so nothing was saved. Try again.", "error");
       instruction.textContent = "The scan is complete but has not been saved. Try again.";
+      faceScanTones?.play("error");
       telemetry?.event(
         "onboarding.worker.save_failed",
         { sampleCount: samples.length, errorCode: "worker_id_unavailable", status: "failed" },
@@ -489,6 +497,7 @@
         { immediate: true, traceId: scanTraceId },
       );
       releaseScanner("complete");
+      faceScanTones?.play("complete");
       progress.max = ONBOARDING_SAMPLES;
       progress.value = ONBOARDING_SAMPLES;
       progressCount.textContent = `${ONBOARDING_SAMPLES} of ${ONBOARDING_SAMPLES}`;
@@ -504,6 +513,7 @@
       cancelButton.hidden = false;
       setStatus(error?.message || "The face template could not be saved.", "error");
       instruction.textContent = "The scan is complete but has not been saved. Try again.";
+      faceScanTones?.play("error");
       telemetry?.event(
         "onboarding.worker.save_failed",
         {
@@ -559,6 +569,7 @@
         { immediate: true, traceId: scanTraceId },
       );
       releaseScanner("complete");
+      faceScanTones?.play("complete");
       progress.max = IMPROVEMENT_SAMPLES;
       progress.value = IMPROVEMENT_SAMPLES;
       progressCount.textContent = `${IMPROVEMENT_SAMPLES} of ${IMPROVEMENT_SAMPLES}`;
@@ -571,6 +582,7 @@
       cancelButton.hidden = false;
       setStatus(error?.message || "The face profile could not be updated.", "error");
       instruction.textContent = "The scan is complete but has not been saved. Try again.";
+      faceScanTones?.play("error");
       telemetry?.event(
         "onboarding.worker.improve_failed",
         {
@@ -612,6 +624,9 @@
         samples = samples.slice(0, Math.max(0, Number(scanState.samples) || 0));
       }
       updateProgress({ ...scanState, samples: samples.length });
+      // Each accepted view ticks a step higher; a restart or a miss is heard
+      // as one.
+      faceScanTones?.observe({ ...scanState, samples: samples.length, total: wanted });
       if (samples.length >= wanted) {
         telemetry?.event(
           "onboarding.scan.completed",
@@ -803,9 +818,13 @@
           ? ` at ${video.videoWidth} × ${video.videoHeight}`
           : "";
       setStatus(readyMessage(resolution));
+      // Heard once the camera and model are ready, so the cue means "look now"
+      // and the first accepted view still gets its own tick.
+      faceScanTones?.observe({ ...recognizer.enrollmentState?.(), samples: 0, total });
       scanOnce();
     } catch (error) {
       releaseScanner("idle");
+      faceScanTones?.play("error");
       setStatus(error?.message || "The face scanner could not start.", "error");
       instruction.textContent = "Your face should fill the oval.";
       telemetry?.event(
@@ -822,7 +841,11 @@
 
   form?.addEventListener("submit", (event) => {
     event.preventDefault();
-    if (!scanning && !saving) startScan();
+    if (scanning || saving) return;
+    // The scan's first cue comes after the camera and model have loaded, which
+    // is no longer inside this tap, so the audio is unlocked now.
+    faceScanTones?.prime();
+    startScan();
   });
 
   workerName?.addEventListener("input", () => {

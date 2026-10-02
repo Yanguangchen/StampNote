@@ -8,6 +8,7 @@ const root = resolve(__dirname, "..");
 const html = readFileSync(resolve(root, "onboarding.html"), "utf8");
 const css = readFileSync(resolve(root, "onboarding.css"), "utf8");
 const app = readFileSync(resolve(root, "onboarding.js"), "utf8");
+const faceScanTones = require("../face-scan-tones.js");
 
 test("worker onboarding has signed-in identity, scan, and roster controls", () => {
   assert.match(html, /id="onboarding-auth"/);
@@ -318,6 +319,7 @@ function createOnboardingHarness(options = {}) {
       return [...workers];
     },
     async saveWorkerFace(record) {
+      if (options.saveError) throw options.saveError;
       cloudCalls.saved.push(record);
       const saved = {
         workerId: record.workerId,
@@ -460,6 +462,35 @@ function createOnboardingHarness(options = {}) {
       },
     },
     StampNoteWorkerFace: workerFace,
+    // The real cue planner, with no speaker behind it: each cue the page asks
+    // for is written down instead of played.
+    ...(options.toneLog
+      ? {
+          StampNoteFaceScanTones: {
+            createFaceScanTones() {
+              const planner = faceScanTones.createFaceScanTones({ getContext: () => null });
+              return {
+                observe(state) {
+                  const cue = planner.observe(state);
+                  if (cue) options.toneLog.push(cue);
+                  return cue;
+                },
+                play(cue) {
+                  options.toneLog.push(cue);
+                  return false;
+                },
+                prime() {
+                  options.toneLog.push("prime");
+                },
+                reset() {
+                  options.toneLog.push("reset");
+                  planner.reset();
+                },
+              };
+            },
+          },
+        }
+      : {}),
     localStorage: {
       getItem() {
         return null;
@@ -525,6 +556,71 @@ test("signed-in enrollment issues an ID, takes seven samples, and saves the temp
   assert.equal(harness.cloudCalls.saved[0].embeddings.length, 7);
   assert.match(harness.elements["onboarding-status"].textContent, /Ari Tan \(AT-0001\) enrolled/);
   assert.equal(harness.pending[0], "sw.js");
+});
+
+
+test("an enrollment scan is heard from its start to the saved chime", async () => {
+  const toneLog = [];
+  const harness = createOnboardingHarness({ toneLog });
+  await harness.auth({ email: "admin@example.com", uid: "owner-1" });
+  await settleOnboarding();
+  harness.elements["worker-name"].value = "Ari Tan";
+  await harness.elements["worker-name"].dispatch("input");
+  await settleOnboarding();
+
+  await harness.elements["worker-form"].dispatch("submit");
+  assert.deepEqual(toneLog, ["prime"], "audio is unlocked inside the tap, silently");
+  await settleOnboarding();
+  await harness.flushScan();
+  await settleOnboarding();
+
+  assert.equal(harness.cloudCalls.saved.length, 1);
+  assert.deepEqual(
+    toneLog.filter((cue) => cue !== "reset"),
+    ["prime", "start", ...Array(7).fill("sample"), "complete"],
+    "one cue to begin, a tick per accepted view, and a chime once the worker is saved",
+  );
+});
+
+test("a scan that cannot be saved ends on the error tone, not the chime", async () => {
+  const toneLog = [];
+  const harness = createOnboardingHarness({
+    toneLog,
+    saveError: new Error("Firestore is offline."),
+  });
+  await harness.auth({ email: "admin@example.com", uid: "owner-1" });
+  await settleOnboarding();
+  harness.elements["worker-name"].value = "Ari Tan";
+  await harness.elements["worker-name"].dispatch("input");
+  await settleOnboarding();
+
+  await harness.elements["worker-form"].dispatch("submit");
+  await settleOnboarding();
+  await harness.flushScan();
+  await settleOnboarding();
+
+  assert.match(harness.elements["onboarding-status"].textContent, /Firestore is offline/);
+  assert.equal(toneLog.at(-1), "error");
+  assert.equal(toneLog.includes("complete"), false);
+});
+
+test("an improvement scan is primed by its own tap and chimes when the profile is updated", async () => {
+  const toneLog = [];
+  const harness = createOnboardingHarness({ toneLog, workers: [enrolledWorker()] });
+  await harness.auth({ email: "admin@example.com", uid: "owner-1" });
+  await settleOnboarding();
+
+  const [row] = await openRoster(harness);
+  await row.children[2].children[0].dispatch("click");
+  await settleOnboarding();
+  await harness.flushScan();
+  await settleOnboarding();
+
+  assert.equal(harness.cloudCalls.improved.length, 1);
+  assert.deepEqual(
+    toneLog.filter((cue) => cue !== "reset"),
+    ["prime", "start", ...Array(5).fill("sample"), "complete"],
+  );
 });
 
 

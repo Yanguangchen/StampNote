@@ -65,6 +65,18 @@ The state has a compact two-column layout when a phone is held in landscape. Und
 
 This confirmation is presentation only. It does not change face descriptors, thresholds, roster selection, or the three-view agreement required by recognition; it makes an already-completed match apparent to the worker. Auto capture may initialize behind the confirmation, but the confirmation remains on top until its 1.8-second display interval ends. Skipped and still-retrying scans do not show the success state.
 
+#### Scan tones
+
+A face scan asks somebody to look at the lens, which is exactly when they cannot read the screen, so **every face scan is also heard**. The opening attendance scan on Recording and the enrollment and improvement scans on Worker onboarding share one set of short, quiet tones:
+
+- **Start** — a soft rising pair when the scan begins looking (on onboarding, once the camera and face model are ready).
+- **Each accepted view** — a tick that climbs a pentatonic step per view, so a three-view check and a seven-view enrollment both rise to the same top note.
+- **No match yet** — a gentle falling pair when a scan misses or has to start over. A run of misses repeats it at most every four seconds; framing prompts such as move closer or centre up stay silent because they change with every small movement.
+- **Recognised or saved** — a four-note chime when attendance is recorded by face match, when a worker recognised mid-recording is checked in for the first time, or when an enrollment or improvement is saved.
+- **Cannot continue** — a low falling pair when the face model is unavailable or a scan cannot be saved.
+
+The tones are synthesised with Web Audio, so there is nothing to download, and every one peaks well below the shutter. Recording shares the shutter's audio context, which the record tap already unlocks; onboarding unlocks its own on the scan or improve tap. Manual check-ins and skipped scans make no confirmation sound, since they were the operator's own tap. Sound is progressive enhancement: a device without Web Audio scans exactly as before.
+
 Vehicles are recognised and boxed in amber, labelled, and otherwise ignored: **a vehicle never changes the cadence.** A car in an empty frame is still an empty frame as far as the schedule is concerned, and a person who gets out of it starts the 30-second cadence just as they would anywhere else.
 
 Matched people are labelled with their enrolled worker IDs, such as **WORKER-007**, in the live overlay and saved photos. A person who has not matched the roster is labelled **TRACKING WORKER**; the numeric session track ID remains internal. A local session tracker follows position, predicted motion, scale, coarse body proportions, a small gallery of clothing-colour samples, and facial re-identification. MediaPipe supplies the face and eye positions; StampNote aligns a temporary face crop and a local face-recognition network turns it into a unit-normalized 128-value embedding. A separate `onboarding.html` flow checks seven spaced, consistent samples over about six seconds and stores the seven representative templates plus their centroid in Firestore; the recording page's three-view opening scan compares against only the signed-in account's roster before capture begins. Both camera paths request 1920 × 1080 input, then fall back to the best resolution the device provides. The opening scan uses a focused face-only landmarker, so a face can fill the guide without requiring shoulders or hips to remain visible. Landmark geometry and lighting-normalized facial texture remain fallbacks while that model loads or when a face is too small to recognize reliably. A clear embedding mismatch or an insufficient lead over the runner-up declines the identity instead of selecting the nearest worker. Whole-frame assignment prevents a locally convenient match from swapping the remaining people, while enrollment templates remain immutable during a recording so uncertain live samples cannot cause identity drift. The badge says **face match on-device** only after the trained model has produced a usable, unambiguous live embedding.
@@ -295,6 +307,7 @@ See [OBSERVABILITY.md](OBSERVABILITY.md) for the event catalog, production log c
 - `photo-triage.js` — local blur, near-duplicate, novelty and importance checks
 - `worker-face.js` — worker ID validation, template averaging and strict embedding matching
 - `face-identity.js` — aligned 128-value face embeddings and enrolled-worker scan voting with no retained crops
+- `face-scan-tones.js` — synthesised start, progress, retry, success and error tones for every face scan
 - `person-tracker.js` — stable internal tracking with enrolled worker IDs on public boxes
 - `api/_ai-triage.mjs` — validates batches, calls Gemini through Google AI Studio, and applies the conservative discard threshold
 - `api/triage.mjs` — Vercel Function exposing the server-only AI review endpoint

@@ -22,6 +22,7 @@ const publicFiles = new Set([
   "computer-vision.js",
   "frame-scaler.js",
   "face-identity.js",
+  "face-scan-tones.js",
   "person-tracker.js",
   "auto-capture.js",
   "pose-mapping.js",
