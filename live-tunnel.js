@@ -215,7 +215,7 @@
   function openRobotControl(record, raw) {
     const parsed = robotControlUrl?.parseRobotControlUrl?.(raw) || {
       ok: false,
-      error: "Enter a robot IP address.",
+      error: "Enter a robot IP address or HTTPS URL.",
     };
     if (!parsed.ok) {
       setStatus(parsed.error, "error");
@@ -511,20 +511,20 @@
         const label = document.createElement("label");
         label.className = "visually-hidden";
         label.setAttribute("for", `live-tunnel-robot-ip-${record.id}`);
-        label.textContent = "Robot IP address";
+        label.textContent = "Robot controls URL or IP";
 
         const input = document.createElement("input");
         input.id = `live-tunnel-robot-ip-${record.id}`;
         input.className = "live-tunnel-robot-ip-input";
         input.name = "robot-ip";
         input.type = "text";
-        input.setAttribute("inputmode", "decimal");
+        input.setAttribute("inputmode", "url");
         input.setAttribute("enterkeyhint", "go");
         input.setAttribute("autocomplete", "off");
         input.setAttribute("autocapitalize", "off");
         input.setAttribute("spellcheck", "false");
-        input.setAttribute("maxlength", "128");
-        input.placeholder = "Robot IP address";
+        input.setAttribute("maxlength", "2048");
+        input.placeholder = "Robot controls URL or IP";
         input.value = draftIps.has(record.id)
           ? draftIps.get(record.id)
           : readStoredRobotIp(record.id);

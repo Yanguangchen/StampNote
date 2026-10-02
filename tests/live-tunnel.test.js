@@ -914,7 +914,7 @@ function createPageHarness(options = {}) {
   elements["live-tunnel-robot"].dataset.open = "false";
   elements["live-tunnel-split"].dataset.robotOpen = "false";
   elements["live-tunnel-robot-close"].hidden = true;
-  elements["live-tunnel-robot-ip"].placeholder = "Robot IP address";
+  elements["live-tunnel-robot-ip"].placeholder = "Robot controls URL or IP";
   elements["live-tunnel-chooser"].hidden = true;
 
   const storage = new Map(
@@ -1114,8 +1114,8 @@ test("signing in lists live recordings and tunnels in without an accept step", a
   assert.equal(harness.elements["live-tunnel-menu-count"].textContent, "1");
   assert.equal(harness.elements["live-tunnel-rail"].dataset.open, "false");
 
-  assert.equal(sessionRobotInput(harness).placeholder, "Robot IP address");
-  assert.equal(harness.elements["live-tunnel-robot-ip"].placeholder, "Robot IP address");
+  assert.equal(sessionRobotInput(harness).placeholder, "Robot controls URL or IP");
+  assert.equal(harness.elements["live-tunnel-robot-ip"].placeholder, "Robot controls URL or IP");
   assert.equal(harness.cloudCalls.joined.length, 1);
   assert.equal(harness.elements["live-tunnel-chooser"].hidden, true);
   assert.equal(
@@ -1243,7 +1243,7 @@ test("a live tunnel can record and send a voice message without an accept step",
   assert.match(harness.elements["live-tunnel-voice-status"].textContent, /Voice message sent/);
 });
 
-test("parseRobotControlUrl only accepts http(s) robot IP addresses", () => {
+test("parseRobotControlUrl preserves local IP controls and accepts secure remote URLs", () => {
   const parse = robotControlUrl.parseRobotControlUrl;
   const ipv4 = parse("192.168.1.50");
   assert.equal(ipv4.ok, true);
@@ -1255,7 +1255,27 @@ test("parseRobotControlUrl only accepts http(s) robot IP addresses", () => {
   assert.equal(parse("robot.local").ok, false);
   assert.equal(parse("javascript:alert(1)").ok, false);
   assert.equal(parse("http://user:pass@192.168.1.50/").ok, false);
-  assert.equal(parse("https://example.com").ok, false);
+  assert.equal(parse("https://rover.example.com").href, "https://rover.example.com/");
+  assert.equal(parse("http://rover.example.com").ok, false);
+  assert.equal(parse("https://user:pass@rover.example.com").ok, false);
+  assert.equal(parse("https://bad_host.example.com").ok, false);
+  assert.equal(parse("https://rover.example.com\\control").ok, false);
+  assert.equal(parse("https://rover.example.com/" + "x".repeat(2048)).ok, false);
+});
+
+test("a secure remote controls link opens beside its camera and is remembered intact", async () => {
+  const harness = createPageHarness();
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  const remoteUrl = "https://rover.example.com:8443/control?view=drive#session=" + "x".repeat(128);
+  sessionRobotInput(harness).value = remoteUrl;
+  await sessionRobotForm(harness).dispatch("submit");
+  await settle();
+  assert.equal(harness.elements["live-tunnel-robot-frame"].src, remoteUrl);
+  assert.equal(harness.elements["live-tunnel-robot-host"].textContent, "rover.example.com:8443");
+  assert.equal(harness.storedRobotIps()["live-1"], remoteUrl);
+  assert.equal(harness.cloudCalls.joined.at(-1).tunnelId, "live-1");
+  assert.doesNotMatch(harness.elements["live-tunnel-status"].textContent, /may be blocked/);
 });
 
 test("every live tunnel session has a robot IP field that opens an iframe", async () => {
@@ -1287,8 +1307,8 @@ test("every live tunnel session has a robot IP field that opens an iframe", asyn
   await settle();
 
   assert.equal(harness.elements["live-tunnel-list"].children.length, 2);
-  assert.equal(sessionRobotInput(harness, 0).placeholder, "Robot IP address");
-  assert.equal(sessionRobotInput(harness, 1).placeholder, "Robot IP address");
+  assert.equal(sessionRobotInput(harness, 0).placeholder, "Robot controls URL or IP");
+  assert.equal(sessionRobotInput(harness, 1).placeholder, "Robot controls URL or IP");
   assert.equal(harness.elements["live-tunnel-robot"].dataset.open, "false");
 
   sessionRobotInput(harness, 1).value = "192.168.1.50:8080";

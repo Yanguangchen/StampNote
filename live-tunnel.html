@@ -110,19 +110,19 @@
           <section class="live-tunnel-robot" id="live-tunnel-robot" data-open="false" aria-label="Robot control">
             <header class="live-tunnel-robot-bar">
               <form class="live-tunnel-robot-ip" id="live-tunnel-robot-ip-form" autocomplete="off">
-                <label class="visually-hidden" for="live-tunnel-robot-ip">Robot IP address</label>
+                <label class="visually-hidden" for="live-tunnel-robot-ip">Robot controls URL or IP</label>
                 <input
                   id="live-tunnel-robot-ip"
                   class="live-tunnel-robot-ip-input"
                   name="robot-ip"
                   type="text"
-                  inputmode="decimal"
+                  inputmode="url"
                   enterkeyhint="go"
                   autocomplete="off"
                   autocapitalize="off"
                   spellcheck="false"
-                  maxlength="128"
-                  placeholder="Robot IP address"
+                  maxlength="2048"
+                  placeholder="Robot controls URL or IP"
                 />
                 <button class="live-tunnel-robot-ip-open" id="live-tunnel-robot-ip-open" type="submit">
                   Open
