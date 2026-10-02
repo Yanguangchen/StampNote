@@ -5,3 +5,6 @@ server.js
 # Not needed at runtime
 tests/
 README.md
+
+# Admin tooling run from a computer, never served
+scripts/

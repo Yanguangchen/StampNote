@@ -1595,6 +1595,43 @@ test("signed-in accounts without a worker claim are superadmins", async () => {
   });
 });
 
+test("a failed token refresh falls back to the held token instead of reading as field staff", async () => {
+  const refreshes = [];
+  const flaky = {
+    uid: "owner-3",
+    email: "lysshaan2005@gmail.com",
+    async getIdTokenResult(forceRefresh) {
+      refreshes.push(forceRefresh);
+      if (forceRefresh) throw Object.assign(new Error("offline"), { code: "auth/network-request-failed" });
+      return { claims: {} };
+    },
+  };
+  const harness = createHarness({ user: flaky });
+  await harness.client.ready;
+  assert.deepEqual(await harness.client.getAccess(flaky), { role: "admin", canAccessAdmin: true });
+  assert.deepEqual(refreshes, [true, false]);
+
+  // A worker marker in the held token still counts: the fallback reads the
+  // same claims, it does not grant anything new.
+  const heldWorker = {
+    uid: "worker-3",
+    async getIdTokenResult(forceRefresh) {
+      if (forceRefresh) throw new Error("offline");
+      return { claims: { stampnoteRole: "worker" } };
+    },
+  };
+  assert.deepEqual(await harness.client.getAccess(heldWorker), { role: "worker", canAccessAdmin: false });
+
+  // With no token at all, the error still reaches the caller.
+  const noToken = {
+    uid: "gone",
+    async getIdTokenResult() {
+      throw new Error("signed out elsewhere");
+    },
+  };
+  await assert.rejects(() => harness.client.getAccess(noToken), /signed out elsewhere/);
+});
+
 test("a signed-in recording publishes a live tunnel that administrators can subscribe to", async () => {
   const harness = createHarness();
   await harness.client.ready;

@@ -96,7 +96,15 @@
       if (typeof user.getIdTokenResult !== "function") {
         return { role: "admin", canAccessAdmin: true };
       }
-      const result = await user.getIdTokenResult(true);
+      // A forced refresh picks up a role changed since sign-in, but it needs
+      // the network. When it fails, the token already held still says who this
+      // is, so a passing outage does not read as "not an administrator".
+      let result;
+      try {
+        result = await user.getIdTokenResult(true);
+      } catch {
+        result = await user.getIdTokenResult(false);
+      }
       const role = roleFromClaims(result?.claims);
       return { role, canAccessAdmin: role === "admin" };
     }
