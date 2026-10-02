@@ -146,6 +146,34 @@ function createSidebarHarness(pathname, options = {}) {
     documentListeners,
     documentElement,
     sidebarApi: context.window.StampNoteSidebar,
+    window: context.window,
+  };
+}
+
+function gatePart(gate, id) {
+  return descendants(gate).find((node) => node.id === id);
+}
+
+function createCloud(access) {
+  const calls = { signOut: 0 };
+  let onAuth = null;
+  return {
+    calls,
+    subscribeAuth(callback) {
+      onAuth = callback;
+      return () => {};
+    },
+    async getAccess() {
+      if (access instanceof Error) throw access;
+      return access;
+    },
+    async signOut() {
+      calls.signOut += 1;
+      await onAuth?.(null);
+    },
+    async signIn(user) {
+      await onAuth?.(user);
+    },
   };
 }
 
@@ -323,6 +351,46 @@ test("field staff only see Recording, Robotic control, and Worker photos, and ca
   admin.sidebarApi.setRole("admin");
   assert.equal(admin.gate.hidden, true);
   assert.equal(admin.links.filter((link) => link.hidden).length, 0);
+});
+
+test("the administrators gate names the account, says why, and offers another account", async () => {
+  const harness = createSidebarHarness("/live-tunnel.html");
+  const cloud = createCloud({ role: "worker", canAccessAdmin: false });
+  harness.window.StampNoteFirebase = cloud;
+  await cloud.signIn({ uid: "u-1", email: "lysshaan2005@gmail.com" });
+
+  assert.equal(harness.gate.hidden, false);
+  assert.equal(gatePart(harness.gate, "access-gate-account").textContent, "Signed in as lysshaan2005@gmail.com.");
+  assert.match(gatePart(harness.gate, "access-gate-reason").textContent, /set up as field staff/);
+  assert.match(gatePart(harness.gate, "access-gate-reason").textContent, /admin list in StampNote's Firestore rules/);
+
+  const signOut = descendants(harness.gate).find((node) => node.className === "access-gate-sign-out");
+  assert.equal(signOut.hidden, false);
+  await signOut.dispatch("click");
+  assert.equal(cloud.calls.signOut, 1);
+  assert.equal(harness.gate.hidden, true, "signing out lifts the gate so another account can sign in");
+});
+
+test("an access check that fails says so instead of calling the account field staff", async () => {
+  const harness = createSidebarHarness("/admin.html");
+  const cloud = createCloud(new Error("network down"));
+  harness.window.StampNoteFirebase = cloud;
+  await cloud.signIn({ uid: "u-2", email: "shen.hocklim@gmail.com" });
+
+  assert.equal(harness.gate.hidden, false);
+  assert.equal(gatePart(harness.gate, "access-gate-account").textContent, "Signed in as shen.hocklim@gmail.com.");
+  assert.match(gatePart(harness.gate, "access-gate-reason").textContent, /could not confirm this account's access/);
+  assert.doesNotMatch(gatePart(harness.gate, "access-gate-reason").textContent, /field staff/);
+
+  // An administrator never sees the gate, and a page anyone may open never
+  // shows it either.
+  const admin = createSidebarHarness("/admin.html");
+  const adminCloud = createCloud({ role: "admin", canAccessAdmin: true });
+  admin.window.StampNoteFirebase = adminCloud;
+  await adminCloud.signIn({ uid: "u-3", email: "yanguangchensp@gmail.com" });
+  assert.equal(admin.gate.hidden, true);
+  const signOut = descendants(admin.gate).find((node) => node.className === "access-gate-sign-out");
+  assert.equal(signOut.hidden, true);
 });
 
 test("the dashboard theme toggle is placed in the left drawer", () => {

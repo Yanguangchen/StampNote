@@ -364,3 +364,31 @@
   color: var(--accent, #176146);
   font-weight: 650;
 }
+
+.access-gate .access-gate-account {
+  color: var(--ink, #17201c);
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+
+.access-gate-sign-out {
+  margin-top: 8px;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--line, #d7ddd9);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink, #17201c);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.access-gate-sign-out[hidden] {
+  display: none;
+}
+
+.access-gate-sign-out:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}

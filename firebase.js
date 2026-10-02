@@ -89,6 +89,38 @@
       );
     }
 
+    // The Firestore rules decide who is an administrator: a verified email in
+    // isAdmin()'s list counts even when the account also carries a worker
+    // marker. Reading this document is allowed exactly when isAdmin() is true
+    // (attendanceDays in firestore.rules), so the answer is the rules' own. It
+    // does not need to exist.
+    const ADMIN_CHECK_PATH = ["attendanceDays", "access-check"];
+    const rulesAdminByUid = new Map();
+
+    function isRulesAdmin(user) {
+      const uid = String(user?.uid || "");
+      if (!uid) return Promise.resolve(false);
+      if (!rulesAdminByUid.has(uid)) {
+        const check = (async () => {
+          const cloud = services || (await ready);
+          const sdk = cloud?.firestoreSdk;
+          const read = sdk?.getDocFromServer || sdk?.getDoc;
+          if (typeof read !== "function" || typeof sdk.doc !== "function") return false;
+          try {
+            await read(sdk.doc(cloud.db, ...ADMIN_CHECK_PATH));
+            return true;
+          } catch (error) {
+            // Only a refusal is an answer worth keeping; an outage is asked
+            // again next time.
+            if (!isPermissionDenied(error)) rulesAdminByUid.delete(uid);
+            return false;
+          }
+        })();
+        rulesAdminByUid.set(uid, check);
+      }
+      return rulesAdminByUid.get(uid);
+    }
+
     async function resolveAccess(user) {
       if (!user) {
         return { role: "signed_out", canAccessAdmin: false };
@@ -105,7 +137,8 @@
       } catch {
         result = await user.getIdTokenResult(false);
       }
-      const role = roleFromClaims(result?.claims);
+      let role = roleFromClaims(result?.claims);
+      if (role === "worker" && (await isRulesAdmin(user))) role = "admin";
       return { role, canAccessAdmin: role === "admin" };
     }
 
