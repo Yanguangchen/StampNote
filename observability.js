@@ -108,6 +108,12 @@
     "live_tunnel.talk.stopped",
     "live_tunnel.talk.failed",
     "live_tunnel.audio.in",
+    "live_tunnel.signal.lost",
+    "live_tunnel.signal.restored",
+    "robotic.network.lost",
+    "robotic.network.restored",
+    "robotic.camera.lost",
+    "robotic.share.failed",
   ]);
   const EVENT_NAMES = new Set(EVENT_NAME_LIST);
   const NUMBER_FIELDS = new Set([

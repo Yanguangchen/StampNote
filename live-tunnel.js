@@ -8,6 +8,8 @@
   const liveTunnel = globalScope.StampNoteLiveTunnel;
   const robotControlUrl = globalScope.StampNoteRobotControlUrl;
   const telemetry = globalScope.StampNoteObservability;
+  const alarmTones = globalScope.StampNoteRobotAlarmTones;
+  const ALARMS = alarmTones?.ALARMS || {};
   const THEME_KEY = "stampnote-theme";
   const ROBOT_IP_KEY = "stampnote-live-tunnel-robot-ip";
   const DEFAULT_ROBOT_URL = robotControlUrl?.DEFAULT_ROBOT_CONTROL_URL || "";
@@ -67,6 +69,18 @@
   // the operator closes it, it stays closed until they open it again or sign
   // in afresh, rather than springing back on the next tunnel update.
   let robotAutoOpen = true;
+  // The robot sends a still every 0.55 s while it streams, and WebRTC renders
+  // frames; when neither has moved for this many one-second checks, the
+  // signal is lost. Counting checks rather than reading a clock means a
+  // throttled background tab alarms later, never falsely.
+  const SIGNAL_CHECK_MS = 1000;
+  const SIGNAL_LOST_CHECKS = 6;
+  const robotAlarms = alarmTones?.createRobotAlarms?.() || null;
+  let signalEstablished = false;
+  let signalLost = false;
+  let quietChecks = 0;
+  let lastFrameCount = 0;
+  let alarmsPrimed = false;
   const voiceRecorder = liveTunnel?.createVoiceRecorder?.({
     MediaRecorder: globalScope.MediaRecorder,
     getUserMedia: globalScope.navigator?.mediaDevices?.getUserMedia?.bind(
@@ -125,6 +139,75 @@
   function setStatus(message, state = "idle") {
     status.textContent = message;
     status.dataset.state = state;
+  }
+
+  function renderedFrameCount() {
+    return Number(video?.getVideoPlaybackQuality?.()?.totalVideoFrames) || 0;
+  }
+
+  function setSignalBadge(lost) {
+    if (!badge) return;
+    badge.textContent = lost ? "Signal lost" : "Live";
+    if (lost) {
+      badge.dataset.signal = "lost";
+      badge.hidden = false;
+    } else {
+      delete badge.dataset.signal;
+    }
+  }
+
+  // Anything arriving from the robot: a still, or a newly rendered frame.
+  function noteSignal() {
+    quietChecks = 0;
+    signalEstablished = true;
+    if (!signalLost) return;
+    signalLost = false;
+    setSignalBadge(false);
+    robotAlarms?.clear(ALARMS.SIGNAL_LOST);
+    telemetry?.event("live_tunnel.signal.restored", { status: "success" });
+  }
+
+  function markSignalLost(message) {
+    if (signalLost) return;
+    signalLost = true;
+    setSignalBadge(true);
+    setStatus(message, "error");
+    robotAlarms?.raise(ALARMS.SIGNAL_LOST);
+    telemetry?.event("live_tunnel.signal.lost", { status: "failed" }, { immediate: true });
+  }
+
+  // The operator left, switched off or signed out: nothing was restored, so
+  // the alarm ends without its chime.
+  function endSignalAlarm() {
+    signalLost = false;
+    signalEstablished = false;
+    quietChecks = 0;
+    setSignalBadge(false);
+    robotAlarms?.clearAll();
+  }
+
+  function checkSignal() {
+    if (!selectedId || viewerState === "idle") return;
+    const frames = renderedFrameCount();
+    if (frames > lastFrameCount) {
+      lastFrameCount = frames;
+      noteSignal();
+      return;
+    }
+    lastFrameCount = frames;
+    if (!signalEstablished) return;
+    quietChecks += 1;
+    if (quietChecks >= SIGNAL_LOST_CHECKS) {
+      markSignalLost("Signal lost — nothing has arrived from the robot for over 5 seconds.");
+    }
+  }
+
+  // Browsers only open the audio device after a tap, so the first one primes
+  // the alarms; until then an alarm is shown but cannot be heard.
+  function primeAlarms() {
+    if (alarmsPrimed || !robotAlarms) return;
+    alarmsPrimed = true;
+    robotAlarms.prime();
   }
 
   function readStoredRobotIps() {
@@ -355,6 +438,7 @@
     if (!picture || !url) return;
     picture.src = url;
     picture.hidden = false;
+    noteSignal();
     if (viewerState !== "live") viewerState = "live";
     setStatus("");
     if (placeholder) placeholder.textContent = "";
@@ -416,6 +500,11 @@
     autoSelect = true;
     await leaveTunnel();
     selectedId = record.id;
+    // A new recording earns its own signal; an alarm still sounding for the
+    // last one ends, with its chime, when this one's picture arrives.
+    signalEstablished = false;
+    quietChecks = 0;
+    lastFrameCount = renderedFrameCount();
     viewerState = "connecting";
     if (placeholder) placeholder.textContent = "Opening the live camera…";
     if (caption) caption.textContent = describeTunnel(record);
@@ -448,6 +537,7 @@
             return;
           }
           setStatus(detail || "This network could not open a live picture.", "error");
+          markSignalLost(detail || "Signal lost — this network could not open a live picture.");
           if (placeholder) {
             placeholder.textContent =
               detail ||
@@ -634,6 +724,14 @@
         : null;
       setStatus("That recording stopped.");
       telemetry?.event("live_tunnel.ended", { tunnelId: ended, status: "ended" });
+      // Still listed as live but no longer heard from: the robot went silent.
+      // Gone from the list: it ended its recording on purpose.
+      if (tunnels.some((record) => record.id === ended && record.status === "live")) {
+        markSignalLost("Signal lost — the robot stopped responding.");
+      } else {
+        endSignalAlarm();
+        robotAlarms?.raise(ALARMS.ROBOT_STOPPED);
+      }
       if (next) joinTunnel(next);
       else leaveTunnel();
     } else if (autoSelect && !selectedId) {
@@ -664,6 +762,10 @@
   }
 
   themeToggle?.addEventListener("click", toggleTheme);
+  ["pointerdown", "keydown", "touchend"].forEach((name) => {
+    document.addEventListener(name, primeAlarms, true);
+  });
+  globalScope.setInterval?.(checkSignal, SIGNAL_CHECK_MS);
   applyTheme(readStoredTheme());
 
   menuButton?.addEventListener("click", () => {
@@ -798,6 +900,7 @@
   signOutButton?.addEventListener("click", () => cloud.signOut());
   leaveButton?.addEventListener("click", () => {
     autoSelect = false;
+    endSignalAlarm();
     leaveTunnel();
   });
 
@@ -824,6 +927,7 @@
       stopListening();
       autoSelect = true;
       robotAutoOpen = true;
+      endSignalAlarm();
       await leaveTunnel();
       clearRobotControl();
       tunnels = [];

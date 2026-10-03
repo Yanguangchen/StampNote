@@ -721,3 +721,9 @@ button {
     padding: 6px 10px calc(env(safe-area-inset-bottom, 0px) + 6px);
   }
 }
+
+/* Shown in place of "Live" while the robot has gone quiet. */
+.live-tunnel-badge[data-signal="lost"] {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}

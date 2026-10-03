@@ -9,6 +9,11 @@
 (function initializeFaceScanTones(globalScope) {
   "use strict";
 
+  // The shared player loads first on the page; under Node it is required.
+  const tonePlayer =
+    globalScope.StampNoteTonePlayer ||
+    (typeof require === "function" ? require("./tone-player.js") : null);
+
   const CUES = Object.freeze({
     START: "start",
     SAMPLE: "sample",
@@ -23,10 +28,9 @@
   // without turning into an alarm.
   const RETRY_INTERVAL_MS = 4000;
 
-  // A cue describes the scan as it is now. One that waited longer than this
-  // for a locked audio device to open would describe a scan that has moved on,
-  // and a backlog of them would all sound at once on the next tap.
-  const STALE_CUE_MS = 1000;
+  // A cue describes the scan as it is now, so one held up by a locked audio
+  // device is dropped rather than played late (see tone-player.js).
+  const STALE_CUE_MS = tonePlayer?.STALE_MS || 1000;
 
   // Statuses that mean the scan has looked and not found what it needs yet.
   // Framing prompts (move closer, centre up, hold still) are left silent: they
@@ -93,9 +97,6 @@
     }
   }
 
-  function phraseLength(notes) {
-    return notes.reduce((end, note) => Math.max(end, note.at + note.duration), 0);
-  }
 
   // Works out which cue, if any, the step from one scan state to the next
   // deserves. Pure, so the whole progression can be checked without a speaker.
@@ -121,122 +122,26 @@
     return null;
   }
 
-  function resolveContextFactory(globalObject) {
-    let ownContext = null;
-    return function getOwnContext() {
-      if (ownContext?.state === "closed") ownContext = null;
-      if (ownContext) return ownContext;
-      const AudioContext = globalObject?.AudioContext || globalObject?.webkitAudioContext;
-      if (typeof AudioContext !== "function") return null;
-      try {
-        ownContext = new AudioContext();
-      } catch {
-        ownContext = null;
-      }
-      return ownContext;
-    };
-  }
-
   // `getContext` lets a page that already holds an AudioContext (the recording
   // page has one for its shutter) share it, so a scan does not open a second
   // audio device. Without one, the first cue opens its own.
   function createFaceScanTones(options = {}) {
-    const getContext =
-      typeof options.getContext === "function"
-        ? options.getContext
-        : resolveContextFactory(options.globalObject || globalScope);
     const now = typeof options.now === "function" ? options.now : () => Date.now();
+    const player = tonePlayer?.createTonePlayer({
+      getContext: options.getContext,
+      globalObject: options.globalObject || globalScope,
+      now,
+      staleMs: STALE_CUE_MS,
+    });
     let previous = null;
     let lastRetryAt = -Infinity;
-    // Cues queue behind one another rather than sounding on top of each other,
-    // so the last tick of a scan and the chime that follows stay two sounds.
-    let busyUntil = 0;
-    let busyContext = null;
-
-    function schedule(context, notes) {
-      // A replaced context restarts its clock at zero.
-      if (context !== busyContext) {
-        busyContext = context;
-        busyUntil = 0;
-      }
-      const start = Math.max(Number(context.currentTime) || 0, busyUntil);
-      notes.forEach((note) => {
-        const oscillator = context.createOscillator();
-        const gain = context.createGain();
-        const begin = start + note.at;
-        const end = begin + note.duration;
-        oscillator.type = note.type;
-        oscillator.frequency.setValueAtTime(note.frequency, begin);
-        // Exponential ramps cannot start from zero; a near-silent floor keeps
-        // the attack and release free of clicks.
-        gain.gain.setValueAtTime(0.0001, begin);
-        gain.gain.exponentialRampToValueAtTime(note.peak, begin + 0.012);
-        gain.gain.exponentialRampToValueAtTime(0.0001, end);
-        oscillator.connect(gain);
-        gain.connect(context.destination);
-        oscillator.onended = () => {
-          oscillator.disconnect();
-          gain.disconnect();
-        };
-        oscillator.start(begin);
-        oscillator.stop(end + 0.02);
-      });
-      busyUntil = start + phraseLength(notes);
-    }
 
     function play(cue, detail = {}) {
-      const notes = phrase(cue, detail);
-      if (notes.length === 0) return false;
-      const context = getContext();
-      if (!context) return false;
-      const requestedAt = now();
-
-      const sound = () => {
-        if (now() - requestedAt > STALE_CUE_MS) return;
-        try {
-          schedule(context, notes);
-        } catch {
-          // A scan never depends on its sound.
-        }
-      };
-
-      if (context.state === "suspended" && typeof context.resume === "function") {
-        try {
-          const resumed = context.resume();
-          if (resumed?.then) {
-            resumed.then(sound).catch(() => {});
-            return true;
-          }
-        } catch {
-          return false;
-        }
-      }
-      sound();
-      return true;
+      return player?.playNotes(phrase(cue, detail)) || false;
     }
 
-    // Opening the audio device has to happen inside a tap on mobile browsers.
-    // A silent note does that without the tap itself making a sound.
     function prime() {
-      const context = getContext();
-      if (!context) return;
-      try {
-        context.resume?.()?.catch?.(() => {});
-        const oscillator = context.createOscillator();
-        const gain = context.createGain();
-        const time = Number(context.currentTime) || 0;
-        gain.gain.setValueAtTime(0, time);
-        oscillator.connect(gain);
-        gain.connect(context.destination);
-        oscillator.onended = () => {
-          oscillator.disconnect();
-          gain.disconnect();
-        };
-        oscillator.start(time);
-        oscillator.stop(time + 0.01);
-      } catch {
-        // Sound is optional; the scan goes ahead without it.
-      }
+      player?.prime();
     }
 
     // Fed every scan state the page renders. Only a change worth hearing makes

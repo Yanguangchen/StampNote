@@ -6,6 +6,7 @@ const vm = require("node:vm");
 
 const liveTunnel = require("../src/services/live-tunnel.js");
 const robotControlUrl = require("../src/services/robot-control-url.js");
+const { createAlarmLog } = require("./alarm-log.js");
 
 const root = resolve(__dirname, "..");
 const html = readFileSync(resolve(root, "live-tunnel.html"), "utf8");
@@ -938,6 +939,8 @@ function createPageHarness(options = {}) {
   ];
 
   let tunnelSnapshot = null;
+  let pictureSnapshot = null;
+  const intervals = [];
   const cloud = {
     async signIn() {
       cloudCalls.signIn += 1;
@@ -971,6 +974,7 @@ function createPageHarness(options = {}) {
     addTunnelIce() {},
     leaveTunnelViewer() {},
     subscribeTunnelPicture(tunnelId, onChange) {
+      pictureSnapshot = onChange;
       queueMicrotask(() => onChange(options.picture || null));
       return () => {};
     },
@@ -1058,6 +1062,11 @@ function createPageHarness(options = {}) {
     StampNoteFirebase: cloud,
     StampNoteLiveTunnel: liveTunnel,
     StampNoteRobotControlUrl: robotControlUrl,
+    ...(options.alarms ? { StampNoteRobotAlarmTones: options.alarms.api } : {}),
+    setInterval(callback, ms) {
+      intervals.push({ callback, ms });
+      return intervals.length;
+    },
     StampNoteObservability: {
       configure() {},
       event() { return true; },
@@ -1078,6 +1087,14 @@ function createPageHarness(options = {}) {
     elements,
     pushTunnels(records) {
       tunnelSnapshot?.(records);
+    },
+    pushPicture(record) {
+      pictureSnapshot?.(record);
+    },
+    // Runs the page's one-second signal check this many times.
+    checkSignal(times = 1) {
+      const watchdog = intervals.find((entry) => entry.ms === 1000);
+      for (let index = 0; index < times; index += 1) watchdog?.callback();
     },
     storedRobotIps() {
       try {
@@ -1246,6 +1263,112 @@ test("a live tunnel can record and send a voice message without an accept step",
   await settle();
   assert.equal(harness.elements["live-tunnel-voice-record"].getAttribute("aria-pressed"), "false");
   assert.match(harness.elements["live-tunnel-voice-status"].textContent, /Voice message sent/);
+});
+
+const STILL = { mimeType: "image/jpeg", image: "abc123", capturedAtMs: 1 };
+
+function liveRecord(overrides = {}) {
+  return {
+    id: "live-1",
+    ownerId: "owner-1",
+    ownerEmail: "field@example.com",
+    location: "10 Marina Bay",
+    status: "live",
+    lastSeenAtMs: Date.now(),
+    startedAtMs: Date.now() - 60_000,
+    ...overrides,
+  };
+}
+
+test("a robot that goes quiet raises signal lost once, and its return is chimed", async () => {
+  const alarms = createAlarmLog();
+  const harness = createPageHarness({ alarms, picture: STILL });
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  assert.equal(harness.elements["live-tunnel-badge"].dataset.signal, undefined);
+
+  // Five quiet seconds is a hiccup; the sixth is a lost signal.
+  harness.checkSignal(5);
+  assert.deepEqual(alarms.log.filter(([kind]) => kind !== "prime"), []);
+  harness.checkSignal(1);
+  assert.deepEqual(alarms.log, [["raise", "signal_lost"]]);
+  assert.equal(harness.elements["live-tunnel-badge"].textContent, "Signal lost");
+  assert.equal(harness.elements["live-tunnel-badge"].dataset.signal, "lost");
+  assert.equal(harness.elements["live-tunnel-badge"].hidden, false);
+  assert.match(harness.elements["live-tunnel-status"].textContent, /Signal lost/);
+  assert.equal(harness.elements["live-tunnel-status"].dataset.state, "error");
+
+  // Further quiet checks do not raise it again.
+  harness.checkSignal(10);
+  assert.equal(alarms.log.length, 1);
+
+  // A still from the robot ends it with the restored chime.
+  harness.pushPicture({ ...STILL, capturedAtMs: 2 });
+  assert.deepEqual(alarms.log.at(-1), ["clear", "signal_lost", "restored"]);
+  assert.equal(harness.elements["live-tunnel-badge"].textContent, "Live");
+  assert.equal(harness.elements["live-tunnel-badge"].dataset.signal, undefined);
+});
+
+test("no signal is judged before the robot's first picture arrives", async () => {
+  const alarms = createAlarmLog();
+  const harness = createPageHarness({ alarms });
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  harness.checkSignal(30);
+  assert.deepEqual(alarms.log, []);
+});
+
+test("a robot that stops responding is signal lost; one that ends its stream is a notice", async () => {
+  const silent = createAlarmLog();
+  const quiet = createPageHarness({ alarms: silent, picture: STILL });
+  await quiet.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  // Still recorded as live, but its heartbeat is long gone.
+  quiet.pushTunnels([liveRecord({ lastSeenAtMs: Date.now() - 120_000 })]);
+  await settle();
+  assert.deepEqual(silent.log, [["raise", "signal_lost"]]);
+  assert.match(quiet.elements["live-tunnel-status"].textContent, /robot stopped responding/);
+
+  const ended = createAlarmLog();
+  const stopped = createPageHarness({ alarms: ended, picture: STILL });
+  await stopped.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  stopped.pushTunnels([]);
+  await settle();
+  assert.deepEqual(ended.log, [["raise", "robot_stopped"]]);
+  assert.match(stopped.elements["live-tunnel-status"].textContent, /That recording stopped/);
+});
+
+test("leaving or signing out ends a signal alarm without its chime", async () => {
+  const alarms = createAlarmLog();
+  const harness = createPageHarness({ alarms, picture: STILL });
+  await harness.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  harness.checkSignal(6);
+  assert.deepEqual(alarms.log, [["raise", "signal_lost"]]);
+
+  await harness.elements["live-tunnel-leave"].dispatch("click");
+  await settle();
+  assert.deepEqual(alarms.log.at(-1), ["clear", "signal_lost", "silent"]);
+  assert.equal(harness.elements["live-tunnel-badge"].textContent, "Live");
+  harness.checkSignal(10);
+  assert.equal(alarms.log.filter(([kind]) => kind === "raise").length, 1, "nothing is watched after leaving");
+
+  const second = createAlarmLog();
+  const signedOut = createPageHarness({ alarms: second, picture: STILL });
+  await signedOut.auth({ email: "yanguangchensp@gmail.com", uid: "admin-1" });
+  await settle();
+  signedOut.checkSignal(6);
+  await signedOut.auth(null);
+  await settle();
+  assert.deepEqual(second.log.at(-1), ["clear", "signal_lost", "silent"]);
+});
+
+test("the first tap unlocks alarm sound, once", () => {
+  const source = readFileSync(resolve(root, "live-tunnel.js"), "utf8");
+  assert.match(source, /\["pointerdown", "keydown", "touchend"\]\.forEach\(\(name\) => \{\s*document\.addEventListener\(name, primeAlarms, true\);/);
+  assert.match(source, /if \(alarmsPrimed \|\| !robotAlarms\) return;/);
+  assert.match(html, /<script src="tone-player\.js" defer><\/script>\s*<script src="robot-alarm-tones\.js" defer><\/script>\s*<script src="live-tunnel\.js/);
 });
 
 test("parseRobotControlUrl preserves local IP controls and accepts secure remote URLs", () => {

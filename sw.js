@@ -13,6 +13,7 @@ const ONBOARDING_STATIC_ASSETS = [
   "camera-facing.js",
   "frame-scaler.js",
   "face-identity.js",
+  "tone-player.js",
   "face-scan-tones.js",
   "pose-mapping.js",
   "firebase.js",
