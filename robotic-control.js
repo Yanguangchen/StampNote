@@ -12,6 +12,8 @@
   const cloud = globalScope.StampNoteFirebase;
   const liveTunnelApi = globalScope.StampNoteLiveTunnel;
   const telemetry = globalScope.StampNoteObservability;
+  const alarmTones = globalScope.StampNoteRobotAlarmTones;
+  const ALARMS = alarmTones?.ALARMS || {};
   const THEME_KEY = "stampnote-theme";
   const FACING_KEY = "stampnote-robotic-control-camera-facing";
 
@@ -54,6 +56,11 @@
   let pendingVoiceUrl = "";
   let voicePlayer = null;
   let wakeLock = null;
+  // Whoever is beside the robot hears when it loses its network or camera, or
+  // cannot share its picture; Live tunnel hears its own "signal lost".
+  const robotAlarms = alarmTones?.createRobotAlarms?.() || null;
+  let alarmsPrimed = false;
+  let networkLost = false;
 
   function environment() {
     let embedded = false;
@@ -337,8 +344,11 @@
     return incomingAudioStream;
   }
 
+  // True once the camera is shared, false if sharing failed, null when there
+  // is nothing to share it with yet (no account signed in).
   async function startLiveTunnel() {
-    if (!cloud || !signedInUser || !liveTunnelApi?.createPublisher || livePublisher) return;
+    if (livePublisher) return true;
+    if (!cloud || !signedInUser || !liveTunnelApi?.createPublisher) return null;
     livePublisher = liveTunnelApi.createPublisher({
       cloud,
       getStream: () => stream,
@@ -348,12 +358,50 @@
     });
     try {
       await livePublisher.publish(sessionForLiveTunnel());
+      robotAlarms?.clear(ALARMS.SHARE_FAILED);
+      return true;
     } catch (error) {
       livePublisher = null;
-      console.warn("[StampNote robotic control] The live camera could not be shared.", {
-        errorCode: telemetry?.safeErrorCode(error, "live_tunnel_publish_failed"),
-      });
+      const errorCode = telemetry?.safeErrorCode(error, "live_tunnel_publish_failed");
+      console.warn("[StampNote robotic control] The live camera could not be shared.", { errorCode });
+      robotAlarms?.raise(ALARMS.SHARE_FAILED);
+      telemetry?.event("robotic.share.failed", { errorCode, status: "failed" }, { immediate: true });
+      return false;
     }
+  }
+
+  const SHARE_FAILED_MESSAGE =
+    "Streaming video, but Live tunnel could not share it. Check the connection, then stop and start the stream.";
+
+  function streamingStatus(shared) {
+    if (shared === false) {
+      setStatus(SHARE_FAILED_MESSAGE, "error");
+    } else {
+      setStatus(
+        signedInUser
+          ? "Streaming video — Live tunnel can share this camera."
+          : "Streaming video. Sign in to share it over Live tunnel.",
+      );
+    }
+  }
+
+  // A track ends on its own only when the camera fails, is unplugged or is
+  // taken by something else; stopping it here never fires this.
+  function watchCamera(media) {
+    media?.getVideoTracks?.().forEach((track) => {
+      track.addEventListener?.("ended", () => {
+        if (!streamActive || stream !== media) return;
+        robotAlarms?.raise(ALARMS.CAMERA_LOST);
+        setStatus("The camera stopped sending video. Stop and start the stream to reopen it.", "error");
+        telemetry?.event("robotic.camera.lost", { status: "failed" }, { immediate: true });
+      });
+    });
+  }
+
+  function primeAlarms() {
+    if (alarmsPrimed || !robotAlarms) return;
+    alarmsPrimed = true;
+    robotAlarms.prime();
   }
 
   function stopLiveTunnel() {
@@ -433,6 +481,8 @@
       }
     }
 
+    watchCamera(stream);
+    robotAlarms?.clear(ALARMS.CAMERA_LOST);
     if (failure) {
       setStatus(
         `The ${cameraFacing?.describe(facing) || "other camera"} could not be opened, so the ${
@@ -508,16 +558,15 @@
         }
       }
 
-      await startLiveTunnel();
+      const shared = await startLiveTunnel();
 
       if (frame) frame.hidden = false;
       streamActive = true;
+      watchCamera(stream);
+      robotAlarms?.clear(ALARMS.CAMERA_LOST);
       setToggleLabel(true);
-      setStatus(
-        signedInUser
-          ? "Streaming video — Live tunnel can share this camera."
-          : "Streaming video. Sign in to share it over Live tunnel.",
-      );
+      streamingStatus(shared);
+      if (globalScope.navigator?.onLine === false) reportNetworkLost();
       telemetry?.event("capture.monitor.started", {
         durationMs: performance.now() - startedAt,
         status: "success",
@@ -532,6 +581,8 @@
 
   function stopStream() {
     streamActive = false;
+    robotAlarms?.clearAll();
+    networkLost = false;
     releaseCameraTracks();
     stopLiveTunnel();
     releaseWakeLock();
@@ -564,14 +615,17 @@
       });
       if (!user) {
         stopLiveTunnel();
+        robotAlarms?.clear(ALARMS.SHARE_FAILED, { restored: false });
         if (streamActive) {
           setStatus("Streaming video. Sign in to share it over Live tunnel.");
         }
         return;
       }
       if (streamActive) {
-        startLiveTunnel();
         setStatus("Streaming video — Live tunnel can share this camera.");
+        startLiveTunnel().then((shared) => {
+          if (shared === false && streamActive) setStatus(SHARE_FAILED_MESSAGE, "error");
+        });
       }
     });
   }
@@ -641,10 +695,34 @@
     if (streamActive) stopStream();
   });
 
+  const NETWORK_LOST_MESSAGE =
+    "This device lost its network. Live tunnel cannot see the camera until it is back.";
+
+  function reportNetworkLost() {
+    if (!streamActive || networkLost) return;
+    networkLost = true;
+    robotAlarms?.raise(ALARMS.NETWORK_LOST);
+    setStatus(NETWORK_LOST_MESSAGE, "error");
+    telemetry?.event("robotic.network.lost", { status: "failed" });
+  }
+
+  // Back online, the camera is shared again if sharing had failed meanwhile.
+  globalScope.addEventListener("offline", reportNetworkLost);
+  globalScope.addEventListener("online", async () => {
+    if (!networkLost) return;
+    networkLost = false;
+    robotAlarms?.clear(ALARMS.NETWORK_LOST);
+    telemetry?.event("robotic.network.restored", { status: "success" });
+    if (!streamActive) return;
+    const shared = await startLiveTunnel();
+    if (streamActive && !networkLost) streamingStatus(shared);
+  });
+
   // Browsers only allow sound after a user gesture, and a touchscreen's
   // pointerdown does not count as one. Retry blocked audio on the events that
   // do, so one tap anywhere turns on Talk and waiting voice messages.
   function resumeBlockedAudio(event) {
+    primeAlarms();
     if (event?.target && speakerToggle?.contains?.(event.target)) return;
     if (incomingAudio?.srcObject && !speakerMuted) playIncomingAudioElement();
     if (pendingVoiceUrl) playVoiceUrl(pendingVoiceUrl);

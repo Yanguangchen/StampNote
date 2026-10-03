@@ -65,6 +65,29 @@ The state has a compact two-column layout when a phone is held in landscape. Und
 
 This confirmation is presentation only. It does not change face descriptors, thresholds, roster selection, or the three-view agreement required by recognition; it makes an already-completed match apparent to the worker. Auto capture may initialize behind the confirmation, but the confirmation remains on top until its 1.8-second display interval ends. Skipped and still-retrying scans do not show the success state.
 
+#### Robot alarms
+
+Robot teleoperation has alarms you hear as well as see, because whoever is driving is watching the picture, not the status line. Their sounds follow the pulse patterns of the IEC 60601-1-8 alarm convention, so urgency is recognisable without words:
+
+| Priority | Sound | Alarms |
+| --- | --- | --- |
+| High | five pulses (three, a pause, two), repeated every 10 seconds while the problem lasts, up to five more times | **Signal lost**, **Network lost**, **Camera lost** |
+| Medium | three pulses, once | **Sharing failed** |
+| Low | two soft pulses, once | **Robot stopped streaming** |
+
+When a high or medium alarm clears by itself, a short rising chime says so. An alarm the operator ends (Leave, sign out, stopping the stream) ends silently.
+
+- **Live tunnel (the operator):**
+  - **Signal lost** sounds when nothing has arrived from the robot for six one-second checks (5–6 seconds), whether still pictures (sent every 0.55 s) or freshly rendered video frames. It also sounds when the live picture cannot be opened at all, and when the robot is still listed as live but its heartbeat has stopped. The badge over the picture turns to **Signal lost**.
+  - **Robot stopped streaming** is the low notice for a recording the robot ended on purpose.
+  - Nothing is judged before the robot's first picture arrives, and a throttled background tab alarms later, never falsely.
+- **Robotic control (the robot):**
+  - **Network lost** and its restored chime follow the browser's offline and online events. Coming back online retries the Live tunnel share.
+  - **Camera lost** sounds when the camera stops on its own (unplugged, failed, or taken by another app); stopping or switching the camera never triggers it.
+  - **Sharing failed** sounds when the camera runs but Live tunnel cannot publish it.
+
+Browsers open the audio device only after a tap, so each page's first tap unlocks alarm sound. Until then an alarm is shown but not heard. A robot that nobody touches should run Chromium with `--autoplay-policy=no-user-gesture-required`. Alarm and scan sounds share `tone-player.js`; every alarm peaks below the shutter.
+
 #### Scan tones
 
 A face scan asks somebody to look at the lens, which is exactly when they cannot read the screen, so **every face scan is also heard**. The opening attendance scan on Recording and the enrollment and improvement scans on Worker onboarding share one set of short, quiet tones:
@@ -309,7 +332,9 @@ See [OBSERVABILITY.md](OBSERVABILITY.md) for the event catalog, production log c
 - `photo-triage.js` — local blur, near-duplicate, novelty and importance checks
 - `worker-face.js` — worker ID validation, template averaging and strict embedding matching
 - `face-identity.js` — aligned 128-value face embeddings and enrolled-worker scan voting with no retained crops
+- `tone-player.js` — the shared Web Audio player behind every synthesised cue and alarm
 - `face-scan-tones.js` — synthesised start, progress, retry, success and error tones for every face scan
+- `robot-alarm-tones.js` — high, medium and low robot alarms (signal, network and camera lost, sharing failed, robot stopped) with repeats and a restored chime
 - `person-tracker.js` — stable internal tracking with enrolled worker IDs on public boxes
 - `api/_ai-triage.mjs` — validates batches, calls Gemini through Google AI Studio, and applies the conservative discard threshold
 - `api/triage.mjs` — Vercel Function exposing the server-only AI review endpoint

@@ -3,6 +3,7 @@ const { readFileSync } = require("node:fs");
 const { resolve } = require("node:path");
 const { test } = require("node:test");
 const vm = require("node:vm");
+const { createAlarmLog } = require("./alarm-log.js");
 
 const cameraFacing = require("../camera-facing.js");
 const captureCamera = require("../src/capture/camera-controller.js");
@@ -173,13 +174,17 @@ function createHarness(options = {}) {
       }
     : null;
 
+  // Each publish takes the next queued failure, if any.
+  const publishFailures = [...(options.publishFailures || [])];
+  const cameraTracks = [];
   const liveTunnel = {
     createPublisher(options) {
       publisherOptions.push(options);
       const publisher = {
         async publish(session) {
           cloudCalls.liveTunnels.push({ type: "publish", session });
-          if (options.liveTunnelError) throw options.liveTunnelError;
+          const failure = publishFailures.shift();
+          if (failure) throw failure;
           return { id: "live-1", ...session };
         },
         setStream() {
@@ -221,6 +226,20 @@ function createHarness(options = {}) {
         nextCameraError = null;
         if (injected) throw injected;
         if (options.cameraError) throw options.cameraError;
+        // One video track per stream, which a test can unplug.
+        const listeners = new Map();
+        const videoTrack = {
+          readyState: "live",
+          stop() {},
+          addEventListener(name, callback) {
+            listeners.set(name, callback);
+          },
+          fire(name) {
+            this.readyState = "ended";
+            listeners.get(name)?.();
+          },
+        };
+        cameraTracks.push(videoTrack);
         return {
           getTracks() {
             return [
@@ -232,7 +251,7 @@ function createHarness(options = {}) {
             ];
           },
           getVideoTracks() {
-            return [{ readyState: "live", stop() {} }];
+            return [videoTrack];
           },
         };
       },
@@ -255,6 +274,7 @@ function createHarness(options = {}) {
     StampNoteCaptureCamera: captureCamera,
     StampNoteFirebase: cloud,
     StampNoteLiveTunnel: liveTunnel,
+    ...(options.alarms ? { StampNoteRobotAlarmTones: options.alarms.api } : {}),
     StampNoteCloudData: {
       sessionDefinitionFor() {
         return { id: "morning", label: "Morning" };
@@ -330,6 +350,9 @@ function createHarness(options = {}) {
     telemetry: context.StampNoteObservability,
     trackStopped: () => trackStopped,
     windowListeners,
+    unplugCamera() {
+      cameraTracks.at(-1)?.fire("ended");
+    },
   };
 }
 
@@ -435,6 +458,84 @@ test("signing in after the stream is already running starts the live tunnel", as
   harness.auth({ email: "owner@example.com", uid: "owner-1" });
   await settle();
   assert.ok(harness.cloudCalls.liveTunnels.some((entry) => entry.type === "publish"));
+});
+
+test("the robot sounds an alarm when its network drops, and a chime when it returns", async () => {
+  const alarms = createAlarmLog();
+  const harness = createHarness({ camera: true, cloud: true, alarms });
+  harness.auth({ email: "owner@example.com", uid: "owner-1" });
+  await settle();
+  const published = harness.cloudCalls.liveTunnels.filter((entry) => entry.type === "publish").length;
+
+  harness.windowListeners.get("offline")();
+  harness.windowListeners.get("offline")();
+  assert.deepEqual(alarms.log, [["raise", "network_lost"]], "a second offline event is the same outage");
+  assert.match(harness.elements["robotic-status"].textContent, /lost its network/);
+  assert.equal(harness.elements["robotic-status"].dataset.state, "error");
+  assert.ok(harness.events.some((event) => event.name === "robotic.network.lost"));
+
+  await harness.windowListeners.get("online")();
+  await settle();
+  assert.deepEqual(alarms.log.at(-1), ["clear", "network_lost", "restored"]);
+  assert.match(harness.elements["robotic-status"].textContent, /Streaming video — Live tunnel can share/);
+  assert.equal(
+    harness.cloudCalls.liveTunnels.filter((entry) => entry.type === "publish").length,
+    published,
+    "a share that never failed is not started twice",
+  );
+});
+
+test("a camera that stops on its own is an alarm; stopping it on purpose is silent", async () => {
+  const alarms = createAlarmLog();
+  const harness = createHarness({ camera: true, alarms });
+  await settle();
+
+  harness.unplugCamera();
+  assert.deepEqual(alarms.log, [["raise", "camera_lost"]]);
+  assert.match(harness.elements["robotic-status"].textContent, /camera stopped sending video/);
+  assert.ok(harness.events.some((event) => event.name === "robotic.camera.lost"));
+
+  await harness.elements["robotic-toggle"].dispatch("click");
+  await settle();
+  assert.deepEqual(alarms.log.at(-1), ["clear", "camera_lost", "silent"]);
+  assert.equal(alarms.log.filter(([kind]) => kind === "raise").length, 1);
+
+  // An offline event with the stream stopped is not this page's alarm.
+  harness.windowListeners.get("offline")();
+  assert.equal(alarms.log.filter(([kind]) => kind === "raise").length, 1);
+});
+
+test("a camera that cannot be shared is a medium alarm, cleared once sharing works", async () => {
+  const alarms = createAlarmLog();
+  const harness = createHarness({
+    camera: true,
+    cloud: true,
+    alarms,
+    publishFailures: [Object.assign(new Error("offline"), { code: "unavailable" })],
+  });
+  harness.auth({ email: "owner@example.com", uid: "owner-1" });
+  await settle();
+  assert.deepEqual(alarms.log, [["raise", "share_failed"]]);
+  assert.match(harness.elements["robotic-status"].textContent, /could not share it/);
+  assert.equal(harness.elements["robotic-status"].dataset.state, "error");
+  assert.ok(harness.events.some((event) => event.name === "robotic.share.failed"));
+
+  // Coming back online tries the share again; this time it works.
+  harness.windowListeners.get("offline")();
+  await harness.windowListeners.get("online")();
+  await settle();
+  assert.ok(alarms.log.some((entry) => entry.join() === "clear,share_failed,restored"));
+  assert.match(harness.elements["robotic-status"].textContent, /Streaming video — Live tunnel can share/);
+});
+
+test("the robot's first tap unlocks alarm sound", async () => {
+  const alarms = createAlarmLog();
+  const harness = createHarness({ camera: true, alarms });
+  await settle();
+  harness.documentListeners.get("click")?.({ target: null });
+  harness.documentListeners.get("touchend")?.({ target: null });
+  assert.equal(alarms.log.filter(([kind]) => kind === "prime").length, 1);
+  assert.match(html, /<script src="tone-player\.js" defer><\/script>\s*<script src="robot-alarm-tones\.js" defer><\/script>\s*<script src="robotic-control\.js/);
 });
 
 test("streamIncomingAudio plays live talk audio on robotic control", async () => {

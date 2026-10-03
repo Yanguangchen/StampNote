@@ -901,6 +901,7 @@ function createAppHarness(options = {}) {
   scope.performance = performance;
 
   [
+    resolve(__dirname, "..", "tone-player.js"),
     resolve(__dirname, "..", "face-scan-tones.js"),
     resolve(__dirname, "..", "src/components/pose-overlay.js"),
     resolve(__dirname, "..", "src/services/capture-attendance.js"),
@@ -909,6 +910,7 @@ function createAppHarness(options = {}) {
     vm.runInContext(readFileSync(file, "utf8"), context, { filename: file });
   });
   [
+    "StampNoteTonePlayer",
     "StampNoteFaceScanTones",
     "StampNotePoseOverlay",
     "StampNoteCaptureAttendance",
